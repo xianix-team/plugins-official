@@ -1,68 +1,25 @@
 # Platform Setup Guide
 
-The `pr-review` plugin works with any git hosting platform. All diff analysis uses standard git commands. Only the **review posting** step is platform-specific.
+The `pr-review` plugin uses **git** for diffs, commits, and file lists on **all** supported hosts (including GitHub and Azure DevOps). **GitHub CLI (`gh`)** and **Azure DevOps REST** (or `curl`) are used for **posting** reviews and for GitHub-specific steps like resolving a PR number — not for the core analysis.
 
 ---
 
 ## GitHub
 
-### Option A: GitHub MCP Server (recommended for inline comments)
+### GitHub CLI (`gh`) — required to post reviews on GitHub
 
-The MCP server enables the richest review experience — inline comments posted directly on PR files.
-
-**Create a personal config file** (never committed):
-
-```bash
-mkdir -p ~/.claude
-```
-
-Create `~/.claude/my-mcp-config.json`:
-
-```json
-{
-  "mcpServers": {
-    "github": {
-      "url": "https://api.github.com",
-      "token": "ghp_your_actual_token_here"
-    }
-  }
-}
-```
-
-Or using an environment variable:
-
-```json
-{
-  "mcpServers": {
-    "github": {
-      "url": "https://api.github.com",
-      "token": "${GITHUB_TOKEN}"
-    }
-  }
-}
-```
-
-Launch with:
-
-```bash
-export GITHUB_TOKEN=ghp_your_token_here
-claude --mcp-config ~/.claude/my-mcp-config.json
-```
-
-**Verify:** Run `/mcp` inside Claude Code — `github` should show as `connected`.
-
-**Token scopes needed:** `repo` (private repos) or `public_repo` (public repos only), `read:org` (optional).
-
-### Option B: `gh` CLI (fallback)
-
-If MCP is unavailable, the plugin falls back to the `gh` CLI automatically.
+Diffs and logs come from **git**. Install **`gh`** so the plugin can resolve the PR number (when needed) and post comments and reviews.
 
 ```bash
 # Install: https://cli.github.com
 gh auth login
 ```
 
-**Token scopes needed:** same as Option A.
+For CI or scripts, set **`GH_TOKEN`** or **`GITHUB_TOKEN`** instead of interactive login (same scopes as below).
+
+**Token scopes:** `repo` (private repos) or `public_repo` (public repos only), `read:org` (optional).
+
+The plugin does **not** use the GitHub MCP server. See `providers/github.md` for `gh` usage.
 
 ### Credentials for `git push` (fix mode)
 
@@ -103,14 +60,14 @@ az devops configure --defaults organization=https://dev.azure.com/<your-org>
 **Option B: Personal Access Token (recommended for CI or scripted use)**
 
 ```bash
-export AZURE_DEVOPS_PAT=<your-pat>
-echo $AZURE_DEVOPS_PAT | az devops login --org https://dev.azure.com/<your-org>
+export AZURE_DEVOPS_TOKEN=<your-pat>
+echo $AZURE_DEVOPS_TOKEN | az devops login --org https://dev.azure.com/<your-org>
 ```
 
 Add to `~/.zshrc` or `~/.bashrc` to persist:
 
 ```bash
-export AZURE_DEVOPS_PAT=<your-pat>
+export AZURE_DEVOPS_TOKEN=<your-pat>
 ```
 
 **PAT scopes needed:**
@@ -119,14 +76,14 @@ export AZURE_DEVOPS_PAT=<your-pat>
 
 ### Credentials for `git push` (fix mode)
 
-The plugin reuses `AZURE_DEVOPS_PAT` for `git push` credential injection automatically — no separate `GIT_TOKEN` is needed for Azure DevOps remotes.
+The plugin reuses `AZURE_DEVOPS_TOKEN` for `git push` credential injection automatically — no separate `GIT_TOKEN` is needed for Azure DevOps remotes.
 
 ### Generating a PAT
 
 1. Go to `https://dev.azure.com/<your-org>/_usersSettings/tokens`
 2. Click **New Token**
 3. Set the scopes listed above
-4. Copy the token and export it as `AZURE_DEVOPS_PAT`
+4. Copy the token and export it as `AZURE_DEVOPS_TOKEN`
 
 ---
 
@@ -140,12 +97,11 @@ No additional setup is required beyond having a working git installation.
 
 ## Summary
 
-| Platform | Review posting method | Token variable | Fix mode push |
-|---|---|---|---|
-| GitHub (MCP) | `mcp__github__create_pull_request_review` | `GITHUB_TOKEN` | `GIT_TOKEN` |
-| GitHub (CLI) | `gh pr review` | `gh auth login` | `GIT_TOKEN` |
-| Azure DevOps | `az repos pr` + REST API | `AZURE_DEVOPS_PAT` | `AZURE_DEVOPS_PAT` |
-| Generic | Write to `pr-review-report.md` | — | `GIT_TOKEN` |
+| Platform | Analysis | Review posting | Token (posting / API) | Fix mode push |
+|---|---|---|---|---|
+| GitHub | `git diff`, `git log`, … | `gh pr review`, `gh pr comment`, `gh api` | `gh auth` / `GH_TOKEN` | `GIT_TOKEN` |
+| Azure DevOps | `git diff`, `git log`, … | REST (`curl`) per `providers/azure-devops.md` | `AZURE_DEVOPS_TOKEN` / `AZURE_DEVOPS_TOKEN` | `AZURE_DEVOPS_TOKEN` |
+| Generic | `git diff`, `git log`, … | Write to `pr-review-report.md` | — | `GIT_TOKEN` |
 
 ---
 

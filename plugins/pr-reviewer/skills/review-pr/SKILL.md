@@ -17,7 +17,7 @@ Use the **pr-reviewer** agent to:
    - `dev.azure.com` / `visualstudio.com` → Azure DevOps
    - Anything else → Generic (report written to file)
 
-2. Gather PR context via git commands (works on any platform):
+2. Gather PR context with **git** (GitHub, Azure DevOps, and others — same flow):
    ```bash
    # Base branch
    BASE=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||' || echo "main")
@@ -31,7 +31,7 @@ Use the **pr-reviewer** agent to:
    git log --format="%s%n%b" origin/${BASE}..HEAD  # PR description from commits
    ```
 
-   Use `Read` or `git show HEAD:<filepath>` to read full file content where needed.
+   Use `Read` or `git show HEAD:<filepath>` to read full file content where needed. Use **`gh`** (GitHub) or **Azure DevOps REST/`curl`** only when **posting** the review — see provider docs.
 
 3. Run specialized sub-agent reviews in parallel:
    - **code-reviewer** — Code quality, readability, naming, duplication, error handling
@@ -47,8 +47,8 @@ Use the **pr-reviewer** agent to:
    - Per-category summaries
 
 5. Post the review to the detected platform automatically — no user confirmation required:
-   - **GitHub**: see `providers/github.md` — uses GitHub MCP or `gh` CLI
-   - **Azure DevOps**: see `providers/azure-devops.md` — uses `curl` with `AZURE_TOKEN` environment variable
+   - **GitHub**: see `providers/github.md` — GitHub CLI (`gh`)
+   - **Azure DevOps**: see `providers/azure-devops.md` — uses `curl` with `AZURE_DEVOPS_TOKEN` environment variable
    - **Generic / unknown**: see `providers/generic.md` — writes report to `pr-review-report.md`
 
 6. If invoked with `--fix`: apply fixes and push before posting:

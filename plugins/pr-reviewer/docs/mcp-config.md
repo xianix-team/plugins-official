@@ -1,11 +1,5 @@
 # MCP Configuration
 
-> **This document has been superseded.** Platform setup (GitHub MCP, Azure DevOps, and others) is now documented in [`docs/platform-setup.md`](./platform-setup.md).
+> **Note:** The `pr-review` plugin does **not** use the GitHub MCP server. **Git** is used for analysis on all hosts; **`gh`** is for posting to GitHub only — see [`docs/platform-setup.md`](./platform-setup.md).
 
-The GitHub MCP server is now **optional** — the plugin uses git commands for all diff analysis and only uses MCP (or the `gh` CLI) for posting review comments back to GitHub.
-
-See [`docs/platform-setup.md`](./platform-setup.md) for:
-- GitHub MCP server setup
-- `gh` CLI setup (GitHub fallback)
-- Azure DevOps CLI setup
-- Token scopes and environment variables
+General platform setup (Azure DevOps, tokens, fix-mode push) is documented in [`docs/platform-setup.md`](./platform-setup.md).

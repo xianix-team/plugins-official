@@ -32,11 +32,11 @@ The plugin auto-detects the hosting platform from your git remote URL:
 
 | Remote URL contains | Platform | How review is posted |
 |---|---|---|
-| `github.com` | GitHub | GitHub MCP server or `gh` CLI |
+| `github.com` | GitHub | GitHub CLI (`gh`) |
 | `dev.azure.com` / `visualstudio.com` | Azure DevOps | `az repos pr` CLI |
 | Anything else | Generic | Written to `pr-review-report.md` |
 
-All diff and file content gathering uses standard git commands — no platform-specific API is needed for the analysis phase.
+**Analysis** uses standard **git** commands for every host (including GitHub and Azure DevOps). **`gh`** (GitHub) and **Azure DevOps tools/REST** are used only where the platform requires them — mainly **posting** the review and resolving the PR id on GitHub.
 
 ## Output
 
@@ -79,9 +79,9 @@ Review complete: <verdict> — report written to pr-review-report.md
 
 - Must be run inside a git repository
 - The current branch must have at least one commit ahead of the base branch
-- **GitHub**: GitHub MCP server connected (see `docs/platform-setup.md`) or `gh` CLI installed
+- **GitHub**: `gh` CLI installed and authenticated **for posting** to GitHub (see `docs/platform-setup.md`); git suffices for local diff/analysis
 - **Azure DevOps**: `az` CLI installed with `azure-devops` extension and authenticated (see `docs/platform-setup.md`)
-- **Fix mode**: `GIT_TOKEN` (GitHub) or `AZURE_DEVOPS_PAT` (Azure DevOps) must be set for `git push`
+- **Fix mode**: `GIT_TOKEN` (GitHub) or `AZURE_DEVOPS_TOKEN` (Azure DevOps) must be set for `git push`
 
 ---
 

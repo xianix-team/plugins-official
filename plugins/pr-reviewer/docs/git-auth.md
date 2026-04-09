@@ -18,7 +18,7 @@ The `validate-prerequisites.sh` hook sets this up automatically before every `gi
 
 | Variable | Used by | Purpose |
 |---|---|---|
-| `GITHUB_TOKEN` | GitHub MCP server | Read PR metadata, post review comments via GitHub API |
+| `GH_TOKEN` / `GITHUB_TOKEN` | GitHub CLI (`gh`) | Non-interactive API auth (optional if `gh auth login` was used) |
 | `GIT_TOKEN` | Local `git push` | Authenticate HTTPS pushes to the PR branch |
 
 These are typically the same PAT. The hook injects `GIT_TOKEN` as:
@@ -39,9 +39,9 @@ GIT_CONFIG_VALUE_0="https://github.com/"
 
 | Variable | Used by | Purpose |
 |---|---|---|
-| `AZURE_DEVOPS_PAT` | `az` CLI + Local `git push` | Authenticate API calls and HTTPS pushes |
+| `AZURE_DEVOPS_TOKEN` | `az` CLI + Local `git push` | Authenticate API calls and HTTPS pushes |
 
-A single PAT covers both API access and git push. The hook injects `AZURE_DEVOPS_PAT` for both `dev.azure.com` and `*.visualstudio.com` remote URLs:
+A single PAT covers both API access and git push. The hook injects `AZURE_DEVOPS_TOKEN` for both `dev.azure.com` and `*.visualstudio.com` remote URLs:
 
 ```bash
 GIT_CONFIG_COUNT=2
@@ -64,23 +64,23 @@ GIT_CONFIG_VALUE_1="https://visualstudio.com/"
 
 **GitHub:**
 ```bash
-GITHUB_TOKEN=ghp_xxx GIT_TOKEN=ghp_xxx claude --mcp-config ~/.claude/my-mcp-config.json
+GH_TOKEN=ghp_xxx GIT_TOKEN=ghp_xxx claude
 ```
 
 **Azure DevOps:**
 ```bash
-AZURE_DEVOPS_PAT=<pat> claude
+AZURE_DEVOPS_TOKEN=<pat> claude
 ```
 
 ### Via shell export (persistent in current shell)
 
 ```bash
 # GitHub
-export GITHUB_TOKEN=ghp_xxx
+export GH_TOKEN=ghp_xxx
 export GIT_TOKEN=ghp_xxx
 
 # Azure DevOps
-export AZURE_DEVOPS_PAT=<pat>
+export AZURE_DEVOPS_TOKEN=<pat>
 ```
 
 ### Via `.env` file (per-project, never committed)
@@ -89,11 +89,11 @@ Create a `.env` file in your project root (add it to `.gitignore`):
 
 ```bash
 # GitHub
-GITHUB_TOKEN=ghp_xxx
+GH_TOKEN=ghp_xxx
 GIT_TOKEN=ghp_xxx
 
 # Azure DevOps
-AZURE_DEVOPS_PAT=<pat>
+AZURE_DEVOPS_TOKEN=<pat>
 ```
 
 Then source it before launching:
@@ -113,7 +113,7 @@ Because credentials are passed at invocation time, you can use a different token
 GIT_TOKEN=ghp_my_token claude ...
 
 # Reviewing an Azure DevOps repo
-AZURE_DEVOPS_PAT=my_ado_pat claude ...
+AZURE_DEVOPS_TOKEN=my_ado_pat claude ...
 ```
 
 ---
@@ -129,7 +129,7 @@ blocked: GIT_TOKEN is not set. Pass it at runtime: GIT_TOKEN=ghp_xxx claude ... 
 
 **Azure DevOps:**
 ```
-blocked: AZURE_DEVOPS_PAT is not set. Pass it at runtime: AZURE_DEVOPS_PAT=<pat> claude ... (see docs/git-auth.md)
+blocked: AZURE_DEVOPS_TOKEN is not set. Pass it at runtime: AZURE_DEVOPS_TOKEN=<pat> claude ... (see docs/git-auth.md)
 ```
 
 `git commit` and other local operations are unaffected — only push requires the token.
@@ -152,7 +152,6 @@ If it completes without a credential prompt, the token is injected correctly.
 
 | Platform | Token for API | Token for git push |
 |---|---|---|
-| GitHub (MCP) | `GITHUB_TOKEN` | `GIT_TOKEN` |
-| GitHub (CLI) | `gh auth login` | `GIT_TOKEN` |
-| Azure DevOps | `AZURE_DEVOPS_PAT` | `AZURE_DEVOPS_PAT` (same) |
+| GitHub | `gh auth login` or `GH_TOKEN` / `GITHUB_TOKEN` | `GIT_TOKEN` |
+| Azure DevOps | `AZURE_DEVOPS_TOKEN` | `AZURE_DEVOPS_TOKEN` (same) |
 | Generic | — | `GIT_TOKEN` |

@@ -139,8 +139,8 @@ The script `scripts/run-requirement-analysis.sh` is designed for **server/CI** r
 | `PLATFORM` | `azure-devops` |
 | `REPO_URL` | Full HTTPS clone URL, e.g. `https://dev.azure.com/org/project/_git/repo` |
 | `ISSUE_NUMBER` | Work Item ID to elaborate |
-| `AZURE_TOKEN` | PAT with Work Items (Read & Write) scopes |
-| `GIT_TOKEN` | PAT for git clone (often same as `AZURE_TOKEN`) |
+| `AZURE_DEVOPS_TOKEN` | PAT with Work Items (Read & Write) scopes |
+| `GIT_TOKEN` | PAT for git clone (often same as `AZURE_DEVOPS_TOKEN`) |
 
 ### Usage
 
@@ -169,7 +169,7 @@ GITHUB_TOKEN=ghp_xxx \
 PLATFORM=azure-devops \
 REPO_URL=https://dev.azure.com/org/project/_git/repo \
 ISSUE_NUMBER=123 \
-AZURE_TOKEN=pat_xxx \
+AZURE_DEVOPS_TOKEN=pat_xxx \
 GIT_TOKEN=pat_xxx \
 ./scripts/run-requirement-analysis.sh
 ```

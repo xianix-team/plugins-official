@@ -22,7 +22,7 @@ echo "Push complete — branch '${BRANCH}' pushed to ${REMOTE}"
 echo "Latest commit: ${COMMIT}"
 
 if echo "$REMOTE" | grep -q "github.com"; then
-    echo "Next step: use mcp__github__create_pull_request_review to post the review (see providers/github.md)."
+    echo "Next step: post the review with gh (see providers/github.md)."
 elif echo "$REMOTE" | grep -qE "dev.azure.com|visualstudio.com"; then
     echo "Next step: post the review via Azure DevOps REST API (see providers/azure-devops.md)."
 else

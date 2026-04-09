@@ -27,17 +27,15 @@ Do not ask for confirmation at any point. Execute all steps autonomously and pro
 
    Use the platform-appropriate method to confirm the PR exists and retrieve its current state:
 
-   **GitHub (MCP):**
-   Use `mcp__github__get_pull_request` with the given PR number. If the PR does not exist or is already merged/closed, stop and output a single error line.
-
-   **GitHub (CLI fallback):**
+   **GitHub:**
    ```bash
    gh pr view <pr-number> --json state,title,headRefName
    ```
+   If the PR does not exist or is already merged/closed, stop and output a single error line.
 
    **Azure DevOps:**
    ```bash
-   curl -s -u ":${AZURE_TOKEN}" \
+   curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
      "https://dev.azure.com/${AZURE_ORG}/${AZURE_PROJECT}/_apis/git/repositories/${AZURE_REPO}/pullrequests/${PR_NUMBER}?api-version=7.1"
    ```
    Parse org, project, repo from `git remote get-url origin` as described in `providers/azure-devops.md`.
@@ -83,4 +81,4 @@ Do not ask for confirmation at any point. Execute all steps autonomously and pro
 
    If any step fails, output the error and stop — do not retry or ask for input.
 
-> **Note:** GitHub posting requires the GitHub MCP server to be connected, or the `gh` CLI to be installed. Azure DevOps posting uses `curl` with the `AZURE_TOKEN` environment variable (PAT with Pull Request Threads Read & Write scope). See `docs/platform-setup.md` for setup instructions.
+> **Note:** GitHub posting requires the **`gh` CLI** installed and authenticated. Azure DevOps posting uses `curl` with the `AZURE_DEVOPS_TOKEN` environment variable (PAT with Pull Request Threads Read & Write scope). See `docs/platform-setup.md` for setup instructions.

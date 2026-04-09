@@ -10,7 +10,7 @@ Required environment variable:
 
 | Variable | Purpose |
 |---|---|
-| `AZURE_TOKEN` | Azure DevOps PAT — must have `Work Items (Read & Write)` scopes |
+| `AZURE_DEVOPS_TOKEN` | Azure DevOps PAT — must have `Work Items (Read & Write)` scopes |
 
 Optional — used to override values parsed from the remote URL:
 
@@ -39,7 +39,7 @@ AZURE_PROJECT=$(echo "$REMOTE" | sed 's|https://dev.azure.com/||' | cut -d'/' -f
 ## Fetching Work Item Details
 
 ```bash
-curl -s -u ":${AZURE_TOKEN}" \
+curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
   "https://dev.azure.com/${AZURE_ORG}/${AZURE_PROJECT}/_apis/wit/workitems/${WORK_ITEM_ID}?api-version=7.1&\$expand=all"
 ```
 
@@ -50,7 +50,7 @@ curl -s -u ":${AZURE_TOKEN}" \
 ### 1. Update the work item description
 
 ```bash
-curl -s -u ":${AZURE_TOKEN}" \
+curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
   -X PATCH \
   -H "Content-Type: application/json-patch+json" \
   "https://dev.azure.com/${AZURE_ORG}/${AZURE_PROJECT}/_apis/wit/workitems/${WORK_ITEM_ID}?api-version=7.1" \
@@ -66,7 +66,7 @@ print(json.dumps([
 ### 2. Add a comment with unresolved questions
 
 ```bash
-curl -s -u ":${AZURE_TOKEN}" \
+curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
   -X POST \
   -H "Content-Type: application/json" \
   "https://dev.azure.com/${AZURE_ORG}/${AZURE_PROJECT}/_apis/wit/workitems/${WORK_ITEM_ID}/comments?api-version=7.1-preview.4" \

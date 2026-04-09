@@ -10,7 +10,7 @@ Required environment variable:
 
 | Variable | Purpose |
 |---|---|
-| `AZURE_TOKEN` | Azure DevOps PAT — must have `Code (Read)` and `Pull Request Threads (Read & Write)` scopes |
+| `AZURE_DEVOPS_TOKEN` | Azure DevOps PAT — must have `Code (Read)` and `Pull Request Threads (Read & Write)` scopes |
 
 Optional — used to override values parsed from the remote URL:
 
@@ -54,7 +54,7 @@ If no PR number was passed as an argument, find the active PR for the current br
 ```bash
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
-curl -s -u ":${AZURE_TOKEN}" \
+curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
   "https://dev.azure.com/${AZURE_ORG}/${AZURE_PROJECT}/_apis/git/repositories/${AZURE_REPO}/pullrequests?searchCriteria.sourceRefName=refs/heads/${BRANCH}&searchCriteria.status=active&api-version=7.1" \
   | python3 -c "import sys,json; prs=json.load(sys.stdin)['value']; print(prs[0]['pullRequestId'] if prs else '')"
 ```
@@ -70,7 +70,7 @@ Before running any analysis, post a plain PR comment thread to inform the author
 Parse the remote URL first (see **Parsing the Remote URL** above), then call:
 
 ```bash
-curl -s -u ":${AZURE_TOKEN}" \
+curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
   -X POST \
   -H "Content-Type: application/json" \
   "https://dev.azure.com/${AZURE_ORG}/${AZURE_PROJECT}/_apis/git/repositories/${AZURE_REPO}/pullrequests/${PR_ID}/threads?api-version=7.1" \
@@ -94,7 +94,7 @@ If posting the starting comment fails, output a single warning line and continue
 ### 2. Post the overall verdict (reviewer vote)
 
 ```bash
-curl -s -u ":${AZURE_TOKEN}" \
+curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
   -X PUT \
   -H "Content-Type: application/json" \
   "https://dev.azure.com/${AZURE_ORG}/${AZURE_PROJECT}/_apis/git/repositories/${AZURE_REPO}/pullrequests/${PR_ID}/reviewers/me?api-version=7.1" \
@@ -106,7 +106,7 @@ curl -s -u ":${AZURE_TOKEN}" \
 Post the compiled review report body as a new comment thread:
 
 ```bash
-curl -s -u ":${AZURE_TOKEN}" \
+curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
   -X POST \
   -H "Content-Type: application/json" \
   "https://dev.azure.com/${AZURE_ORG}/${AZURE_PROJECT}/_apis/git/repositories/${AZURE_REPO}/pullrequests/${PR_ID}/threads?api-version=7.1" \
@@ -128,7 +128,7 @@ REPORT
 For each finding with a precise file path and line number:
 
 ```bash
-curl -s -u ":${AZURE_TOKEN}" \
+curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
   -X POST \
   -H "Content-Type: application/json" \
   "https://dev.azure.com/${AZURE_ORG}/${AZURE_PROJECT}/_apis/git/repositories/${AZURE_REPO}/pullrequests/${PR_ID}/threads?api-version=7.1" \

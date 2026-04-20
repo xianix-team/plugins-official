@@ -39,6 +39,21 @@
       "category": "requirements",
       "keywords": ["requirement-analysis", "requirement-elaboration", "backlog-refinement", "domain-knowledge", "competitive-insights", "user-journey", "personas", "usability", "adoption"],
       "license": "MIT"
+    },
+    {
+      "name": "performance-optimizer-agent",
+      "source": "./plugins/performance-optimizer-agent",
+      "description": "Automated performance bottleneck detection with focused optimization recommendations. Analysis-first by default; creates a separate optimization PR only when the opt-in fix tag is applied. Detects latency, CPU, memory, and I/O / query inefficiencies in pull requests. Works with GitHub, Azure DevOps, Bitbucket, and any git repository.",
+      "version": "1.0.0",
+      "author": {
+        "name": "99x",
+        "email": "xianix-agent@99x.io"
+      },
+      "homepage": "https://opensource.99x.io/xianix-team/",
+      "repository": "https://github.com/xianix-team/xianix-plugins-official",
+      "category": "code-review",
+      "keywords": ["performance", "performance-optimization", "performance-review", "pull-request", "latency", "cpu", "memory", "n-plus-one", "azure-devops", "github"],
+      "license": "MIT"
     }
   ]
 }

@@ -39,6 +39,21 @@
       "category": "requirements",
       "keywords": ["requirement-analysis", "requirement-elaboration", "backlog-refinement", "domain-knowledge", "competitive-insights", "user-journey", "personas", "usability", "adoption"],
       "license": "MIT"
+    },
+    {
+      "name": "test-strategist",
+      "source": "./plugins/test-strategist",
+      "description": "Automated impact analysis and risk-based test strategy generation for bug fixes, PBIs, and feature implementations. Gathers work item requirements, code changes across linked pull requests, comments, child items, and referenced documentation — then produces a business-readable HTML report that serves as the testing guide for QA engineers doing risk-based testing.",
+      "version": "1.0.0",
+      "author": {
+        "name": "99x",
+        "email": "xianix-agent@99x.io"
+      },
+      "homepage": "https://opensource.99x.io/xianix-team/",
+      "repository": "https://github.com/xianix-team/xianix-plugins-official",
+      "category": "testing",
+      "keywords": ["testing", "qa", "test-strategy", "risk-based-testing", "impact-analysis", "test-cases", "coverage-map", "github", "azure-devops"],
+      "license": "MIT"
     }
   ]
 }

@@ -1,5 +1,5 @@
 ---
-title: PR Comment Resolver
+title: PR Comment Resolver Agent
 description: Automated resolution of pull request review threads — applies actionable comments as commits, replies to discussion threads, and declines out-of-scope feedback.
 ---
 

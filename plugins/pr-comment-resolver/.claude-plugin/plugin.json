@@ -1,0 +1,17 @@
+{
+    "name": "pr-comment-resolver",
+    "version": "1.0.0",
+    "description": "Automated resolution of pull request review threads — classifies each unresolved comment as apply, discuss, or decline, applies actionable ones as commits, replies to the rest, and posts a structured disposition report. Works with GitHub, Azure DevOps, and any git repository.",
+    "author": {
+      "name": "99x",
+      "email": "xianix@99x.io",
+      "url": "https://github.com/99x"
+    },
+    "homepage": "https://github.com/99x/xianix-team",
+    "repository": "https://github.com/99x/xianix-team",
+    "license": "MIT",
+    "keywords": ["pr-comments", "pull-request", "review-threads", "comment-resolver", "code-changes", "github", "azure-devops"],
+    "commands": ["./commands/resolve-comments.md"],
+    "skills": "./skills/",
+    "outputStyles": "./styles/"
+  }

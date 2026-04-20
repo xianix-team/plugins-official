@@ -50,7 +50,7 @@
         "email": "xianix-agent@99x.io"
       },
       "homepage": "https://opensource.99x.io/xianix-team/",
-      "repository": "https://github.com/xianix-team/xianix-plugins-official",
+      "repository": "https://github.com/indikarat99x/xianix-plugins-official",
       "category": "code-review",
       "keywords": ["performance", "performance-optimization", "performance-review", "pull-request", "latency", "cpu", "memory", "n-plus-one", "azure-devops", "github"],
       "license": "MIT"

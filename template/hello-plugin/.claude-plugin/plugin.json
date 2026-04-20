@@ -12,7 +12,7 @@
   "license": "MIT",
   "keywords": ["template", "starter", "hello-world", "example"],
   "commands": ["./commands/hello.md"],
-  "agents": "./agents/",
+  "agents": ["./agents/greeter.md"],
   "skills": "./skills/",
   "hooks": "./hooks/hooks.json"
 }

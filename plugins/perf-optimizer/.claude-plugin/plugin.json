@@ -1,7 +1,7 @@
 {
-    "name": "performance-optimizer-agent",
-    "version": "1.0.0",
-    "description": "Automated performance bottleneck detection with focused optimization recommendations. Analysis-first by default; creates a separate optimization PR only when the opt-in fix tag is applied. Detects latency, CPU, memory, and I/O / query inefficiencies in pull requests. Works with GitHub, Azure DevOps, Bitbucket, and any git repository.",
+    "name": "perf-optimizer",
+    "version": "2.0.0",
+    "description": "Whole-codebase performance bottleneck detection triggered from a GitHub issue or Azure DevOps work item, delivered as a ready-to-review fix PR. Detects latency, CPU, memory, and I/O / query inefficiencies across the repository's default branch. Works with GitHub and Azure DevOps.",
     "author": {
       "name": "99x",
       "email": "xianix@99x.io",
@@ -14,7 +14,8 @@
       "performance",
       "performance-optimization",
       "performance-review",
-      "pull-request",
+      "issue-driven",
+      "whole-codebase",
       "latency",
       "cpu",
       "memory",
@@ -29,7 +30,7 @@
       "./agents/cpu-analyzer.md",
       "./agents/memory-analyzer.md",
       "./agents/io-query-analyzer.md",
-      "./agents/fix-pr-author.md"
+      "./agents/perf-pr-author.md"
     ],
     "skills": "./skills/",
     "hooks": "./hooks/hooks.json",

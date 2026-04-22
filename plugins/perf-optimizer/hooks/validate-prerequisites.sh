@@ -1,30 +1,31 @@
 #!/usr/bin/env bash
 # validate-prerequisites.sh
-# Validates that the environment is ready for the Performance Optimizer Agent.
+# Validates that the environment is ready for the Performance Optimizer.
 # Run as a PreToolUse hook before Bash tool executions.
 #
-# Reading  — git for diffs/logs (all hosts); gh only when posting / PR-creating on GitHub
-# Writing  — fix-PR mode requires local git for commit/push; validated here
+# Reading  — git for logs / file lists on the default branch; gh / curl only for
+#            reading the trigger issue or work item, opening the PR, and linking back.
+# Writing  — the agent pushes to a `perf/issue-*` or `perf/workitem-*` branch only.
+#            Never to the repository's default branch.
 #
 # Credentials
-#   GIT_TOKEN           — used by git push for HTTPS auth (GitHub / generic)
-#                         injected via GIT_CONFIG env vars, never written to disk
-#   AZURE_DEVOPS_TOKEN  — used by git push for HTTPS auth on Azure DevOps remotes
-#                         also used by REST API calls for posting and PR creation
+#   GITHUB_TOKEN / GH_TOKEN — used by gh CLI and by git push for HTTPS auth on github.com
+#   AZURE_DEVOPS_TOKEN      — used by git push for HTTPS auth on Azure DevOps remotes,
+#                             and by curl for REST calls (work items, PRs, comments)
 
 set -euo pipefail
 
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | grep -o '"command":"[^"]*"' | head -1 | cut -d'"' -f4 2>/dev/null || echo "")
 
-# GitHub CLI — used for PR view/comment/create on github.com remotes
+# GitHub CLI — used for issue read, PR creation, and issue comment posting
 if echo "$COMMAND" | grep -qE "^gh "; then
     if ! command -v gh > /dev/null 2>&1; then
         echo '{"decision": "block", "reason": "GitHub CLI (gh) is not installed or not in PATH. Install: https://cli.github.com — see docs/platform-setup.md"}'
         exit 0
     fi
     if ! git rev-parse --is-inside-work-tree > /dev/null 2>&1; then
-        echo '{"decision": "block", "reason": "Not inside a git repository. gh pr commands require a checked-out repo."}'
+        echo '{"decision": "block", "reason": "Not inside a git repository. gh commands require a checked-out repo."}'
         exit 0
     fi
     exit 0
@@ -41,29 +42,23 @@ if ! command -v git > /dev/null 2>&1; then
 fi
 
 if ! git rev-parse --is-inside-work-tree > /dev/null 2>&1; then
-    echo '{"decision": "block", "reason": "Not inside a git repository. Performance analysis requires a git project."}'
+    echo '{"decision": "block", "reason": "Not inside a git repository. The Performance Optimizer requires a git project."}'
     exit 0
 fi
 
-# Block pushes to the source PR head branch in fix-PR mode.
-# The Performance Optimizer Agent must only push to the `perf/optimize-*` branch it created.
+# Block pushes from any branch that is not a `perf/issue-*` / `perf/workitem-*` branch.
+# The Performance Optimizer must only push to the fix branch it created — never to the
+# default branch, never to an existing feature branch.
 if echo "$COMMAND" | grep -qE "^git push"; then
-    # Extract the target refspec from the command if present
-    # Accepts: `git push`, `git push origin`, `git push origin HEAD`, `git push -u origin <branch>`
     CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 
-    if [ -n "$CURRENT_BRANCH" ] && ! echo "$CURRENT_BRANCH" | grep -qE "^perf/optimize-"; then
-        # Only allow pushes from a perf/optimize-* branch while under this plugin's control.
-        # If the user explicitly invoked the plugin outside fix-PR mode, they shouldn't be pushing
-        # at all — analysis-first mode never pushes. Block and explain.
-        if [ -n "${PERF_OPTIMIZER_FIX_MODE:-}" ]; then
-            echo "{\"decision\": \"block\", \"reason\": \"Refusing to push from '${CURRENT_BRANCH}'. The Performance Optimizer Agent only pushes from branches named 'perf/optimize-*' created by the fix-pr-author agent. Never push to the source PR branch.\"}"
-            exit 0
-        fi
+    if [ -n "$CURRENT_BRANCH" ] && ! echo "$CURRENT_BRANCH" | grep -qE "^perf/(issue|workitem)-"; then
+        echo "{\"decision\": \"block\", \"reason\": \"Refusing to push from '${CURRENT_BRANCH}'. The Performance Optimizer only pushes from branches named 'perf/issue-*' or 'perf/workitem-*' created by the perf-pr-author agent. Never push to the default branch.\"}"
+        exit 0
     fi
 fi
 
-# For commit operations — require git identity to be set (fix-PR mode)
+# For commit operations — require git identity to be set
 if echo "$COMMAND" | grep -qE "^git commit"; then
     if [ -z "$(git config user.name 2>/dev/null)" ]; then
         echo '{"decision": "block", "reason": "git user.name is not set. Run: git config --global user.name \"Your Name\""}'
@@ -94,14 +89,18 @@ if echo "$COMMAND" | grep -qE "^git push"; then
         export GIT_CONFIG_VALUE_0="https://dev.azure.com/"
         export GIT_CONFIG_KEY_1="url.https://x-access-token:${AZURE_DEVOPS_TOKEN}@visualstudio.com/.insteadOf"
         export GIT_CONFIG_VALUE_1="https://visualstudio.com/"
-    else
-        if [ -z "${GIT_TOKEN:-}" ]; then
-            echo '{"decision": "block", "reason": "GIT_TOKEN is not set. Pass it at runtime: GIT_TOKEN=<token> claude ... (see docs/platform-setup.md)"}'
+    elif echo "$REMOTE_URL" | grep -qE "github\.com"; then
+        GH_CREDENTIAL="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+        if [ -z "${GH_CREDENTIAL}" ]; then
+            echo '{"decision": "block", "reason": "GITHUB_TOKEN (or GH_TOKEN) is not set. Pass it at runtime: GITHUB_TOKEN=<token> claude ... (see docs/platform-setup.md)"}'
             exit 0
         fi
         export GIT_CONFIG_COUNT=1
-        export GIT_CONFIG_KEY_0="url.https://x-access-token:${GIT_TOKEN}@github.com/.insteadOf"
+        export GIT_CONFIG_KEY_0="url.https://x-access-token:${GH_CREDENTIAL}@github.com/.insteadOf"
         export GIT_CONFIG_VALUE_0="https://github.com/"
+    else
+        echo '{"decision": "block", "reason": "Unsupported git remote. The Performance Optimizer supports GitHub (github.com) and Azure DevOps (dev.azure.com, visualstudio.com) remotes only."}'
+        exit 0
     fi
 fi
 

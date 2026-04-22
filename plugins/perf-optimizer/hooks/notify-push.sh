@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # notify-push.sh
 # PostToolUse hook — runs after every Bash tool execution.
-# If the command was a git push from a `perf/optimize-*` branch, outputs a confirmation
-# and a platform-specific next-step hint for opening the optimization PR.
+# If the command was a git push from a `perf/issue-*` or `perf/workitem-*` branch,
+# outputs a confirmation and a platform-specific next-step hint for opening the PR.
 
 set -euo pipefail
 
@@ -20,15 +20,15 @@ COMMIT=$(git log -1 --oneline 2>/dev/null || echo "")
 echo "Push complete — branch '${BRANCH}' pushed to ${REMOTE}"
 echo "Latest commit: ${COMMIT}"
 
-if ! echo "${BRANCH}" | grep -qE "^perf/optimize-"; then
-    # Not a Performance Optimizer Agent branch — quiet success.
+if ! echo "${BRANCH}" | grep -qE "^perf/(issue|workitem)-"; then
+    # Not a Performance Optimizer branch — quiet success.
     exit 0
 fi
 
 if echo "$REMOTE" | grep -q "github.com"; then
-    echo "Next step: open the optimization PR with 'gh pr create' (see providers/github.md)."
+    echo "Next step: open the performance PR with 'gh pr create' (see providers/github.md)."
 elif echo "$REMOTE" | grep -qE "dev.azure.com|visualstudio.com"; then
-    echo "Next step: open the optimization PR via Azure DevOps REST API (see providers/azure-devops.md)."
+    echo "Next step: open the performance PR via Azure DevOps REST API (see providers/azure-devops.md)."
 else
-    echo "Next step: open the optimization PR manually — body is in performance-fix-pr.md (see providers/generic.md)."
+    echo "Next step: unsupported remote — open the performance PR manually on your git host."
 fi

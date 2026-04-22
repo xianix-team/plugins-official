@@ -39,6 +39,21 @@
       "category": "requirements",
       "keywords": ["requirement-analysis", "requirement-elaboration", "backlog-refinement", "domain-knowledge", "competitive-insights", "user-journey", "personas", "usability", "adoption"],
       "license": "MIT"
+    },
+    {
+      "name": "perf-optimizer",
+      "source": "./plugins/perf-optimizer",
+      "description": "Whole-codebase performance bottleneck detection triggered from a GitHub issue or Azure DevOps work item. Analyzes latency, CPU, memory, and I/O patterns across the repository's default branch and opens a single pull request containing focused, low-risk optimizations together with an embedded performance report. Works with GitHub and Azure DevOps.",
+      "version": "2.0.0",
+      "author": {
+        "name": "99x",
+        "email": "xianix-agent@99x.io"
+      },
+      "homepage": "https://opensource.99x.io/xianix-team/",
+      "repository": "https://github.com/indikarat99x/xianix-plugins-official",
+      "category": "code-review",
+      "keywords": ["performance", "performance-optimization", "performance-review", "issue-driven", "whole-codebase", "latency", "cpu", "memory", "n-plus-one", "azure-devops", "github"],
+      "license": "MIT"
     }
   ]
 }

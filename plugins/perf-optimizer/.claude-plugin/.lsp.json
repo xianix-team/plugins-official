@@ -1,0 +1,34 @@
+{
+  "typescript": {
+    "command": "typescript-language-server",
+    "args": ["--stdio"],
+    "extensionToLanguage": {
+      ".ts": "typescript",
+      ".tsx": "typescriptreact",
+      ".js": "javascript",
+      ".jsx": "javascriptreact"
+    }
+  },
+  "csharp": {
+    "command": "OmniSharp",
+    "args": ["-lsp"],
+    "extensionToLanguage": {
+      ".cs": "csharp",
+      ".csproj": "xml",
+      ".sln": "xml"
+    }
+  },
+  "python": {
+    "command": "pyright-langserver",
+    "args": ["--stdio"],
+    "extensionToLanguage": {
+      ".py": "python"
+    }
+  },
+  "go": {
+    "command": "gopls",
+    "extensionToLanguage": {
+      ".go": "go"
+    }
+  }
+}

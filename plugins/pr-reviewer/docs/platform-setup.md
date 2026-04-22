@@ -26,13 +26,13 @@ The plugin does **not** use the GitHub MCP server. See `providers/github.md` for
 When using `--fix`, the agent pushes commits. Pass the token at runtime:
 
 ```bash
-GIT_TOKEN=ghp_your_token_here claude ...
+GITHUB_TOKEN=ghp_your_token_here claude ...
 ```
 
 Or export in your shell:
 
 ```bash
-export GIT_TOKEN=ghp_your_token_here
+export GITHUB_TOKEN=ghp_your_token_here
 ```
 
 ---
@@ -76,7 +76,7 @@ export AZURE_DEVOPS_TOKEN=<your-pat>
 
 ### Credentials for `git push` (fix mode)
 
-The plugin reuses `AZURE_DEVOPS_TOKEN` for `git push` credential injection automatically — no separate `GIT_TOKEN` is needed for Azure DevOps remotes.
+The plugin reuses `AZURE_DEVOPS_TOKEN` for `git push` credential injection automatically — no separate `GITHUB_TOKEN` is needed for Azure DevOps remotes.
 
 ### Generating a PAT
 
@@ -99,9 +99,9 @@ No additional setup is required beyond having a working git installation.
 
 | Platform | Analysis | Review posting | Token (posting / API) | Fix mode push |
 |---|---|---|---|---|
-| GitHub | `git diff`, `git log`, … | `gh pr review`, `gh pr comment`, `gh api` | `gh auth` / `GH_TOKEN` | `GIT_TOKEN` |
+| GitHub | `git diff`, `git log`, … | `gh pr review`, `gh pr comment`, `gh api` | `gh auth` / `GH_TOKEN` | `GITHUB_TOKEN` |
 | Azure DevOps | `git diff`, `git log`, … | REST (`curl`) per `providers/azure-devops.md` | `AZURE_DEVOPS_TOKEN` / `AZURE_DEVOPS_TOKEN` | `AZURE_DEVOPS_TOKEN` |
-| Generic | `git diff`, `git log`, … | Write to `pr-review-report.md` | — | `GIT_TOKEN` |
+| Generic | `git diff`, `git log`, … | Write to `pr-review-report.md` | — | `GITHUB_TOKEN` |
 
 ---
 

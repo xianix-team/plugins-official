@@ -7,7 +7,7 @@
 # Writing  — requires local git for commit/push; validated here
 #
 # Credentials
-#   GIT_TOKEN          — used by git push for HTTPS authentication (GitHub / generic)
+#   GITHUB_TOKEN          — used by git push for HTTPS authentication (GitHub / generic)
 #                        injected via GIT_CONFIG env vars, never written to disk
 #   AZURE_DEVOPS_TOKEN   — used by git push for HTTPS authentication on Azure DevOps remotes
 #                        also used by the az CLI for API calls
@@ -84,16 +84,16 @@ if echo "$COMMAND" | grep -qE "^git push"; then
         export GIT_CONFIG_KEY_1="url.https://x-access-token:${AZURE_DEVOPS_TOKEN}@visualstudio.com/.insteadOf"
         export GIT_CONFIG_VALUE_1="https://visualstudio.com/"
     else
-        # GitHub or generic HTTPS remote — use GIT_TOKEN
-        if [ -z "${GIT_TOKEN:-}" ]; then
-            echo '{"decision": "block", "reason": "GIT_TOKEN is not set. Pass it at runtime: GIT_TOKEN=<token> claude ... (see docs/platform-setup.md)"}'
+        # GitHub or generic HTTPS remote — use GITHUB_TOKEN
+        if [ -z "${GITHUB_TOKEN:-}" ]; then
+            echo '{"decision": "block", "reason": "GITHUB_TOKEN is not set. Pass it at runtime: GITHUB_TOKEN=<token> claude ... (see docs/platform-setup.md)"}'
             exit 0
         fi
 
         # Inject token via env-based git config — no files written, no global config touched,
         # scoped to this shell session only.
         export GIT_CONFIG_COUNT=1
-        export GIT_CONFIG_KEY_0="url.https://x-access-token:${GIT_TOKEN}@github.com/.insteadOf"
+        export GIT_CONFIG_KEY_0="url.https://x-access-token:${GITHUB_TOKEN}@github.com/.insteadOf"
         export GIT_CONFIG_VALUE_0="https://github.com/"
     fi
 fi

@@ -19,13 +19,13 @@ The `validate-prerequisites.sh` hook sets this up automatically before every `gi
 | Variable | Used by | Purpose |
 |---|---|---|
 | `GH_TOKEN` / `GITHUB_TOKEN` | GitHub CLI (`gh`) | Non-interactive API auth (optional if `gh auth login` was used) |
-| `GIT_TOKEN` | Local `git push` | Authenticate HTTPS pushes to the PR branch |
+| `GITHUB_TOKEN` | Local `git push` | Authenticate HTTPS pushes to the PR branch |
 
-These are typically the same PAT. The hook injects `GIT_TOKEN` as:
+These are typically the same PAT. The hook injects `GITHUB_TOKEN` as:
 
 ```bash
 GIT_CONFIG_COUNT=1
-GIT_CONFIG_KEY_0="url.https://x-access-token:<GIT_TOKEN>@github.com/.insteadOf"
+GIT_CONFIG_KEY_0="url.https://x-access-token:<GITHUB_TOKEN>@github.com/.insteadOf"
 GIT_CONFIG_VALUE_0="https://github.com/"
 ```
 
@@ -64,7 +64,7 @@ GIT_CONFIG_VALUE_1="https://visualstudio.com/"
 
 **GitHub:**
 ```bash
-GH_TOKEN=ghp_xxx GIT_TOKEN=ghp_xxx claude
+GH_TOKEN=ghp_xxx GITHUB_TOKEN=ghp_xxx claude
 ```
 
 **Azure DevOps:**
@@ -77,7 +77,7 @@ AZURE_DEVOPS_TOKEN=<pat> claude
 ```bash
 # GitHub
 export GH_TOKEN=ghp_xxx
-export GIT_TOKEN=ghp_xxx
+export GITHUB_TOKEN=ghp_xxx
 
 # Azure DevOps
 export AZURE_DEVOPS_TOKEN=<pat>
@@ -90,7 +90,7 @@ Create a `.env` file in your project root (add it to `.gitignore`):
 ```bash
 # GitHub
 GH_TOKEN=ghp_xxx
-GIT_TOKEN=ghp_xxx
+GITHUB_TOKEN=ghp_xxx
 
 # Azure DevOps
 AZURE_DEVOPS_TOKEN=<pat>
@@ -110,7 +110,7 @@ Because credentials are passed at invocation time, you can use a different token
 
 ```bash
 # Reviewing a GitHub repo
-GIT_TOKEN=ghp_my_token claude ...
+GITHUB_TOKEN=ghp_my_token claude ...
 
 # Reviewing an Azure DevOps repo
 AZURE_DEVOPS_TOKEN=my_ado_pat claude ...
@@ -124,7 +124,7 @@ The `validate-prerequisites.sh` hook blocks any `git push` attempt if the requir
 
 **GitHub:**
 ```
-blocked: GIT_TOKEN is not set. Pass it at runtime: GIT_TOKEN=ghp_xxx claude ... (see docs/git-auth.md)
+blocked: GITHUB_TOKEN is not set. Pass it at runtime: GITHUB_TOKEN=ghp_xxx claude ... (see docs/git-auth.md)
 ```
 
 **Azure DevOps:**
@@ -152,6 +152,6 @@ If it completes without a credential prompt, the token is injected correctly.
 
 | Platform | Token for API | Token for git push |
 |---|---|---|
-| GitHub | `gh auth login` or `GH_TOKEN` / `GITHUB_TOKEN` | `GIT_TOKEN` |
+| GitHub | `gh auth login` or `GH_TOKEN` / `GITHUB_TOKEN` | `GITHUB_TOKEN` |
 | Azure DevOps | `AZURE_DEVOPS_TOKEN` | `AZURE_DEVOPS_TOKEN` (same) |
-| Generic | — | `GIT_TOKEN` |
+| Generic | — | `GITHUB_TOKEN` |

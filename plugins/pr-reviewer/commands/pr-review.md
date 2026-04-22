@@ -6,6 +6,15 @@ argument-hint: [pr-number | branch-name]
 
 Run a comprehensive pull request review for $ARGUMENTS.
 
+## Hand-off Rules (read first)
+
+When invoking the `orchestrator` sub-agent, **do not assume a hosting platform**. Pass only the raw PR identifier (number, branch name, or empty) and let the orchestrator detect the platform from `git remote get-url origin`.
+
+- ❌ Bad: *"Perform a review for PR #12 in the **GitHub** repository foo/bar"* — this primes the orchestrator with the wrong platform when the remote is actually Azure DevOps or Bitbucket, leading to wasted `gh` calls and leaked tokens in logs.
+- ✅ Good: *"Perform a review for PR #12 in repository `foo/bar` on branch `feature/x`. Detect the hosting platform from the git remote before doing anything else."*
+
+The orchestrator's first action is always `git remote get-url origin`; do not pre-empt it.
+
 ## What This Does
 
 This command invokes the **orchestrator** agent which coordinates four specialized reviewers in parallel:

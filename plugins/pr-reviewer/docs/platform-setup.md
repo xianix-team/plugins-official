@@ -70,9 +70,16 @@ Add to `~/.zshrc` or `~/.bashrc` to persist:
 export AZURE_DEVOPS_TOKEN=<your-pat>
 ```
 
+> **Variable-name hygiene (important):** the variable name must be `AZURE_DEVOPS_TOKEN` — **underscores only**. Some CI systems and orchestrators (e.g. when reading from a YAML key like `azure-devops-token`) export it as `AZURE-DEVOPS-TOKEN` with hyphens. Bash cannot reference hyphenated names (`$AZURE-DEVOPS-TOKEN` parses as `$AZURE` minus `DEVOPS-TOKEN`), so `curl -u ":${AZURE-DEVOPS-TOKEN}"` will silently send an empty password and every Azure DevOps API call will fail with 401. The plugin's `PreToolUse` hook detects this case and blocks with an actionable message; if you hit it, re-export under the underscore name:
+>
+> ```bash
+> export AZURE_DEVOPS_TOKEN="$(env | sed -n 's/^AZURE-DEVOPS-TOKEN=//p')"
+> ```
+
 **PAT scopes needed:**
 - `Code` → Read & Write
 - `Pull Request Threads` → Read & Write
+- `User Profile` → Read (required to resolve the reviewer ID for casting the vote)
 
 ### Credentials for `git push` (fix mode)
 

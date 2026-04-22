@@ -1,7 +1,7 @@
 ---
 name: orchestrator
 description: Comprehensive PR review orchestrator. Coordinates multi-dimensional code review covering quality, security, tests, and performance. Can also apply fixes and push changes. Invoke for a full pull request analysis before merge.
-tools: Read, Write, Grep, Glob, Bash, Agent
+tools: Read, Write, Grep, Glob, Bash, Task
 model: inherit
 ---
 
@@ -27,9 +27,50 @@ Execute all steps autonomously without pausing for user input. Do not ask for co
 
 When invoked with a PR number, branch name, or no argument (defaults to current branch vs main):
 
-### 0. Index the Codebase
+### 1. Detect Platform (do this FIRST, before any other tool call)
 
-Before doing anything else, build a structural index of the repository so subsequent steps and sub-agents can navigate it precisely:
+Run **only** the following to detect which hosting platform is in use:
+
+```bash
+git remote get-url origin
+```
+
+From the remote URL, determine the platform:
+- Contains `github.com` → **GitHub**
+- Contains `dev.azure.com` or `visualstudio.com` → **Azure DevOps**
+- Contains `bitbucket.org` → **Bitbucket**
+- Anything else → **Generic** (report only, no inline posting)
+
+Store the detected platform — it determines every subsequent CLI/API choice.
+
+#### Platform-exclusive CLI rule (mandatory)
+
+After detection, use **only** the platform-appropriate tool for the rest of the run. Mixing them wastes turns and leaks credentials into logs:
+
+| Platform | Allowed for posting / PR API | Forbidden |
+|---|---|---|
+| GitHub | `gh`, `git` | `curl` to Azure DevOps, `az` |
+| Azure DevOps | `curl` + `AZURE_DEVOPS_TOKEN`, `git` | `gh` (will fail with `gh auth login`), `az login` |
+| Bitbucket / Generic | `git` only | `gh`, `curl` to private APIs |
+
+Do **not** probe other CLIs ("just to check"). The hook layer will block obvious mismatches; doing it wrong will block the run.
+
+### 2. Post a "Review in Progress" Comment (must be within the first 3 tool calls)
+
+Immediately after platform detection, post a comment so the PR author knows the review has started. **Do not read any files, do not run `find`/`ls`, do not index the codebase before this step.**
+
+Use the platform-appropriate method:
+- **GitHub:** `gh pr comment` — see `providers/github.md`
+- **Azure DevOps:** REST API — see `providers/azure-devops.md` (Posting the Starting Comment section)
+- **Generic / unknown platform:** Skip — no API available
+
+Resolve the PR number from the argument first; only fall back to a CLI lookup (`gh pr list` on GitHub, `pullrequests?searchCriteria.sourceRefName=...` on Azure DevOps) if it was not provided.
+
+If posting the starting comment fails, output a single warning line and continue — do not stop the review.
+
+### 3. Index the Codebase
+
+Now build a structural index of the repository so subsequent steps and sub-agents can navigate it precisely:
 
 ```bash
 # Top-level layout
@@ -57,73 +98,72 @@ Use `Read` on key config/manifest files (e.g. `package.json`, `*.csproj`, `go.mo
 
 Store a short mental model of the project — language stack, major modules, and where the changed files fit — before proceeding.
 
-### 1. Detect Platform
+### 4. Gather PR Context
 
-Run the following to detect which hosting platform is in use:
+Use **git** for every hosting platform — the same commands keep behavior consistent and avoid needing platform CLIs for read/analysis. Platform-specific PR metadata (title, description) comes later via the provider doc; this step is git-only.
 
-```bash
-git remote get-url origin
-```
-
-From the remote URL, determine the platform:
-- Contains `github.com` → **GitHub**
-- Contains `dev.azure.com` or `visualstudio.com` → **Azure DevOps**
-- Contains `bitbucket.org` → **Bitbucket**
-- Anything else → **Generic** (report only, no inline posting)
-
-Store the detected platform — it determines how the review is posted in Step 5.
-
-### 2. Post a "Review in Progress" Comment
-
-Before doing any analysis, post an immediate comment to let the PR author know the review has started. This avoids confusion from the silence while sub-agents run.
-
-Use the platform-appropriate method:
-- **GitHub:** `gh pr comment` — see `providers/github.md`
-- **Azure DevOps:** REST API — see `providers/azure-devops.md` (Posting the Starting Comment section)
-- **Generic / unknown platform:** Skip — no API available
-
-Resolve the PR number with `gh` only if it was not passed as an argument.
-
-If posting the starting comment fails, output a single warning line and continue — do not stop the review.
-
-### 3. Gather PR Context
-
-Use **git** for every hosting platform. Same commands keep behavior consistent and avoid needing platform CLIs for read/analysis.
+#### Resolve the base branch (robust to detached HEAD and non-`main` defaults)
 
 ```bash
-# Determine the base branch (default to main, fall back to master)
-BASE=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||' || echo "main")
+# Try origin/HEAD first (works when the remote default branch is set)
+BASE=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||')
 
-# Get commit list for this branch
-git log --oneline origin/${BASE}..HEAD
+# Fall back to common defaults
+[ -z "$BASE" ] && git show-ref --verify --quiet refs/remotes/origin/main   && BASE=main
+[ -z "$BASE" ] && git show-ref --verify --quiet refs/remotes/origin/master && BASE=master
+[ -z "$BASE" ] && git show-ref --verify --quiet refs/remotes/origin/develop && BASE=develop
 
-# Get full diff with patches (this is the primary source for sub-agents)
-git diff origin/${BASE}...HEAD
+# Last-resort fallback: first remote branch that isn't HEAD
+[ -z "$BASE" ] && BASE=$(git for-each-ref --format='%(refname:short)' refs/remotes/origin \
+  | sed 's|^origin/||' | grep -v '^HEAD$' | head -1)
 
-# Get list of changed files with stats
-git diff --stat origin/${BASE}...HEAD
-
-# Get list of changed file names only
-git diff --name-only origin/${BASE}...HEAD
-
-# Get head SHA
-git rev-parse HEAD
-
-# Get current branch name
-git rev-parse --abbrev-ref HEAD
-
-# Get author of most recent commit
-git log -1 --format="%an <%ae>"
-
-# Get PR title / description from commit messages
-git log --format="%s%n%b" origin/${BASE}..HEAD
+[ -z "$BASE" ] && { echo "Could not resolve base branch from origin"; exit 1; }
+echo "Base branch: $BASE"
 ```
 
-Use `git show HEAD:<filepath>` or the `Read` tool to read the full content of any file that requires deeper analysis beyond the patch.
+#### Resolve the head SHA and source branch (handles detached HEAD)
 
-**Platform CLIs are not used in this step** — use **`gh`** only when posting to GitHub and **`curl`/Azure DevOps REST** only when posting to Azure DevOps (see Step 5 and the provider docs).
+The PR plugin is often invoked inside a detached worktree (e.g. `git worktree add --detach`), where `git rev-parse --abbrev-ref HEAD` returns the literal string `HEAD` instead of a branch name. Always use the head SHA for diffs and resolve the source branch from the PR object (`sourceRefName` for Azure DevOps, `headRefName` for GitHub) when you need a name.
 
-### 4. Understand the Change
+```bash
+HEAD_SHA=$(git rev-parse HEAD)
+
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+if [ "$CURRENT_BRANCH" = "HEAD" ]; then
+  # Detached — find the local branch (if any) that points at HEAD_SHA
+  CURRENT_BRANCH=$(git branch --contains "$HEAD_SHA" \
+    | sed 's|^[* ] *||' | grep -v '^(' | head -1)
+fi
+echo "Head: $HEAD_SHA  Source branch: ${CURRENT_BRANCH:-<unknown>}"
+```
+
+#### Diff and metadata commands
+
+```bash
+# Commit list for this branch
+git log --oneline origin/${BASE}..${HEAD_SHA}
+
+# Full diff with patches (this is the primary source for sub-agents)
+git diff origin/${BASE}...${HEAD_SHA}
+
+# Changed files with stats
+git diff --stat origin/${BASE}...${HEAD_SHA}
+
+# Changed file names only
+git diff --name-only origin/${BASE}...${HEAD_SHA}
+
+# Author of most recent commit
+git log -1 --format="%an <%ae>" ${HEAD_SHA}
+
+# Commit messages (used as a fallback if PR title/description are unavailable)
+git log --format="%s%n%b" origin/${BASE}..${HEAD_SHA}
+```
+
+Use `git show ${HEAD_SHA}:<filepath>` or the `Read` tool to read the full content of any file that requires deeper analysis beyond the patch.
+
+**Platform CLIs are not used in this step.** Use **`gh`** only when posting to GitHub and **`curl`/Azure DevOps REST** only when posting to Azure DevOps (see the provider docs and "Posting the Review" below).
+
+### 5. Understand the Change
 
 Before launching sub-agents:
 - Identify the type of change (feature, bugfix, refactor, config, docs)
@@ -131,16 +171,28 @@ Before launching sub-agents:
 - Identify critical or high-risk files (auth, payments, database migrations, public APIs)
 - Estimate scope (small/medium/large)
 
-### 5. Orchestrate Specialized Reviews
+### 6. Orchestrate Specialized Reviews (parallel `Task` calls — mandatory)
 
-Pass the git-fetched file list and patches to each sub-agent so they don't need to re-fetch. Launch all four reviewers in parallel using the Agent tool:
+Launch all four reviewers in **one assistant turn** containing four parallel `Task` tool calls — one per `subagent_type`. Do **not** run them sequentially, and do **not** simulate them inline using `cat <<ANALYSIS` heredocs in `Bash` — that defeats the entire multi-agent design and roughly doubles wall-clock time.
 
-- **code-reviewer**: Code quality, readability, maintainability
-- **security-reviewer**: Vulnerabilities, secrets, input validation
-- **test-reviewer**: Test coverage and test quality
-- **performance-reviewer**: Bottlenecks, inefficiencies, resource usage
+| `subagent_type` | Focus |
+|---|---|
+| `code-reviewer` | Code quality, readability, maintainability |
+| `security-reviewer` | Vulnerabilities, secrets, input validation |
+| `test-reviewer` | Test coverage and test quality |
+| `performance-reviewer` | Bottlenecks, inefficiencies, resource usage |
 
-### 6. Compile Final Report
+In each `Task` prompt, include — verbatim, do not paraphrase:
+
+- The full diff (`git diff origin/${BASE}...${HEAD_SHA}` output, or a path to a file containing it if it is very large)
+- The list of changed files (`git diff --name-only origin/${BASE}...${HEAD_SHA}`)
+- `HEAD_SHA` and `BASE`
+- The PR title and description (from the platform metadata fetched in step 2 / the provider doc)
+- A reminder: "Do not re-fetch git data; the diff above is authoritative."
+
+After all four `Task` calls return, proceed to step 7. Do not start compiling the report until every sub-agent has finished.
+
+### 7. Compile Final Report
 
 Aggregate all findings into the structured report format defined in `styles/report-template.md`. Read that file and follow its template exactly.
 

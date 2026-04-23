@@ -68,58 +68,74 @@ Use `${API_BASE}` in place of a hardcoded host for **every** API call below.
 
 ---
 
-## Helper: POST/PUT JSON via python (preferred over `curl -d "$(...)"` heredocs)
+## Posting pattern (use this exact form for every write call)
 
-Nesting a bash heredoc inside `python3 -c` inside a `curl -d` command substitution is fragile — quoting bugs cost real turns. Instead, use the two-step pattern below for every write call: write the raw body to a temp file, then build and POST the payload from python.
+The pattern below is what production runs converge on. **Use it as-is** rather than inventing a wrapper function — wrapper functions get ignored by the model in favor of inline curl.
+
+Two rules:
+1. **Always send the body via `--data @file`**, never inline. Heredocs inside `curl -d "$(...)"` produce hard-to-debug quoting bugs.
+2. **Always capture HTTP status** with `-w "\nHTTP_STATUS:%{http_code}\n"` and check it. Silent 401 / 404 responses are the #1 cause of "post succeeded but nothing showed up on the PR".
+
+#### Generic comment thread
 
 ```bash
-ado_post_thread() {
-  # Args:
-  #   $1 = body file (markdown content for the comment)
-  #   $2 = optional file path (for inline thread)
-  #   $3 = optional line number (for inline thread)
-  local BODY_FILE="$1" FILE_PATH="${2:-}" LINE_NUMBER="${3:-}"
-  BODY_FILE="$BODY_FILE" FILE_PATH="$FILE_PATH" LINE_NUMBER="$LINE_NUMBER" \
-  PR_ID="${PR_ID}" python3 - <<'PY'
-import json, os, subprocess, sys
-body = open(os.environ['BODY_FILE']).read()
-payload = {
+# 1. Write the markdown body to a file
+cat > /tmp/pr_thread_body.md <<'BODY'
+**Your markdown content here.**
+BODY
+
+# 2. Build the JSON payload (use python so the markdown is escaped correctly)
+python3 - <<'PY' > /tmp/pr_thread_payload.json
+import json
+body = open('/tmp/pr_thread_body.md').read()
+print(json.dumps({
     "comments": [{"content": body, "commentType": 1}],
     "status": "active",
     "properties": {"Microsoft.TeamFoundation.Discussion.SupportsMarkdown": 1},
-}
-fp = os.environ.get('FILE_PATH') or ''
-ln = os.environ.get('LINE_NUMBER') or ''
-if fp and ln:
-    payload["threadContext"] = {
-        "filePath": "/" + fp.lstrip("/"),
-        "rightFileStart": {"line": int(ln), "offset": 1},
-        "rightFileEnd":   {"line": int(ln), "offset": 1},
-    }
-url = (f"{os.environ['API_BASE']}/_apis/git/repositories/"
-       f"{os.environ['AZURE_REPO']}/pullrequests/{os.environ['PR_ID']}"
-       f"/threads?api-version=7.1")
-r = subprocess.run([
-    "curl", "-sS", "-w", "\nHTTP_STATUS:%{http_code}",
-    "-u", f":{os.environ['AZURE_DEVOPS_TOKEN']}",
-    "-X", "POST", "-H", "Content-Type: application/json",
-    url, "--data-binary", json.dumps(payload),
-], capture_output=True, text=True, check=False)
-out = r.stdout
-status = out.rsplit("HTTP_STATUS:", 1)[-1].strip() if "HTTP_STATUS:" in out else "?"
-body_out = out.rsplit("HTTP_STATUS:", 1)[0]
-print(f"HTTP {status}", file=sys.stderr)
-if not status.startswith("2"):
-    print(body_out, file=sys.stderr)
-    sys.exit(1)
+}))
 PY
-}
+
+# 3. POST and check status
+RESP=$(curl -sS -w "\nHTTP_STATUS:%{http_code}" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Basic $(echo -n ":${AZURE_DEVOPS_TOKEN}" | base64 -w0)" \
+  -X POST \
+  --data @/tmp/pr_thread_payload.json \
+  "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads?api-version=7.1")
+
+STATUS=$(echo "$RESP" | sed -n 's/^HTTP_STATUS://p')
+if echo "$STATUS" | grep -qE '^2'; then
+  echo "Thread posted (HTTP $STATUS)"
+else
+  echo "WARN: thread post failed HTTP $STATUS — body: $(echo "$RESP" | sed '$d')" >&2
+fi
 ```
 
-Usage:
-- `ado_post_thread /tmp/starting.md` — generic comment thread
-- `ado_post_thread /tmp/report.md` — full review report
-- `ado_post_thread /tmp/finding.md path/to/file.cs 42` — inline comment
+#### Inline comment thread
+
+Same as above, but extend the JSON payload with `threadContext`. Replace the `python3 -c` step with:
+
+```bash
+FILE_PATH="Xians.Lib/Common/Caching/CacheService.cs" LINE_NUMBER=42 \
+python3 - <<'PY' > /tmp/pr_thread_payload.json
+import json, os
+body = open('/tmp/pr_thread_body.md').read()
+print(json.dumps({
+    "comments": [{"content": body, "commentType": 1}],
+    "status": "active",
+    "properties": {"Microsoft.TeamFoundation.Discussion.SupportsMarkdown": 1},
+    "threadContext": {
+        "filePath": "/" + os.environ["FILE_PATH"].lstrip("/"),
+        "rightFileStart": {"line": int(os.environ["LINE_NUMBER"]), "offset": 1},
+        "rightFileEnd":   {"line": int(os.environ["LINE_NUMBER"]), "offset": 1},
+    },
+}))
+PY
+```
+
+Then POST exactly as in step 3 above.
+
+> **Authentication note:** Both `-u ":${AZURE_DEVOPS_TOKEN}"` and `-H "Authorization: Basic $(echo -n ":${AZURE_DEVOPS_TOKEN}" | base64 -w0)"` work for Azure DevOps PAT auth. The `-H` form is shown above because it makes the auth header visible in `curl -v` traces and is what the model converges on in practice.
 
 ---
 
@@ -165,7 +181,7 @@ PR_AUTHOR_EMAIL=$(echo "$PR_JSON" | python3 -c "import sys,json; d=json.load(sys
 export PR_TITLE PR_DESC PR_SOURCE PR_TARGET PR_AUTHOR PR_AUTHOR_EMAIL
 ```
 
-Use `$PR_TARGET` as the **base branch** for diffs (`git diff origin/${PR_TARGET}...HEAD`) — that is authoritative, while heuristics on `origin/HEAD` are not.
+Use `$PR_TARGET` as the **base branch** for diffs. Resolve it to a concrete SHA the same way the orchestrator step 3 does — try `refs/remotes/origin/${PR_TARGET}` first, then fall back to `refs/heads/${PR_TARGET}` (worktrees may not have remote-tracking refs), then take `git merge-base` against `HEAD`.
 
 ---
 
@@ -179,7 +195,7 @@ For PR threads, put Markdown in `comments[].content`. Also set thread `propertie
 |---|---|
 | `Microsoft.TeamFoundation.Discussion.SupportsMarkdown` | `1` (integer) |
 
-The `ado_post_thread` helper above sets this on every call.
+The posting pattern above includes this on every call.
 
 ---
 
@@ -188,13 +204,27 @@ The `ado_post_thread` helper above sets this on every call.
 Before running any analysis, post a plain PR comment thread to inform the author that a review is underway. This fires as the very first action on Azure DevOps, before sub-agents are launched.
 
 ```bash
-cat > /tmp/pr_starting.md <<'BODY'
+cat > /tmp/pr_thread_body.md <<'BODY'
 **PR review in progress**
 
 I'm running a comprehensive review covering code quality, security, test coverage, and performance. The full results will be posted as a review comment when complete — this may take a few minutes.
 BODY
 
-ado_post_thread /tmp/pr_starting.md
+python3 - <<'PY' > /tmp/pr_thread_payload.json
+import json
+body = open('/tmp/pr_thread_body.md').read()
+print(json.dumps({
+    "comments": [{"content": body, "commentType": 1}],
+    "status": "active",
+    "properties": {"Microsoft.TeamFoundation.Discussion.SupportsMarkdown": 1},
+}))
+PY
+
+curl -sS -w "\nHTTP_STATUS:%{http_code}\n" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Basic $(echo -n ":${AZURE_DEVOPS_TOKEN}" | base64 -w0)" \
+  -X POST --data @/tmp/pr_thread_payload.json \
+  "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads?api-version=7.1"
 ```
 
 If posting the starting comment fails, output a single warning line and continue — do not stop the review.
@@ -205,37 +235,60 @@ If posting the starting comment fails, output a single warning line and continue
 
 ### 1. Map verdict to Azure DevOps vote
 
+The verdict string in the report MUST be exactly one of the four values below — written in uppercase, with no decoration. **Always cast a vote**, even on approve. Skipping the vote means the PR shows no reviewer status, which defeats the purpose of the review.
+
 | Plugin verdict | Azure DevOps vote value | Description |
 |---|---|---|
 | `APPROVE` | `10` | Approved |
+| `APPROVE WITH SUGGESTIONS` | `5` | Approved with suggestions (non-blocking) |
 | `REQUEST CHANGES` | `-10` | Rejected |
 | `NEEDS DISCUSSION` | `-5` | Waiting for author |
 
-### 2. Resolve the reviewer ID and post the vote
-
-> **Important:** the documented `reviewers/me` alias does **not** work with PAT authentication — it returns an HTML error page that breaks JSON parsers. You must resolve the actual profile ID first.
+If the report contains a non-conforming verdict (e.g. `APPROVED WITH SUGGESTIONS`, `LGTM`, `NEEDS WORK`), normalize it to the closest match before mapping:
+- `APPROVED*` / `LGTM` → `APPROVE` (or `APPROVE WITH SUGGESTIONS` if there are non-empty Suggestions)
+- `BLOCK*` / `REJECT*` / `NEEDS WORK` / `CHANGES REQUESTED` → `REQUEST CHANGES`
+- Anything else → `NEEDS DISCUSSION`
 
 ```bash
-# Resolve the profile ID for this PAT
-REVIEWER_ID=$(curl -sS -u ":${AZURE_DEVOPS_TOKEN}" \
+case "${VERDICT}" in
+  "APPROVE")                     VOTE=10  ;;
+  "APPROVE WITH SUGGESTIONS")    VOTE=5   ;;
+  "REQUEST CHANGES")             VOTE=-10 ;;
+  "NEEDS DISCUSSION")            VOTE=-5  ;;
+  *)
+    echo "WARN: unknown verdict '${VERDICT}' — defaulting to NEEDS DISCUSSION (vote -5)" >&2
+    VOTE=-5
+    ;;
+esac
+```
+
+### 2. Resolve the reviewer ID and post the vote (mandatory)
+
+> **Important:** the documented `reviewers/me` alias does **not** work with PAT authentication — it returns an HTML error page that breaks JSON parsers. Resolve the actual profile ID first.
+
+```bash
+REVIEWER_ID=$(curl -sS \
+  -H "Authorization: Basic $(echo -n ":${AZURE_DEVOPS_TOKEN}" | base64 -w0)" \
   "https://app.vssps.visualstudio.com/_apis/profile/profiles/me?api-version=7.1" \
-  | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+  | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))")
 
 if [ -z "$REVIEWER_ID" ]; then
   echo "WARN: could not resolve reviewer ID — vote will not be cast" >&2
 else
-  # Cast the vote (use PUT — Azure DevOps requires the reviewer to already exist on the PR;
-  # if it doesn't, fall back to POST .../reviewers with the same body)
   VOTE_RESP=$(curl -sS -w "\nHTTP_STATUS:%{http_code}" \
-    -u ":${AZURE_DEVOPS_TOKEN}" \
-    -X PUT \
     -H "Content-Type: application/json" \
-    "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullrequests/${PR_ID}/reviewers/${REVIEWER_ID}?api-version=7.1" \
+    -H "Authorization: Basic $(echo -n ":${AZURE_DEVOPS_TOKEN}" | base64 -w0)" \
+    -X PUT \
+    "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/reviewers/${REVIEWER_ID}?api-version=7.1" \
     -d "{\"vote\": ${VOTE}, \"id\": \"${REVIEWER_ID}\"}")
 
   STATUS=$(echo "$VOTE_RESP" | sed -n 's/^HTTP_STATUS://p')
-  if ! echo "$STATUS" | grep -qE '^2'; then
+  if echo "$STATUS" | grep -qE '^2'; then
+    echo "Vote ${VOTE} cast (HTTP $STATUS)"
+  else
     echo "WARN: vote PUT returned HTTP $STATUS — body: $(echo "$VOTE_RESP" | sed '$d')" >&2
+    # If the reviewer isn't on the PR yet, POST .../reviewers (no /id suffix) with the same body.
+    # Some org policies require the reviewer to be added explicitly first.
   fi
 fi
 ```
@@ -243,30 +296,62 @@ fi
 ### 3. Post the full report as a PR thread
 
 ```bash
-# Write the compiled report to a file first — never inline a heredoc inside `curl -d`
-cat > /tmp/pr_report.md <<'REPORT'
+cat > /tmp/pr_thread_body.md <<'REPORT'
 ${REPORT_BODY}
 REPORT
 
-ado_post_thread /tmp/pr_report.md
+python3 - <<'PY' > /tmp/pr_thread_payload.json
+import json
+body = open('/tmp/pr_thread_body.md').read()
+print(json.dumps({
+    "comments": [{"content": body, "commentType": 1}],
+    "status": "active",
+    "properties": {"Microsoft.TeamFoundation.Discussion.SupportsMarkdown": 1},
+}))
+PY
+
+curl -sS -w "\nHTTP_STATUS:%{http_code}\n" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Basic $(echo -n ":${AZURE_DEVOPS_TOKEN}" | base64 -w0)" \
+  -X POST --data @/tmp/pr_thread_payload.json \
+  "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads?api-version=7.1"
 ```
 
 ### 4. Post inline comments (one thread per finding)
 
-For each finding with a precise file path and line number:
+For each finding with a precise file path and line number, build a payload with `threadContext` and POST to the same threads endpoint:
 
 ```bash
-# For each finding:
-cat > /tmp/pr_finding.md <<'BODY'
+cat > /tmp/pr_thread_body.md <<'BODY'
 **[CRITICAL] Sync-over-async deadlock risk**
 
 `.GetAwaiter().GetResult()` on `GetClientAsync()` in a sync context is a well-known deadlock pattern…
 BODY
 
-ado_post_thread /tmp/pr_finding.md "Xians.Lib/Agents/Core/ActivityRegistrar.cs" 62
+FILE_PATH="Xians.Lib/Agents/Core/ActivityRegistrar.cs" LINE_NUMBER=62 \
+python3 - <<'PY' > /tmp/pr_thread_payload.json
+import json, os
+body = open('/tmp/pr_thread_body.md').read()
+print(json.dumps({
+    "comments": [{"content": body, "commentType": 1}],
+    "status": "active",
+    "properties": {"Microsoft.TeamFoundation.Discussion.SupportsMarkdown": 1},
+    "threadContext": {
+        "filePath": "/" + os.environ["FILE_PATH"].lstrip("/"),
+        "rightFileStart": {"line": int(os.environ["LINE_NUMBER"]), "offset": 1},
+        "rightFileEnd":   {"line": int(os.environ["LINE_NUMBER"]), "offset": 1},
+    },
+}))
+PY
+
+curl -sS -w "\nHTTP_STATUS:%{http_code}\n" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Basic $(echo -n ":${AZURE_DEVOPS_TOKEN}" | base64 -w0)" \
+  -X POST --data @/tmp/pr_thread_payload.json \
+  "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads?api-version=7.1"
 ```
 
-Post all inline comments without pausing between them. The helper checks HTTP status on each call and surfaces non-2xx responses to stderr, so failures are visible without crashing the run.
+Post all inline comments without pausing between them. Always check `HTTP_STATUS:` in the response; non-2xx means the comment did not appear on the PR.
 
 ---
 

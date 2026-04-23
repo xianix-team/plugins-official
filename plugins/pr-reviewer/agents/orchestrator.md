@@ -1,7 +1,7 @@
 ---
 name: orchestrator
 description: Comprehensive PR review orchestrator. Coordinates multi-dimensional code review covering quality, security, tests, and performance. Can also apply fixes and push changes. Invoke for a full pull request analysis before merge.
-tools: Read, Write, Grep, Glob, Bash, Task
+tools: Read, Write, Grep, Glob, Bash, Task, Agent
 model: inherit
 ---
 
@@ -68,100 +68,118 @@ Resolve the PR number from the argument first; only fall back to a CLI lookup (`
 
 If posting the starting comment fails, output a single warning line and continue — do not stop the review.
 
-### 3. Index the Codebase
+### 3. Gather PR Context (do this BEFORE indexing the codebase)
 
-Now build a structural index of the repository so subsequent steps and sub-agents can navigate it precisely:
+The diff is what matters. Resolve the base/head and pull the diff first — for small PRs (≤10 changed files), this is *all* the context the sub-agents need, and the codebase index in step 4 can be skipped entirely.
 
-```bash
-# Top-level layout
-ls -1
+#### Resolve the base ref (robust to detached HEAD, missing remote-tracking refs, and non-`main` defaults)
 
-# Source tree (depth 3, ignore common noise)
-find . -maxdepth 3 \
-  -not -path './.git/*' \
-  -not -path './node_modules/*' \
-  -not -path './bin/*' \
-  -not -path './obj/*' \
-  -not -path './.vs/*' \
-  | sort
-
-# Language fingerprint (file extensions present)
-find . -not -path './.git/*' -type f \
-  | sed 's/.*\.//' | sort | uniq -c | sort -rn | head -20
-
-# Entry points / build manifests
-ls *.sln *.csproj package.json go.mod Cargo.toml pom.xml build.gradle \
-   pyproject.toml setup.py requirements.txt CMakeLists.txt 2>/dev/null || true
-```
-
-Use `Read` on key config/manifest files (e.g. `package.json`, `*.csproj`, `go.mod`) to understand the project's dependencies and structure. Use `Grep` to locate important patterns such as the main entry point, base classes, or shared utilities referenced by the changed files.
-
-Store a short mental model of the project — language stack, major modules, and where the changed files fit — before proceeding.
-
-### 4. Gather PR Context
-
-Use **git** for every hosting platform — the same commands keep behavior consistent and avoid needing platform CLIs for read/analysis. Platform-specific PR metadata (title, description) comes later via the provider doc; this step is git-only.
-
-#### Resolve the base branch (robust to detached HEAD and non-`main` defaults)
-
-```bash
-# Try origin/HEAD first (works when the remote default branch is set)
-BASE=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||')
-
-# Fall back to common defaults
-[ -z "$BASE" ] && git show-ref --verify --quiet refs/remotes/origin/main   && BASE=main
-[ -z "$BASE" ] && git show-ref --verify --quiet refs/remotes/origin/master && BASE=master
-[ -z "$BASE" ] && git show-ref --verify --quiet refs/remotes/origin/develop && BASE=develop
-
-# Last-resort fallback: first remote branch that isn't HEAD
-[ -z "$BASE" ] && BASE=$(git for-each-ref --format='%(refname:short)' refs/remotes/origin \
-  | sed 's|^origin/||' | grep -v '^HEAD$' | head -1)
-
-[ -z "$BASE" ] && { echo "Could not resolve base branch from origin"; exit 1; }
-echo "Base branch: $BASE"
-```
-
-#### Resolve the head SHA and source branch (handles detached HEAD)
-
-The PR plugin is often invoked inside a detached worktree (e.g. `git worktree add --detach`), where `git rev-parse --abbrev-ref HEAD` returns the literal string `HEAD` instead of a branch name. Always use the head SHA for diffs and resolve the source branch from the PR object (`sourceRefName` for Azure DevOps, `headRefName` for GitHub) when you need a name.
+> **Important:** detached worktrees created by CI runners (e.g. the Xianix Executor) often have **zero** remote-tracking refs (`refs/remotes/origin/*`). `git show-ref | grep remotes` returns nothing. Resolving `origin/master` will fail. Always fall back to **local** branches and use `git merge-base` for the diff.
 
 ```bash
 HEAD_SHA=$(git rev-parse HEAD)
 
+# Helper: does a ref exist?
+_have_ref() { git show-ref --verify --quiet "$1"; }
+
+# Try origin/HEAD, then origin/{main,master,develop}, then local {main,master,develop},
+# then any remote tracking branch, then any local branch other than the current one.
+BASE_REF=""
+for candidate in \
+  "$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null)" \
+  refs/remotes/origin/main refs/remotes/origin/master refs/remotes/origin/develop \
+  refs/heads/main refs/heads/master refs/heads/develop; do
+  [ -n "$candidate" ] && _have_ref "$candidate" && { BASE_REF="$candidate"; break; }
+done
+
+# Last-resort fallbacks
+if [ -z "$BASE_REF" ]; then
+  # First remote tracking branch that isn't HEAD
+  BASE_REF=$(git for-each-ref --format='%(refname)' refs/remotes/origin \
+    | grep -v '/HEAD$' | head -1)
+fi
+if [ -z "$BASE_REF" ]; then
+  # First local branch that isn't whatever HEAD points at
+  BASE_REF=$(git for-each-ref --format='%(refname)' refs/heads \
+    | grep -v -F "$(git symbolic-ref -q HEAD || echo /no/symbolic/ref)" | head -1)
+fi
+
+[ -z "$BASE_REF" ] && { echo "ERROR: could not resolve any base ref"; exit 1; }
+
+# Short label (e.g. "master") and a merge-base SHA we can diff against
+BASE=$(echo "$BASE_REF" | sed -e 's|^refs/remotes/origin/||' -e 's|^refs/heads/||')
+BASE_SHA=$(git merge-base "$BASE_REF" "$HEAD_SHA")
+
+echo "Base: $BASE ($BASE_REF -> $BASE_SHA)"
+echo "Head: $HEAD_SHA"
+export HEAD_SHA BASE BASE_REF BASE_SHA
+```
+
+Use `${BASE_SHA}` (not `origin/${BASE}`) in every diff command below — it works regardless of whether remote-tracking refs exist.
+
+#### Resolve the source branch name (handles detached HEAD)
+
+```bash
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 if [ "$CURRENT_BRANCH" = "HEAD" ]; then
-  # Detached — find the local branch (if any) that points at HEAD_SHA
   CURRENT_BRANCH=$(git branch --contains "$HEAD_SHA" \
     | sed 's|^[* ] *||' | grep -v '^(' | head -1)
 fi
-echo "Head: $HEAD_SHA  Source branch: ${CURRENT_BRANCH:-<unknown>}"
+export CURRENT_BRANCH
 ```
 
-#### Diff and metadata commands
+#### Diff and metadata commands (use `BASE_SHA`, not `origin/${BASE}`)
 
 ```bash
-# Commit list for this branch
-git log --oneline origin/${BASE}..${HEAD_SHA}
-
-# Full diff with patches (this is the primary source for sub-agents)
-git diff origin/${BASE}...${HEAD_SHA}
-
-# Changed files with stats
-git diff --stat origin/${BASE}...${HEAD_SHA}
-
-# Changed file names only
-git diff --name-only origin/${BASE}...${HEAD_SHA}
-
-# Author of most recent commit
+git log --oneline ${BASE_SHA}..${HEAD_SHA}
+git diff --stat ${BASE_SHA}...${HEAD_SHA}
+git diff --name-only ${BASE_SHA}...${HEAD_SHA} | tee /tmp/pr_changed_files.txt
+git diff ${BASE_SHA}...${HEAD_SHA} > /tmp/pr_full_diff.patch
 git log -1 --format="%an <%ae>" ${HEAD_SHA}
+git log --format="%s%n%b" ${BASE_SHA}..${HEAD_SHA}
 
-# Commit messages (used as a fallback if PR title/description are unavailable)
-git log --format="%s%n%b" origin/${BASE}..${HEAD_SHA}
+CHANGED_COUNT=$(wc -l < /tmp/pr_changed_files.txt | tr -d ' ')
+echo "Changed files: $CHANGED_COUNT"
+export CHANGED_COUNT
 ```
+
+Writing the diff to `/tmp/pr_full_diff.patch` lets you pass it by **path** to sub-agents instead of by value — much smaller prompts when the diff is large.
+
+> **Anti-pattern:** Do NOT `cat <<'DIFF_EOF' ... DIFF_EOF` the diff back to yourself in a subsequent `Bash` call. The diff is already in your conversation history once you ran `git diff`. Echoing it back wastes a turn and tokens; if you need it as a file, you already wrote it to `/tmp/pr_full_diff.patch` above.
 
 Use `git show ${HEAD_SHA}:<filepath>` or the `Read` tool to read the full content of any file that requires deeper analysis beyond the patch.
 
 **Platform CLIs are not used in this step.** Use **`gh`** only when posting to GitHub and **`curl`/Azure DevOps REST** only when posting to Azure DevOps (see the provider docs and "Posting the Review" below).
+
+### 4. Index the Codebase (skip on small PRs)
+
+```bash
+if [ "${CHANGED_COUNT:-0}" -le 10 ]; then
+  echo "Small PR ($CHANGED_COUNT files) — skipping codebase index, diff alone is enough context."
+else
+  # Top-level layout
+  ls -1
+
+  # Source tree (depth 3, ignore common noise)
+  find . -maxdepth 3 \
+    -not -path './.git/*' \
+    -not -path './node_modules/*' \
+    -not -path './bin/*' \
+    -not -path './obj/*' \
+    -not -path './.vs/*' \
+    | sort
+
+  # Language fingerprint
+  find . -not -path './.git/*' -type f \
+    | sed 's/.*\.//' | sort | uniq -c | sort -rn | head -20
+
+  # Entry points / build manifests
+  ls *.sln *.csproj package.json go.mod Cargo.toml pom.xml build.gradle \
+     pyproject.toml setup.py requirements.txt CMakeLists.txt 2>/dev/null || true
+fi
+```
+
+If indexing was performed, use `Read` on key config/manifest files (`package.json`, `*.csproj`, `go.mod`) and `Grep` to locate patterns such as the main entry point, base classes, or shared utilities referenced by the changed files. Otherwise skip directly to step 5.
 
 ### 5. Understand the Change
 
@@ -171,9 +189,13 @@ Before launching sub-agents:
 - Identify critical or high-risk files (auth, payments, database migrations, public APIs)
 - Estimate scope (small/medium/large)
 
-### 6. Orchestrate Specialized Reviews (parallel `Task` calls — mandatory)
+### 6. Orchestrate Specialized Reviews (parallel sub-agent calls — MANDATORY)
 
-Launch all four reviewers in **one assistant turn** containing four parallel `Task` tool calls — one per `subagent_type`. Do **not** run them sequentially, and do **not** simulate them inline using `cat <<ANALYSIS` heredocs in `Bash` — that defeats the entire multi-agent design and roughly doubles wall-clock time.
+This step is the entire point of the orchestrator. Skipping it is a P0 bug.
+
+#### What to do
+
+In **one assistant turn**, emit **four parallel sub-agent invocations** — one per reviewer. The tool is exposed under two equivalent names depending on the Claude Code SDK version (`Task` and/or `Agent`). Use whichever your SDK accepts:
 
 | `subagent_type` | Focus |
 |---|---|
@@ -182,15 +204,28 @@ Launch all four reviewers in **one assistant turn** containing four parallel `Ta
 | `test-reviewer` | Test coverage and test quality |
 | `performance-reviewer` | Bottlenecks, inefficiencies, resource usage |
 
-In each `Task` prompt, include — verbatim, do not paraphrase:
+Each invocation prompt must include, verbatim:
 
-- The full diff (`git diff origin/${BASE}...${HEAD_SHA}` output, or a path to a file containing it if it is very large)
-- The list of changed files (`git diff --name-only origin/${BASE}...${HEAD_SHA}`)
-- `HEAD_SHA` and `BASE`
-- The PR title and description (from the platform metadata fetched in step 2 / the provider doc)
-- A reminder: "Do not re-fetch git data; the diff above is authoritative."
+- The path `/tmp/pr_full_diff.patch` (the full diff written in step 3) and the path `/tmp/pr_changed_files.txt`
+- `BASE_SHA` and `HEAD_SHA`
+- The PR title and description (from the platform metadata fetched in step 2)
+- A reminder: *"Do not re-fetch git data; the diff at /tmp/pr_full_diff.patch is authoritative. Return findings only."*
 
-After all four `Task` calls return, proceed to step 7. Do not start compiling the report until every sub-agent has finished.
+Wait for all four sub-agents to return, then proceed to step 7.
+
+#### What NOT to do (anti-patterns observed in production)
+
+These look like progress but are actually the model **simulating** sub-agents in its own context. They double cost, double latency, and lose the specialization benefit. **Stop the moment you catch yourself doing any of them:**
+
+- ❌ Running `Bash` with `cat <<'ANALYSIS' ... === CODE QUALITY REVIEW === ... ANALYSIS` — that is **you pretending to be the code-reviewer**, not invoking it. If you find yourself writing the heredoc text, delete it and emit a sub-agent call instead.
+- ❌ A long thinking turn (>20 s) followed by directly compiling the report. That long pause is internal reasoning that should have been parallel sub-agent work.
+- ❌ Sequential `Task` / `Agent` calls — each one waits for the previous to finish. They MUST be in the same assistant turn so the runtime parallelizes them.
+- ❌ Passing the full diff inline in the sub-agent prompt when `/tmp/pr_full_diff.patch` exists. Pass the path; the sub-agent will `Read` it.
+- ❌ `cat <<'DIFF_EOF' ... DIFF_EOF` echoing the diff back into the conversation. You already have it. Don't.
+
+#### Self-check before emitting the report
+
+Before step 7, the conversation history MUST contain four `Task` (or `Agent`) tool results in the prior turn — one per `subagent_type`. If it does not, you skipped this step. Go back and do it.
 
 ### 7. Compile Final Report
 

@@ -91,17 +91,41 @@ Include the same `properties` object on **every** PR `POST .../threads` body bel
 
 ## Posting the Starting Comment on the work item
 
-Post a comment on the originating work item so the reporter knows the Performance Optimizer has started.
+Post a comment on the originating work item so the reporter knows the Performance Optimizer has started **and which scope it committed to**. The comment must echo the orchestrator's resolved run plan — never the raw work-item body — so reviewers can catch scope drift before the PR is opened.
+
+Populate these variables from the orchestrator's resolved run plan:
+
+- `SCOPE_RESOLVED`   — literal scope string or `full codebase` if no hint was given
+- `TARGET_RESOLVED`  — literal target runtime (`api` / `worker` / `frontend` / `data`) or `none`
+- `DEFAULT_BRANCH`   — e.g. `main`
+- `BASELINE_SHA`     — short SHA of `origin/${DEFAULT_BRANCH}` at review start
+- `FILE_COUNT`       — number of files that survived scope filtering
 
 ```bash
+# Compose JSON safely — work-item comments accept HTML; \n is rendered as a line break.
+BODY=$(jq -n \
+  --arg branch "${DEFAULT_BRANCH}" \
+  --arg sha    "${BASELINE_SHA}" \
+  --arg scope  "${SCOPE_RESOLVED}" \
+  --arg target "${TARGET_RESOLVED}" \
+  --arg files  "${FILE_COUNT}" \
+  '{text: ("Performance review in progress.\n\n" +
+           "Running a whole-codebase performance review covering latency, CPU, memory, and I/O patterns. " +
+           "A pull request with focused, low-risk optimizations and the embedded report will be linked here when complete.\n\n" +
+           "Run plan:\n" +
+           "- Default branch: " + $branch + " @ " + $sha + "\n" +
+           "- Scope: " + $scope + "\n" +
+           "- Target runtime: " + $target + "\n" +
+           "- Files in scope: " + $files)}')
+
 curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
   -X POST \
   -H "Content-Type: application/json" \
   "https://dev.azure.com/${AZURE_ORG}/${AZURE_PROJECT}/_apis/wit/workItems/${WORKITEM_ID}/comments?api-version=7.1-preview.3" \
-  -d '{"text":"Performance review in progress.\n\nI am running a whole-codebase performance review covering latency, CPU, memory, and I/O patterns against the default branch. A pull request with focused, low-risk optimizations and the embedded report will be linked here when complete — this may take a few minutes."}'
+  -d "${BODY}"
 ```
 
-If posting fails, output a single warning line and continue — never stop the review.
+If posting fails, output a single warning line and continue — never stop the review. However, do **not** skip resolving `SCOPE_RESOLVED` / `TARGET_RESOLVED` / `BASELINE_SHA` just because the comment failed: those values are reused in the PR report header and must match.
 
 ---
 

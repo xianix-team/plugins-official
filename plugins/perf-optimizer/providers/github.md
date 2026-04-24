@@ -54,16 +54,32 @@ Parse lines matching `^\s*Scope:` and `^\s*Target:` (case-insensitive) from the 
 
 ## Posting the "review in progress" comment
 
+The starting comment must be **transparent about what was parsed** from the issue. The reporter should be able to read this single comment and know, before the review finishes, exactly which scope the agent decided to run under. This closes the loop on silent scope / target drift.
+
+Populate these fields from the orchestrator's resolved run plan (not from the raw issue body — use the values the orchestrator actually committed to):
+
+- `SCOPE_RESOLVED`   — literal scope string or `full codebase` if no hint was given
+- `TARGET_RESOLVED`  — literal target runtime (`api` / `worker` / `frontend` / `data`) or `none`
+- `DEFAULT_BRANCH`   — e.g. `main`
+- `BASELINE_SHA`     — short SHA of `origin/${DEFAULT_BRANCH}` at review start
+- `FILE_COUNT`       — number of files that survived scope filtering
+
 ```bash
-gh issue comment "${ISSUE_NUMBER}" --body "$(cat <<'EOF'
+gh issue comment "${ISSUE_NUMBER}" --body "$(cat <<EOF
 Performance review in progress
 
-I'm running a whole-codebase performance review covering latency, CPU, memory, and I/O patterns against the default branch. A pull request with focused, low-risk optimizations and the embedded report will be linked here when complete — this may take a few minutes.
+Running a whole-codebase performance review covering latency, CPU, memory, and I/O patterns. A pull request with focused, low-risk optimizations and the embedded report will be linked here when complete — this may take a few minutes.
+
+**Run plan**
+- Default branch: \`${DEFAULT_BRANCH}\` @ \`${BASELINE_SHA}\`
+- Scope: ${SCOPE_RESOLVED}
+- Target runtime: ${TARGET_RESOLVED}
+- Files in scope: ${FILE_COUNT}
 EOF
 )"
 ```
 
-If posting fails, output one warning line and continue.
+If posting fails, output one warning line and continue — but do **not** attempt to proceed without resolving `SCOPE_RESOLVED` / `TARGET_RESOLVED` / `BASELINE_SHA` first. Those values are reused in the PR body and must be consistent between the starting comment and the final report.
 
 ---
 

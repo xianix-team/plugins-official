@@ -47,12 +47,17 @@ Each block below belongs inside the `executions` array of a rule set. See [Rules
   "use-plugins": [
     {
       "plugin-name": "perf-optimizer@xianix-plugins-official",
-      "marketplace": "xianix-team/plugins-official"
+      "marketplace": "xianix-team/plugins-official",
+      "envs": [
+        { "name": "GITHUB-TOKEN", "value": "GITHUB_TOKEN" }
+      ]
     }
   ],
   "execute-prompt": "You are running a whole-codebase performance review for repository {{repository-name}} triggered by issue #{{issue-number}} titled \"{{issue-title}}\".\n\nFetch the default branch ({{default-branch}}), parse any `Scope:` / `Target:` hints from the issue body below, and run /perf-optimize across the selected scope (default: entire codebase).\n\nApply only low-risk optimizations on a new branch named `perf/issue-{{issue-number}}-<slug>` and open a pull request against {{default-branch}}. The PR body MUST embed the full performance report and include `Closes #{{issue-number}}`. After opening the PR, post a comment on issue #{{issue-number}} linking to it.\n\nIssue body:\n{{issue-body}}"
 }
 ```
+
+> **Required env:** `GITHUB-TOKEN` must be mapped from a secret that holds a GitHub PAT with `repo` + `workflow` scopes (or a GitHub App token with equivalent permissions). The plugin's `validate-prerequisites.sh` hook relies on it for both `gh` calls and `git push` over HTTPS.
 
 ## Azure DevOps Rule
 
@@ -83,7 +88,10 @@ Because work items are project-scoped (not repo-scoped), the target repository U
   "use-plugins": [
     {
       "plugin-name": "perf-optimizer@xianix-plugins-official",
-      "marketplace": "xianix-team/plugins-official"
+      "marketplace": "xianix-team/plugins-official",
+      "envs": [
+        { "name": "AZURE-DEVOPS-TOKEN", "value": "AZURE_DEVOPS_TOKEN" }
+      ]
     }
   ],
   "execute-prompt": "You are running a whole-codebase performance review for repository {{repository-name}} triggered by work item #{{workitem-id}} titled \"{{workitem-title}}\".\n\nFetch the default branch ({{default-branch}}), parse any `Scope:` / `Target:` hints from the work item description below, and run /perf-optimize across the selected scope (default: entire codebase).\n\nApply only low-risk optimizations on a new branch named `perf/workitem-{{workitem-id}}-<slug>` and open a pull request against {{default-branch}}. The PR body MUST embed the full performance report and reference work item #{{workitem-id}}. After opening the PR, post a comment on the work item linking to it.\n\nWork item description:\n{{workitem-body}}"
@@ -91,6 +99,8 @@ Because work items are project-scoped (not repo-scoped), the target repository U
 ```
 
 > **Note:** Replace the `<org>`, `<project>`, and `<repo>` placeholders in the Azure DevOps rule with your actual values.
+>
+> **Required env:** `AZURE-DEVOPS-TOKEN` must be mapped from a secret holding an Azure DevOps PAT with `Work Items (Read & Write)` and `Code (Read, Write & Manage)` scopes. The `validate-prerequisites.sh` hook uses it for both `curl` REST calls and `git push`.
 
 ---
 

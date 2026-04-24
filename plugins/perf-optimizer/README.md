@@ -215,7 +215,10 @@ The Performance Optimizer is **label-driven** with a single trigger:
   "use-plugins": [
     {
       "plugin-name": "perf-optimizer@xianix-plugins-official",
-      "marketplace": "xianix-team/plugins-official"
+      "marketplace": "xianix-team/plugins-official",
+      "envs": [
+        { "name": "GITHUB-TOKEN", "value": "GITHUB_TOKEN" }
+      ]
     }
   ],
   "execute-prompt": "You are running a whole-codebase performance review for repository {{repository-name}} triggered by issue #{{issue-number}} titled \"{{issue-title}}\".\n\nFetch the default branch ({{default-branch}}), parse any `Scope:` / `Target:` hints from the issue body below, and run /perf-optimize across the selected scope (default: entire codebase).\n\nApply only low-risk optimizations on a new branch named `perf/issue-{{issue-number}}-<slug>` and open a pull request against {{default-branch}}. The PR body MUST embed the full performance report and include `Closes #{{issue-number}}`. After opening the PR, post a comment on issue #{{issue-number}} linking to it.\n\nIssue body:\n{{issue-body}}"
@@ -251,7 +254,10 @@ Because work items are project-scoped (not repo-scoped), the target repository U
   "use-plugins": [
     {
       "plugin-name": "perf-optimizer@xianix-plugins-official",
-      "marketplace": "xianix-team/plugins-official"
+      "marketplace": "xianix-team/plugins-official",
+      "envs": [
+        { "name": "AZURE-DEVOPS-TOKEN", "value": "AZURE_DEVOPS_TOKEN" }
+      ]
     }
   ],
   "execute-prompt": "You are running a whole-codebase performance review for repository {{repository-name}} triggered by work item #{{workitem-id}} titled \"{{workitem-title}}\".\n\nFetch the default branch ({{default-branch}}), parse any `Scope:` / `Target:` hints from the work item description below, and run /perf-optimize across the selected scope (default: entire codebase).\n\nApply only low-risk optimizations on a new branch named `perf/workitem-{{workitem-id}}-<slug>` and open a pull request against {{default-branch}}. The PR body MUST embed the full performance report and reference work item #{{workitem-id}}. After opening the PR, post a comment on the work item linking to it.\n\nWork item description:\n{{workitem-body}}"
@@ -264,6 +270,15 @@ Replace the `<org>`, `<project>`, and `<repo>` placeholders in the Azure DevOps 
 
 :::note
 These blocks belong inside the `executions` array of a rule set. See [Rules Configuration](/agent-configuration/rules/) for full syntax.
+:::
+
+:::warning Credentials
+The `envs` block is **required**, not cosmetic. The plugin's `validate-prerequisites.sh` hook refuses to run `git push` without a platform token in the environment:
+
+- `GITHUB-TOKEN` — maps a secret holding a GitHub PAT (`repo` + `workflow` scopes) or an equivalent GitHub App token into the sandbox as `GITHUB_TOKEN`. Consumed by `gh` CLI and by `git push` over HTTPS to `github.com`.
+- `AZURE-DEVOPS-TOKEN` — maps a secret holding an Azure DevOps PAT (`Work Items: Read & Write`, `Code: Read, Write & Manage`) into the sandbox as `AZURE_DEVOPS_TOKEN`. Consumed by `curl` REST calls and by `git push` to `dev.azure.com` / `visualstudio.com`.
+
+If you omit the `envs` mapping, runs succeed through analysis, planning, and committing, then **block at the push step** with a hook error.
 :::
 
 ---

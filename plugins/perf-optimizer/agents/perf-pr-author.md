@@ -52,27 +52,61 @@ git reset --hard "origin/${DEFAULT_BRANCH}"
 
 ### 2. Derive the branch name
 
-Build a short, URL-safe slug from the issue / work-item title. Rules:
+The branch name is **mechanically derived from the issue or work-item title** — no creative alternates, no generic suffixes like `-optimizations`, `-fixes`, `-perf-review`.
 
-- lowercase
-- replace non-alphanumeric runs with a single `-`
-- trim leading / trailing `-`
-- truncate to 48 characters
+**Shape (mandatory):**
+
+- GitHub:        `perf/issue-{ISSUE_NUMBER}-{slug(ISSUE_TITLE)}`
+- Azure DevOps:  `perf/workitem-{WORKITEM_ID}-{slug(WORKITEM_TITLE)}`
+
+**Slug rules (apply in order):**
+
+1. Lowercase.
+2. Replace any run of characters that are not `[a-z0-9]` with a single `-`.
+3. Strip leading and trailing `-`.
+4. Truncate to at most 48 characters; then strip any trailing `-` the truncation created.
+5. If the resulting slug is empty (title was purely non-ASCII / symbols), fall back to the literal string `perf` — and **only** in that case.
+
+You must **not** invent a topic slug (e.g. `-db-optimizations`) when the title was non-empty. The slug is a pure function of the title. If the title is "Optimize API response times", the slug is `optimize-api-response-times` — not `api-response-times`, not `api-latency`, not `perf-optimizations`.
 
 ```bash
 slugify() {
-  echo "$1" \
+  local raw=${1:-}
+  local s
+  s=$(printf '%s' "$raw" \
     | tr '[:upper:]' '[:lower:]' \
     | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' \
-    | cut -c1-48
+    | cut -c1-48 \
+    | sed -E 's/-+$//')
+  if [ -z "$s" ]; then
+    s="perf"
+  fi
+  printf '%s' "$s"
 }
 
 if [ "${PLATFORM}" = "github" ]; then
-  SLUG=$(slugify "${ISSUE_TITLE:-perf}")
-  NEW_BRANCH="perf/issue-${ISSUE_NUMBER}-${SLUG:-perf}"
+  if [ -z "${ISSUE_NUMBER:-}" ]; then
+    echo "error: ISSUE_NUMBER is required for GitHub runs" >&2
+    exit 1
+  fi
+  SLUG=$(slugify "${ISSUE_TITLE:-}")
+  NEW_BRANCH="perf/issue-${ISSUE_NUMBER}-${SLUG}"
 else
-  SLUG=$(slugify "${WORKITEM_TITLE:-perf}")
-  NEW_BRANCH="perf/workitem-${WORKITEM_ID}-${SLUG:-perf}"
+  if [ -z "${WORKITEM_ID:-}" ]; then
+    echo "error: WORKITEM_ID is required for Azure DevOps runs" >&2
+    exit 1
+  fi
+  SLUG=$(slugify "${WORKITEM_TITLE:-}")
+  NEW_BRANCH="perf/workitem-${WORKITEM_ID}-${SLUG}"
+fi
+
+# Hard-fail on any deviation from the contract before we create the branch.
+case "${NEW_BRANCH}" in
+  perf/issue-*[!0-9]*-*|perf/workitem-*[!0-9]*-*) : ;;  # ok: digit-id-slug shape
+esac
+if ! printf '%s' "${NEW_BRANCH}" | grep -Eq '^perf/(issue|workitem)-[0-9]+-[a-z0-9][a-z0-9-]*$'; then
+  echo "error: refusing to create non-conforming branch name '${NEW_BRANCH}'" >&2
+  exit 1
 fi
 
 git checkout -b "${NEW_BRANCH}" "origin/${DEFAULT_BRANCH}"
@@ -120,11 +154,20 @@ If the push fails, emit one error line and stop. Do not retry against a differen
 
 Open a pull request from `${NEW_BRANCH}` to `${DEFAULT_BRANCH}` on the detected platform.
 
-The PR **title** must be:
+The PR **title** is mechanically derived from the trigger — no paraphrasing, no summarizing the applied fixes:
 
 ```
-perf: <issue-title or workitem-title>
+perf: <ISSUE_TITLE>        # GitHub
+perf: <WORKITEM_TITLE>     # Azure DevOps
 ```
+
+Rules:
+
+- Start with the literal prefix `perf: ` (lowercase, single space).
+- Append the issue or work-item title **verbatim** (preserve casing, punctuation, and wording). Do not describe what the PR did — that belongs in the body.
+- If the raw title already starts with `perf:` / `Perf:` / `PERF:`, strip that leading token before prepending `perf: ` to avoid `perf: perf: …`.
+- Collapse internal whitespace runs to a single space and trim surrounding whitespace.
+- If the resulting title would exceed 72 characters, truncate on a word boundary and append `…`. Never shorten by rewording.
 
 The PR **body** must contain, in this order:
 
@@ -148,6 +191,52 @@ The PR **body** must contain, in this order:
    ```
 
 6. **Full performance report** — the entire `report_body` produced by the orchestrator, inserted verbatim under a `## Performance Report` heading so reviewers can read analysis and code in one place.
+
+#### 5a. Structural self-check of the composed PR body
+
+Before invoking `gh pr create` / the Azure DevOps REST API, write the composed PR body to a temporary file (e.g. `.perf-pr-body.md`) and verify every required section is present. Treat any failure here as a hard stop — do **not** open a malformed PR and then try to "fix it later":
+
+```bash
+BODY_FILE=".perf-pr-body.md"
+
+required_headings=(
+  "## Summary"
+  "## Applied optimizations"
+  "## Not applied"
+  "## Verification checklist"
+  "## Performance Report"
+)
+
+missing=()
+for h in "${required_headings[@]}"; do
+  if ! grep -Fq "$h" "$BODY_FILE"; then
+    missing+=("$h")
+  fi
+done
+
+# Traceability line must match the platform.
+if [ "${PLATFORM}" = "github" ]; then
+  grep -Eq "^Closes #${ISSUE_NUMBER}\b" "$BODY_FILE" \
+    || missing+=("Closes #${ISSUE_NUMBER}")
+else
+  grep -Eq "^Related work item: #${WORKITEM_ID}\b" "$BODY_FILE" \
+    || missing+=("Related work item: #${WORKITEM_ID}")
+fi
+
+# The embedded report must include the analyzer verdicts block produced
+# by the orchestrator (see styles/report-template.md).
+grep -Fq "### Analyzer verdicts" "$BODY_FILE" \
+  || missing+=("### Analyzer verdicts")
+
+if [ ${#missing[@]} -gt 0 ]; then
+  echo "error: PR body is missing required sections: ${missing[*]}" >&2
+  echo "error: refusing to open PR with an incomplete body" >&2
+  # Leave the branch pushed so humans can inspect; do not open a PR.
+  exit 1
+fi
+```
+
+Only after this check passes may you proceed to the platform-specific PR opening below. After the PR is opened, re-read the PR body one more time via `gh pr view --json body` (GitHub) or the `GET pullrequests/{id}` REST endpoint (Azure DevOps) and re-run the same `required_headings` check against the server-side body. If the server-side body is missing a heading, emit a warning line so the finding is visible in the run log, but do not delete the PR.
 
 Platform-specific opening:
 

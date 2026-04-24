@@ -33,14 +33,30 @@ This command invokes the **orchestrator** agent which runs a whole-codebase perf
 /perf-optimize --scope src/services     # Restrict analysis to a directory or file pattern
 /perf-optimize --target api             # Prioritize API / request-path bottlenecks
 /perf-optimize --scope src/api --target api   # Combine both
+/perf-optimize --issue 123              # Attach the run to GitHub issue #123
+/perf-optimize --workitem 4567          # Attach the run to Azure DevOps work item #4567
 ```
 
-Flags:
+### Supported flags
 
-- `--scope <path>` — limit analysis to a directory, file, or comma-separated list / glob pattern (e.g. `src/api`, `apps/worker/**`, `src/services,src/workers`)
-- `--target <runtime>` — prioritize one of `api`, `worker`, `frontend`, `data` when ranking findings
+All flags are optional. When invoked via a Xianix Agent rule, the execute prompt supplies `--issue` / `--workitem` (and parses `Scope:` / `Target:` hints from the issue or work item body); local `--scope` / `--target` flags override those hints.
 
-When invoked via a Xianix Agent rule, the execute prompt provides the scope / target hints parsed from the issue or work item body; locally these flags override or supplement any hints.
+| Flag | Accepts | Purpose |
+|---|---|---|
+| `--scope <path>` | path, glob, or comma-separated list (`src/api`, `apps/worker/**`, `src/services,src/workers`) | Limit analysis to specific directories or files. Overrides any `Scope:` hint in the issue / work item body. |
+| `--target <runtime>` | `api` \| `worker` \| `frontend` \| `data` | Prioritize one runtime profile when ranking findings. Overrides any `Target:` hint. |
+| `--issue <number>` | positive integer | GitHub only. Attach this run to an existing issue: use its title / body for scope parsing, name the branch `perf/issue-<number>-<slug>`, reference `Closes #<number>` in the PR. |
+| `--workitem <id>` | positive integer | Azure DevOps only. Attach this run to an existing work item: use its title / description for scope parsing, name the branch `perf/workitem-<id>-<slug>`, reference the work item in the PR. |
+
+### Flags the orchestrator does NOT accept
+
+The following flags are sometimes seen in other perf tooling. They are **not** part of this plugin's contract — do not pass them:
+
+- `--repo` — the repository is always auto-detected from `git remote get-url origin`. Passing it is redundant and is silently ignored.
+- `--branch-prefix` — the branch name is a pure function of the trigger (`perf/issue-<number>-<slug>` or `perf/workitem-<id>-<slug>`). Prefixes are not configurable; this keeps branch names predictable for cleanup automation.
+- `--dry-run` / `--no-pr` — use the `/analyze-performance` skill instead if you only want the report written to `performance-report.md` without opening a PR.
+
+If a rule's `execute-prompt` passes an unknown flag, the orchestrator ignores it and prints a one-line notice (`notice: ignoring unknown flag '<flag>'`) rather than failing the run.
 
 ## Platform Support
 

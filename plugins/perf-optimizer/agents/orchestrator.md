@@ -35,10 +35,19 @@ The invocation (either the rule-provided `execute-prompt` or a local `$ARGUMENTS
 - `workitem-id` / `workitem-title` / `workitem-body` — Azure DevOps trigger inputs
 - `--scope <path>` — restrict analysis to a directory, file, or comma-separated glob list
 - `--target <api|worker|frontend|data>` — runtime profile for ranking tie-breakers
+- `--issue <number>` — **GitHub only.** Attach the run to an existing issue: the orchestrator reads the issue body for scope hints, uses the issue number / title in the branch name, and references `Closes #<number>` in the PR.
+- `--workitem <id>` — **Azure DevOps only.** Attach the run to an existing work item: the orchestrator reads the description for scope hints, uses the work-item id / title in the branch name, and references the work item in the PR.
 
 If `--scope` / `--target` are not passed as flags, parse them from the issue or work item body (see Step 3).
 
-If no trigger issue / work item information is available (e.g. a local `/perf-optimize` run), skip Steps 2 and 7: run the analysis, apply Quick-wins, push the new branch, and output a message telling the caller to open the PR manually.
+**Flags the orchestrator does not accept.** Silently ignore the following and emit a single `notice: ignoring unknown flag '<flag>'` line before continuing — never fail the run just because the caller passed one of these:
+
+- `--repo` — the repository is auto-detected from `git remote get-url origin`; no override is supported.
+- `--branch-prefix` — branch names are mechanically `perf/issue-<number>-<slug>` or `perf/workitem-<id>-<slug>`. See `agents/perf-pr-author.md` for the exact contract.
+- `--dry-run` / `--no-pr` — report-only runs use the `/analyze-performance` skill, not this command.
+- Any other flag not listed in this section.
+
+If no trigger issue / work item information is available (e.g. a local `/perf-optimize` run without `--issue` / `--workitem`), skip Steps 2 and 7: run the analysis, apply Quick-wins, push the new branch, and output a message telling the caller to open the PR manually.
 
 ---
 
@@ -112,12 +121,25 @@ The working tree MUST be clean and aligned with `origin/${DEFAULT_BRANCH}` befor
 
 ### 2. Post a "Review in Progress" Comment on the Issue / Work Item
 
-Post an immediate acknowledgement so the reporter knows the Performance Optimizer has started.
+Post an immediate acknowledgement so the reporter knows the Performance Optimizer has started **and exactly which scope, target, and baseline it committed to**. The starting comment is the main channel for catching scope drift before the PR is opened — it must echo the resolved run plan, not the raw issue body.
+
+**Ordering note:** this step depends on values computed in Steps 3–4 (`SCOPE_RESOLVED`, `TARGET_RESOLVED`, `FILE_COUNT`, `EXCLUSIONS_COUNT`). Compute those first, then post the comment here. Carry the same values forward into the report header in Step 7 — they MUST be identical to what this comment announced.
+
+Resolve and freeze:
+
+```bash
+BASELINE_SHA=$(git rev-parse --short "origin/${DEFAULT_BRANCH}")
+SCOPE_RESOLVED=${SCOPE:-full codebase}
+TARGET_RESOLVED=${TARGET:-none}
+# FILE_COUNT / EXCLUSIONS_COUNT come out of Step 4
+```
+
+Then post:
 
 - **GitHub:** `gh issue comment` — see `providers/github.md` (Posting the "review in progress" comment)
 - **Azure DevOps:** REST API — see `providers/azure-devops.md` (Posting the Starting Comment)
 
-If posting fails, output a single warning line and continue — never stop the review on a comment failure.
+If posting fails, output a single warning line and continue — never stop the review on a comment failure. But do not drop the resolved values; they still drive the report header.
 
 ### 3. Parse Scope Hints
 
@@ -163,6 +185,13 @@ Exclude obvious non-runtime files from analyzer input (but keep them for the "Fi
 
 Unless such a file obviously influences hot paths (e.g. a config change that disables caching), keep it out of the analyzer input.
 
+Record the resolved counts — they feed the starting comment (Step 2) and the report header (Step 7), and must be identical in both:
+
+```bash
+FILE_COUNT=<number of files passed to analyzers>
+EXCLUSIONS_COUNT=<number of files removed by the default-exclusion filter>
+```
+
 ### 5. Map Runtime Criticality
 
 Classify each candidate file by its **runtime criticality**:
@@ -177,12 +206,21 @@ If `--target <runtime>` was provided or parsed from the body, bias ranking towar
 
 ### 6. Orchestrate the Four Analyzers (in parallel)
 
-Launch all four analyzers concurrently using the `Agent` tool. Pass each analyzer:
+> **Mandatory parallelism — this is the single biggest lever on wall-clock time and cost.**
+>
+> You MUST emit all four `Agent` tool calls **in a single assistant turn**, in one `tool_calls` batch, so that `latency-analyzer`, `cpu-analyzer`, `memory-analyzer`, and `io-query-analyzer` run concurrently.
+>
+> You MUST NOT perform bottleneck discovery yourself in this step. Specifically, do **not** issue `grep`, `find`, `rg`, or `Read` calls from the orchestrator turn to look for hot paths, N+1s, serial awaits, allocations, etc. — that is the analyzers' job. The orchestrator's role here is strictly to fan out, wait, and merge.
+>
+> Only after all four `Agent` responses are received may you proceed to Step 7.
 
-1. The scoped file list (after exclusions)
-2. The runtime-criticality classification
-3. The detected language / framework(s)
+Pass each analyzer:
+
+1. The scoped file list (after exclusions) — as a concrete list of paths relative to the repository root
+2. The runtime-criticality classification from Step 5
+3. The detected language / framework(s) and dominant data layer (ORM / query builder / raw SQL / HTTP clients)
 4. The `--target` runtime hint if set
+5. The absolute workspace root so the analyzer can `Read` files directly
 
 Analyzers:
 
@@ -201,7 +239,21 @@ Each analyzer returns a list of findings with:
 - suggested optimization boundary — including a `quick-win` / `deeper-follow-up` classification
 - measurement / validation hint
 
-If an analyzer errors or times out, include a single warning line in the final report and continue with the remaining analyzers.
+If an analyzer errors or times out, include a single warning line in the final report and continue with the remaining analyzers. **Do not serially re-run the failed analyzer's work in the orchestrator turn** — mark it with `verdict: UNAVAILABLE` and move on.
+
+#### Sanity check before Step 7
+
+Before compiling the report, record a short internal note:
+
+```
+analyzers_invoked: 4 (parallel)
+latency: <n findings>      (or UNAVAILABLE)
+cpu: <n findings>          (or UNAVAILABLE)
+memory: <n findings>       (or UNAVAILABLE)
+io-query: <n findings>     (or UNAVAILABLE)
+```
+
+Echo these counts into the final report's "Analyzer verdicts" section (see `styles/report-template.md`). If the note shows fewer than four analyzers invoked, you violated the parallelism contract — stop and emit an error line rather than producing a partial report.
 
 ### 7. Rank and Compile the Report
 
@@ -228,6 +280,7 @@ Compile everything into the exact structured format defined in `styles/report-te
 - Include both the problematic code snippet and a concrete optimized rewrite, in the detected language.
 - Do not invent metrics — keep impact qualitative (High / Medium / Low) unless real measurements exist.
 - Do not flag non-issues — only genuine runtime risks and real optimization opportunities.
+- **Header consistency:** the report header's `Scope`, `Target runtime`, `Default branch`, `<short-sha>`, `Files in scope`, and `Exclusions applied` fields MUST use the exact same `SCOPE_RESOLVED` / `TARGET_RESOLVED` / `DEFAULT_BRANCH` / `BASELINE_SHA` / `FILE_COUNT` / `EXCLUSIONS_COUNT` values that were announced in the Step 2 starting comment. Any deviation is a bug — if you catch one, re-emit the header rather than silently changing the values.
 
 ### 8. Hand Off to the `perf-pr-author` Sub-Agent
 

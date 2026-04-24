@@ -10,13 +10,17 @@ On local runs where no PR is opened (no Quick-win applied cleanly, or `/analyze-
 
 ## Performance Analysis Report
 
+All header fields below are **mandatory** and must be filled with concrete values — no placeholders, no `TBD`, no missing lines. Reviewers use this block to verify that the scope the agent announced in the starting comment matches the scope it actually ran under. Any drift between the starting comment and this header is a bug.
+
 **Trigger:** [Issue #`<n>`: `<title>`] or [Work Item #`<id>`: `<title>`]
 **Repository:** `<owner/repo>` or `<org/project/repo>`
 **Default branch:** `<branch>` @ `<short-sha>`
 **Language / Framework:** [detected stack]
-**Scope:** [value of Scope hint / --scope, or "full codebase"]
-**Target runtime:** [value of Target hint / --target, or "none"]
-**Files analyzed:** [count]
+**Scope:** [literal `Scope:` hint from issue/work item, or `--scope` flag value, or `full codebase`]
+**Target runtime:** [literal `Target:` hint from issue/work item, or `--target` flag value, or `none`]
+**Files in scope:** `<count>` (after scope filtering + default exclusions)
+**Exclusions applied:** `<count>` (tests / vendored / generated / build output)
+**Analyzers invoked:** `latency, cpu, memory, io-query` (all four, in parallel)
 
 ---
 

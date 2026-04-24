@@ -11,12 +11,16 @@ Each block below belongs inside the `executions` array of a rule set. See [Rules
 
 ## Trigger behavior
 
-| Platform | Scenario | Webhook event | Filter rule |
+Each rule matches on **exactly one** webhook event per triggering action. The goal is simple: one user action (apply the label / tag) → one container run. To make this safe, the rules deliberately match only the event that is guaranteed to fire in every path.
+
+| Platform | Scenario | Matched webhook event | Filter rule |
 |---|---|---|---|
-| GitHub | Label applied to issue | `issues` | `action==labeled` and `label.name=='ai-dlc/perf/optimize'` |
-| GitHub | Issue opened with label already present | `issues` | `action==opened` and `ai-dlc/perf/optimize` is in `issue.labels` |
-| Azure DevOps | Tag added to work item | `workitem.updated` | `resource.fields['System.Tags']` contains `ai-dlc/perf/optimize` |
-| Azure DevOps | Work item created with tag | `workitem.created` | `resource.fields['System.Tags']` contains `ai-dlc/perf/optimize` |
+| GitHub | Label applied to an existing issue | `issues` `action==labeled` | `label.name=='ai-dlc/perf/optimize'` |
+| GitHub | Issue created **with** the label already on it | `issues` `action==labeled` (fired by GitHub after `opened`) | `label.name=='ai-dlc/perf/optimize'` |
+| Azure DevOps | Tag added to an existing work item | `workitem.updated` | `resource.fields['System.Tags']` contains `ai-dlc/perf/optimize` |
+| Azure DevOps | Work item created **with** the tag | `workitem.updated` (fired after `workitem.created`) | `resource.fields['System.Tags']` contains `ai-dlc/perf/optimize` |
+
+> **Why we do not also match `opened` / `workitem.created`:** GitHub fires both `issues.opened` **and** a separate `issues.labeled` event (one per label) when an issue is created with labels. Azure DevOps fires `workitem.created` followed by `workitem.updated` when a work item is created with tags. If the rule matched on both events, a single user action would spawn **two** concurrent containers for the same issue / work item, which then race on `git push` and PR creation. Matching only the later event (`labeled` / `workitem.updated`) covers both "created with tag" and "tag added later" with a single container — so these variants are **intentionally omitted** from the rule, not forgotten.
 
 ---
 
@@ -29,10 +33,6 @@ Each block below belongs inside the `executions` array of a rule set. See [Rules
     {
       "name": "github-issue-label-applied",
       "rule": "action==labeled&&label.name=='ai-dlc/perf/optimize'"
-    },
-    {
-      "name": "github-issue-opened-with-label",
-      "rule": "action==opened&&issue.labels.*.name=='ai-dlc/perf/optimize'"
     }
   ],
   "use-inputs": [
@@ -70,10 +70,6 @@ Because work items are project-scoped (not repo-scoped), the target repository U
     {
       "name": "azuredevops-workitem-tagged",
       "rule": "eventType==workitem.updated&&resource.fields.System.Tags*='ai-dlc/perf/optimize'"
-    },
-    {
-      "name": "azuredevops-workitem-created-with-tag",
-      "rule": "eventType==workitem.created&&resource.fields.System.Tags*='ai-dlc/perf/optimize'"
     }
   ],
   "use-inputs": [
@@ -108,5 +104,6 @@ Because work items are project-scoped (not repo-scoped), the target repository U
 
 - These blocks belong inside the `executions` array of a rule set.
 - The single `ai-dlc/perf/optimize` trigger runs analysis and opens a PR in one shot. There is no separate "analysis only" or "opt-in fix" label.
+- **One user action → one container.** The `match-any` array deliberately contains a single clause per platform (`action==labeled` for GitHub, `eventType==workitem.updated` for Azure DevOps). Do **not** add a second clause for `action==opened` / `eventType==workitem.created` — both platforms fire the later event in every path anyway, and adding the earlier one causes two containers to race on `git push` and PR creation for the same issue / work item.
 - The agent never pushes to the repository's default branch. All edits land on a new `perf/issue-<number>-<slug>` or `perf/workitem-<id>-<slug>` branch, which becomes the source branch of the opened PR.
 - Only findings classified as **Quick wins** by the analyzers are auto-applied. Deeper / architectural suggestions surface in the embedded report but are not committed.

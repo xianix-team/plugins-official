@@ -182,11 +182,10 @@ Use a single execution block per platform in your `rules.json`.
 
 The Performance Optimizer is **label-driven** with a single trigger:
 
-| Platform | Scenario | Webhook event | Filter rule |
-|---|---|---|---|
-| GitHub | Label applied to issue | `issues` | `action==labeled` and `label.name=='ai-dlc/perf/optimize'` |
-| GitHub | Issue opened with label already present | `issues` | `action==opened` and `ai-dlc/perf/optimize` is in `issue.labels` |
-| Azure DevOps | Tag added to work item | `workitem.updated` | `resource.fields['System.Tags']` contains `ai-dlc/perf/optimize` |
+| Platform | Matched webhook event | Filter rule |
+|---|---|---|
+| GitHub | `issues` `action==labeled` | `label.name=='ai-dlc/perf/optimize'` |
+| Azure DevOps | `workitem.updated` | `resource.fields['System.Tags']` contains `ai-dlc/perf/optimize` |
 
 ### GitHub Rule
 
@@ -197,10 +196,6 @@ The Performance Optimizer is **label-driven** with a single trigger:
     {
       "name": "github-issue-label-applied",
       "rule": "action==labeled&&label.name=='ai-dlc/perf/optimize'"
-    },
-    {
-      "name": "github-issue-opened-with-label",
-      "rule": "action==opened&&issue.labels.*.name=='ai-dlc/perf/optimize'"
     }
   ],
   "use-inputs": [
@@ -236,10 +231,6 @@ Because work items are project-scoped (not repo-scoped), the target repository U
     {
       "name": "azuredevops-workitem-tagged",
       "rule": "eventType==workitem.updated&&resource.fields.System.Tags*='ai-dlc/perf/optimize'"
-    },
-    {
-      "name": "azuredevops-workitem-created-with-tag",
-      "rule": "eventType==workitem.created&&resource.fields.System.Tags*='ai-dlc/perf/optimize'"
     }
   ],
   "use-inputs": [

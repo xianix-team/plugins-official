@@ -192,6 +192,11 @@ The Performance Optimizer is **label-driven** with a single trigger:
 ```json
 {
   "name": "github-performance-optimizer",
+  "platform": "github",
+  "repository": {
+    "url": "repository.clone_url",
+    "ref": "repository.default_branch"
+  },
   "match-any": [
     {
       "name": "github-issue-label-applied",
@@ -199,21 +204,23 @@ The Performance Optimizer is **label-driven** with a single trigger:
     }
   ],
   "use-inputs": [
-    { "name": "issue-number",     "value": "issue.number" },
-    { "name": "issue-title",      "value": "issue.title" },
-    { "name": "issue-body",       "value": "issue.body" },
-    { "name": "repository-url",   "value": "repository.clone_url" },
-    { "name": "repository-name",  "value": "repository.full_name" },
-    { "name": "default-branch",   "value": "repository.default_branch" },
-    { "name": "platform",         "value": "github", "constant": true }
+    { "name": "issue-number",    "value": "issue.number" },
+    { "name": "issue-title",     "value": "issue.title" },
+    { "name": "issue-body",      "value": "issue.body" },
+    { "name": "repository-name", "value": "repository.full_name" },
+    { "name": "default-branch",  "value": "repository.default_branch" }
   ],
   "use-plugins": [
     {
       "plugin-name": "perf-optimizer@xianix-plugins-official",
-      "marketplace": "xianix-team/plugins-official",
-      "envs": [
-        { "name": "GITHUB-TOKEN", "value": "GITHUB_TOKEN" }
-      ]
+      "marketplace": "xianix-team/plugins-official"
+    }
+  ],
+  "with-envs": [
+    {
+      "name": "GITHUB-TOKEN",
+      "value": "secrets.GITHUB-TOKEN",
+      "mandatory": true
     }
   ],
   "execute-prompt": "You are running a whole-codebase performance review for repository {{repository-name}} triggered by issue #{{issue-number}} titled \"{{issue-title}}\".\n\nFetch the default branch ({{default-branch}}), parse any `Scope:` / `Target:` hints from the issue body below, and run /perf-optimize across the selected scope (default: entire codebase).\n\nApply only low-risk optimizations on a new branch named `perf/issue-{{issue-number}}-<slug>` and open a pull request against {{default-branch}}. The PR body MUST embed the full performance report and include `Closes #{{issue-number}}`. After opening the PR, post a comment on issue #{{issue-number}} linking to it.\n\nIssue body:\n{{issue-body}}"
@@ -222,11 +229,17 @@ The Performance Optimizer is **label-driven** with a single trigger:
 
 ### Azure DevOps Rule
 
-Because work items are project-scoped (not repo-scoped), the target repository URL must be configured on the rule itself rather than read from the event payload.
+Because work items are project-scoped (not repo-scoped), the target repository URL and default branch are **constants** on the rule itself rather than fields read from the event payload.
 
 ```json
 {
   "name": "azuredevops-performance-optimizer",
+  "platform": "azuredevops",
+  "repository": {
+    "url": "https://dev.azure.com/<org>/<project>/_git/<repo>",
+    "ref": "main",
+    "constant": true
+  },
   "match-any": [
     {
       "name": "azuredevops-workitem-tagged",
@@ -237,18 +250,20 @@ Because work items are project-scoped (not repo-scoped), the target repository U
     { "name": "workitem-id",     "value": "resource.id" },
     { "name": "workitem-title",  "value": "resource.fields.System.Title" },
     { "name": "workitem-body",   "value": "resource.fields.System.Description" },
-    { "name": "repository-url",  "value": "https://dev.azure.com/<org>/<project>/_git/<repo>", "constant": true },
     { "name": "repository-name", "value": "<org>/<project>/<repo>", "constant": true },
-    { "name": "default-branch",  "value": "main", "constant": true },
-    { "name": "platform",        "value": "azuredevops", "constant": true }
+    { "name": "default-branch",  "value": "main", "constant": true }
   ],
   "use-plugins": [
     {
       "plugin-name": "perf-optimizer@xianix-plugins-official",
-      "marketplace": "xianix-team/plugins-official",
-      "envs": [
-        { "name": "AZURE-DEVOPS-TOKEN", "value": "AZURE_DEVOPS_TOKEN" }
-      ]
+      "marketplace": "xianix-team/plugins-official"
+    }
+  ],
+  "with-envs": [
+    {
+      "name": "AZURE-DEVOPS-TOKEN",
+      "value": "secrets.AZURE-DEVOPS-TOKEN",
+      "mandatory": true
     }
   ],
   "execute-prompt": "You are running a whole-codebase performance review for repository {{repository-name}} triggered by work item #{{workitem-id}} titled \"{{workitem-title}}\".\n\nFetch the default branch ({{default-branch}}), parse any `Scope:` / `Target:` hints from the work item description below, and run /perf-optimize across the selected scope (default: entire codebase).\n\nApply only low-risk optimizations on a new branch named `perf/workitem-{{workitem-id}}-<slug>` and open a pull request against {{default-branch}}. The PR body MUST embed the full performance report and reference work item #{{workitem-id}}. After opening the PR, post a comment on the work item linking to it.\n\nWork item description:\n{{workitem-body}}"
@@ -256,7 +271,7 @@ Because work items are project-scoped (not repo-scoped), the target repository U
 ```
 
 :::note
-Replace the `<org>`, `<project>`, and `<repo>` placeholders in the Azure DevOps rule with your actual values. Deploy one rule per repository you want to cover.
+Replace the `<org>`, `<project>`, and `<repo>` placeholders in both `repository.url` and the `repository-name` input with your actual values. Change the `ref` from `main` if your default branch is different. Deploy one rule per repository you want to cover.
 :::
 
 :::note
@@ -264,12 +279,12 @@ These blocks belong inside the `executions` array of a rule set. See [Rules Conf
 :::
 
 :::warning Credentials
-The `envs` block is **required**, not cosmetic. The plugin's `validate-prerequisites.sh` hook refuses to run `git push` without a platform token in the environment:
+The `with-envs` block is **required, rule-level, and `mandatory: true`** — the runtime refuses to start the container if the secret is missing, which is strictly better than discovering it at the first `git push` inside the hook:
 
-- `GITHUB-TOKEN` — maps a secret holding a GitHub PAT (`repo` + `workflow` scopes) or an equivalent GitHub App token into the sandbox as `GITHUB_TOKEN`. Consumed by `gh` CLI and by `git push` over HTTPS to `github.com`.
-- `AZURE-DEVOPS-TOKEN` — maps a secret holding an Azure DevOps PAT (`Work Items: Read & Write`, `Code: Read, Write & Manage`) into the sandbox as `AZURE_DEVOPS_TOKEN`. Consumed by `curl` REST calls and by `git push` to `dev.azure.com` / `visualstudio.com`.
+- `GITHUB-TOKEN` — resolved from `secrets.GITHUB-TOKEN` (a GitHub PAT with `repo` + `workflow` scopes, or an equivalent GitHub App token). Exposed inside the container as the env var `GITHUB-TOKEN`. Consumed by `gh` CLI and by `git push` over HTTPS to `github.com`.
+- `AZURE-DEVOPS-TOKEN` — resolved from `secrets.AZURE-DEVOPS-TOKEN` (an Azure DevOps PAT with `Work Items: Read & Write` and `Code: Read, Write & Manage`). Exposed inside the container as the env var `AZURE-DEVOPS-TOKEN`. Consumed by `curl` REST calls and by `git push` to `dev.azure.com` / `visualstudio.com`.
 
-If you omit the `envs` mapping, runs succeed through analysis, planning, and committing, then **block at the push step** with a hook error.
+If you omit `with-envs`, the runtime won't even launch the container — which is the intended behavior.
 :::
 
 ---

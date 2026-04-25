@@ -24,11 +24,25 @@ Each rule matches on **exactly one** webhook event per triggering action. The go
 
 ---
 
+## Rule shape
+
+The Xianix Agent rule format expresses four things explicitly:
+
+- `platform` — top-level discriminator (`github` / `azuredevops`), used by the runtime to pick the right provider integration without relying on string-matching the remote URL.
+- `repository` — where the runtime should clone / check out. `url` and `ref` are evaluated from the webhook payload (or from constants for ADO work items). For the performance optimizer, `ref` points at the repository's **default branch** because analysis is whole-codebase, not PR-scoped.
+- `use-inputs` — named values extracted from the webhook payload and interpolated into `execute-prompt`.
+- `with-envs` — **rule-level** environment variables resolved from the agent's secret store. `mandatory: true` means the runtime refuses to start the container if the secret is missing, which is exactly what we want for `GITHUB-TOKEN` / `AZURE-DEVOPS-TOKEN` — without them, the plugin's `validate-prerequisites.sh` hook would block the first `git push` anyway.
+
 ## GitHub Rule
 
 ```json
 {
   "name": "github-performance-optimizer",
+  "platform": "github",
+  "repository": {
+    "url": "repository.clone_url",
+    "ref": "repository.default_branch"
+  },
   "match-any": [
     {
       "name": "github-issue-label-applied",
@@ -36,36 +50,44 @@ Each rule matches on **exactly one** webhook event per triggering action. The go
     }
   ],
   "use-inputs": [
-    { "name": "issue-number",     "value": "issue.number" },
-    { "name": "issue-title",      "value": "issue.title" },
-    { "name": "issue-body",       "value": "issue.body" },
-    { "name": "repository-url",   "value": "repository.clone_url" },
-    { "name": "repository-name",  "value": "repository.full_name" },
-    { "name": "default-branch",   "value": "repository.default_branch" },
-    { "name": "platform",         "value": "github", "constant": true }
+    { "name": "issue-number",    "value": "issue.number" },
+    { "name": "issue-title",     "value": "issue.title" },
+    { "name": "issue-body",      "value": "issue.body" },
+    { "name": "repository-name", "value": "repository.full_name" },
+    { "name": "default-branch",  "value": "repository.default_branch" }
   ],
   "use-plugins": [
     {
       "plugin-name": "perf-optimizer@xianix-plugins-official",
-      "marketplace": "xianix-team/plugins-official",
-      "envs": [
-        { "name": "GITHUB-TOKEN", "value": "GITHUB_TOKEN" }
-      ]
+      "marketplace": "xianix-team/plugins-official"
+    }
+  ],
+  "with-envs": [
+    {
+      "name": "GITHUB-TOKEN",
+      "value": "secrets.GITHUB-TOKEN",
+      "mandatory": true
     }
   ],
   "execute-prompt": "You are running a whole-codebase performance review for repository {{repository-name}} triggered by issue #{{issue-number}} titled \"{{issue-title}}\".\n\nFetch the default branch ({{default-branch}}), parse any `Scope:` / `Target:` hints from the issue body below, and run /perf-optimize across the selected scope (default: entire codebase).\n\nApply only low-risk optimizations on a new branch named `perf/issue-{{issue-number}}-<slug>` and open a pull request against {{default-branch}}. The PR body MUST embed the full performance report and include `Closes #{{issue-number}}`. After opening the PR, post a comment on issue #{{issue-number}} linking to it.\n\nIssue body:\n{{issue-body}}"
 }
 ```
 
-> **Required env:** `GITHUB-TOKEN` must be mapped from a secret that holds a GitHub PAT with `repo` + `workflow` scopes (or a GitHub App token with equivalent permissions). The plugin's `validate-prerequisites.sh` hook relies on it for both `gh` calls and `git push` over HTTPS.
+> **Required secret:** Store a GitHub PAT (`repo` + `workflow` scopes) or an equivalent GitHub App token in the agent's secret store under the key `GITHUB-TOKEN`. The rule exposes it inside the container as the env var `GITHUB-TOKEN`, which `validate-prerequisites.sh` consumes for both `gh` calls and `git push` over HTTPS.
 
 ## Azure DevOps Rule
 
-Because work items are project-scoped (not repo-scoped), the target repository URL must be configured on the rule itself rather than read from the event payload. Deploy one rule per repository you want to cover.
+Because work items are project-scoped (not repo-scoped), the target repository URL and default branch are **constants** on the rule itself rather than fields read from the event payload. Deploy one rule per repository you want to cover.
 
 ```json
 {
   "name": "azuredevops-performance-optimizer",
+  "platform": "azuredevops",
+  "repository": {
+    "url": "https://dev.azure.com/<org>/<project>/_git/<repo>",
+    "ref": "main",
+    "constant": true
+  },
   "match-any": [
     {
       "name": "azuredevops-workitem-tagged",
@@ -76,27 +98,29 @@ Because work items are project-scoped (not repo-scoped), the target repository U
     { "name": "workitem-id",     "value": "resource.id" },
     { "name": "workitem-title",  "value": "resource.fields.System.Title" },
     { "name": "workitem-body",   "value": "resource.fields.System.Description" },
-    { "name": "repository-url",  "value": "https://dev.azure.com/<org>/<project>/_git/<repo>", "constant": true },
     { "name": "repository-name", "value": "<org>/<project>/<repo>", "constant": true },
-    { "name": "default-branch",  "value": "main", "constant": true },
-    { "name": "platform",        "value": "azuredevops", "constant": true }
+    { "name": "default-branch",  "value": "main", "constant": true }
   ],
   "use-plugins": [
     {
       "plugin-name": "perf-optimizer@xianix-plugins-official",
-      "marketplace": "xianix-team/plugins-official",
-      "envs": [
-        { "name": "AZURE-DEVOPS-TOKEN", "value": "AZURE_DEVOPS_TOKEN" }
-      ]
+      "marketplace": "xianix-team/plugins-official"
+    }
+  ],
+  "with-envs": [
+    {
+      "name": "AZURE-DEVOPS-TOKEN",
+      "value": "secrets.AZURE-DEVOPS-TOKEN",
+      "mandatory": true
     }
   ],
   "execute-prompt": "You are running a whole-codebase performance review for repository {{repository-name}} triggered by work item #{{workitem-id}} titled \"{{workitem-title}}\".\n\nFetch the default branch ({{default-branch}}), parse any `Scope:` / `Target:` hints from the work item description below, and run /perf-optimize across the selected scope (default: entire codebase).\n\nApply only low-risk optimizations on a new branch named `perf/workitem-{{workitem-id}}-<slug>` and open a pull request against {{default-branch}}. The PR body MUST embed the full performance report and reference work item #{{workitem-id}}. After opening the PR, post a comment on the work item linking to it.\n\nWork item description:\n{{workitem-body}}"
 }
 ```
 
-> **Note:** Replace the `<org>`, `<project>`, and `<repo>` placeholders in the Azure DevOps rule with your actual values.
+> **Note:** Replace the `<org>`, `<project>`, and `<repo>` placeholders in both the `repository.url` field and the `repository-name` input with your actual values. The `ref` defaults to `main` — change it if your repository's default branch is different.
 >
-> **Required env:** `AZURE-DEVOPS-TOKEN` must be mapped from a secret holding an Azure DevOps PAT with `Work Items (Read & Write)` and `Code (Read, Write & Manage)` scopes. The `validate-prerequisites.sh` hook uses it for both `curl` REST calls and `git push`.
+> **Required secret:** Store an Azure DevOps PAT (`Work Items: Read & Write`, `Code: Read, Write & Manage`) in the agent's secret store under the key `AZURE-DEVOPS-TOKEN`. The rule exposes it inside the container as the env var `AZURE-DEVOPS-TOKEN`, consumed by both `curl` REST calls and `git push` to `dev.azure.com` / `visualstudio.com`.
 
 ---
 
@@ -104,6 +128,7 @@ Because work items are project-scoped (not repo-scoped), the target repository U
 
 - These blocks belong inside the `executions` array of a rule set.
 - The single `ai-dlc/perf/optimize` trigger runs analysis and opens a PR in one shot. There is no separate "analysis only" or "opt-in fix" label.
+- **`with-envs` is rule-level, not plugin-level.** Secrets are declared once per rule and applied to every plugin the rule runs. `mandatory: true` makes the runtime fail-fast before the container starts if the secret is missing — which is strictly better than discovering it at the first `git push` inside the hook.
+- **`repository.ref` is the analysis baseline.** For the performance optimizer it always points at the default branch (not at a PR head), because analysis is whole-codebase. The `perf-pr-author` agent then creates a new `perf/issue-<number>-<slug>` or `perf/workitem-<id>-<slug>` branch from that baseline — the baseline itself is never pushed to.
 - **One user action → one container.** The `match-any` array deliberately contains a single clause per platform (`action==labeled` for GitHub, `eventType==workitem.updated` for Azure DevOps). Do **not** add a second clause for `action==opened` / `eventType==workitem.created` — both platforms fire the later event in every path anyway, and adding the earlier one causes two containers to race on `git push` and PR creation for the same issue / work item.
-- The agent never pushes to the repository's default branch. All edits land on a new `perf/issue-<number>-<slug>` or `perf/workitem-<id>-<slug>` branch, which becomes the source branch of the opened PR.
 - Only findings classified as **Quick wins** by the analyzers are auto-applied. Deeper / architectural suggestions surface in the embedded report but are not committed.

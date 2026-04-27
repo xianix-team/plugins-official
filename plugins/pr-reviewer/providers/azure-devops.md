@@ -28,43 +28,94 @@ Optional — used to override values parsed from the remote URL:
 
 Extract org, project, and repo from the remote URL before making any API calls. Strip any embedded basic-auth (`user@`) component first — it appears in remotes injected by CI runners.
 
-**HTTPS format:** `https://dev.azure.com/{org}/{project}/_git/{repo}`
+Azure DevOps uses **four** URL shapes in the wild. **All must be handled** — the legacy `DefaultCollection` form is common in tenants that migrated from on-prem TFS, and getting it wrong means inline threads silently 4xx (plain threads still post because the repo can be resolved at collection level — that is the #1 cause of "main comment posts but inline comments don't show up").
+
+| # | Shape | Example |
+|---|---|---|
+| 1 | `dev.azure.com/{org}/{project}/_git/{repo}` | `https://dev.azure.com/contoso/Web/_git/api` |
+| 2 | `dev.azure.com/{org}/{collection}/{project}/_git/{repo}` | rare — usually only seen on imported orgs |
+| 3 | `{org}.visualstudio.com/{project}/_git/{repo}` | `https://contoso.visualstudio.com/Web/_git/api` |
+| 4 | `{org}.visualstudio.com/{collection}/{project}/_git/{repo}` | `https://contoso.visualstudio.com/DefaultCollection/Web/_git/api` |
+
+Use the parser below — it anchors on the `_git` segment (always exactly one position before the repo and one position after the project), so it works for all four shapes:
 
 ```bash
 REMOTE=$(git remote get-url origin)
 
-# Strip optional "user@" basic-auth prefix
-REMOTE_CLEAN=$(echo "$REMOTE" | sed -E 's|https://[^@]+@|https://|')
+# Strip optional "user@" basic-auth prefix and any trailing .git
+REMOTE_CLEAN=$(echo "$REMOTE" | sed -E 's|https?://[^@]+@|https://|; s|\.git$||')
 
-AZURE_ORG=$(echo "$REMOTE_CLEAN"     | sed 's|https://dev.azure.com/||' | cut -d'/' -f1)
-AZURE_PROJECT=$(echo "$REMOTE_CLEAN" | sed 's|https://dev.azure.com/||' | cut -d'/' -f2)
-AZURE_REPO=$(echo "$REMOTE_CLEAN"    | sed 's|.*/_git/||' | sed 's|\.git$||')
-```
+# Extract host and the path-after-host
+AZURE_HOST=$(echo "$REMOTE_CLEAN" | awk -F/ '{print $3}')
+PATH_PARTS=$(echo "$REMOTE_CLEAN" | awk -F/ '{for (i=4; i<=NF; i++) print $i}')
 
-**Legacy HTTPS format:** `https://{org}.visualstudio.com/{project}/_git/{repo}`
+# Anchor on the _git segment. project = segment immediately before, repo = immediately after.
+GIT_LINE=$(echo "$PATH_PARTS" | grep -nx '_git' | head -1 | cut -d: -f1)
+if [ -z "$GIT_LINE" ]; then
+  echo "ERROR: not an Azure DevOps git URL (no _git segment): $REMOTE_CLEAN" >&2
+  return 1 2>/dev/null || exit 1
+fi
+AZURE_PROJECT=$(echo "$PATH_PARTS" | sed -n "$((GIT_LINE - 1))p")
+AZURE_REPO=$(echo    "$PATH_PARTS" | sed -n "$((GIT_LINE + 1))p")
 
-```bash
-AZURE_ORG=$(echo "$REMOTE_CLEAN"     | sed 's|https://||' | cut -d'.' -f1)
-AZURE_PROJECT=$(echo "$REMOTE_CLEAN"  | cut -d'/' -f4)
-AZURE_REPO=$(echo "$REMOTE_CLEAN"    | sed 's|.*/_git/||' | sed 's|\.git$||')
-```
-
-### API Base URL
-
-After parsing, set the API base URL to match the remote URL format. Organizations on legacy `visualstudio.com` hosts may not resolve via the `dev.azure.com` endpoint, so the base must reflect the actual host:
-
-```bash
-if [[ "$REMOTE_CLEAN" =~ \.visualstudio\.com ]]; then
-  API_BASE="https://${AZURE_ORG}.visualstudio.com/${AZURE_PROJECT}"
+# Determine org and the optional collection prefix (segments between org and project)
+if [ "$AZURE_HOST" = "dev.azure.com" ]; then
+  AZURE_ORG=$(echo "$PATH_PARTS" | sed -n '1p')
+  PREFIX_START=2
 else
-  API_BASE="https://dev.azure.com/${AZURE_ORG}/${AZURE_PROJECT}"
+  # *.visualstudio.com — org is the subdomain
+  AZURE_ORG=$(echo "$AZURE_HOST" | cut -d'.' -f1)
+  PREFIX_START=1
 fi
 
+PROJECT_LINE=$((GIT_LINE - 1))
+# Collection exists iff there is ≥1 path segment between the org/host and the project.
+if [ "$PROJECT_LINE" -gt "$PREFIX_START" ]; then
+  AZURE_COLLECTION=$(echo "$PATH_PARTS" \
+    | sed -n "${PREFIX_START},$((PROJECT_LINE - 1))p" \
+    | tr '\n' '/' | sed 's|/$||')
+else
+  AZURE_COLLECTION=""
+fi
+
+# API_BASE always includes the project — required for inline threads with threadContext.
+# Including the collection (e.g. DefaultCollection) when present makes the URL canonical.
+HOST_AND_ORG_PATH=$(
+  if [ "$AZURE_HOST" = "dev.azure.com" ]; then
+    echo "https://dev.azure.com/${AZURE_ORG}"
+  else
+    echo "https://${AZURE_HOST}"
+  fi
+)
+if [ -n "$AZURE_COLLECTION" ]; then
+  API_BASE="${HOST_AND_ORG_PATH}/${AZURE_COLLECTION}/${AZURE_PROJECT}"
+else
+  API_BASE="${HOST_AND_ORG_PATH}/${AZURE_PROJECT}"
+fi
+
+# Sanity-assert the parse — refuse to continue on garbage. Catches the historical bug where
+# AZURE_PROJECT silently became "DefaultCollection".
+case "$AZURE_PROJECT" in
+  ""|"_git"|"DefaultCollection"|"https:")
+    echo "ERROR: parsed AZURE_PROJECT='${AZURE_PROJECT}' looks wrong from URL: $REMOTE_CLEAN" >&2
+    return 1 2>/dev/null || exit 1
+    ;;
+esac
+[ -z "$AZURE_ORG" ] || [ -z "$AZURE_REPO" ] && {
+  echo "ERROR: parsed AZURE_ORG='${AZURE_ORG}' AZURE_REPO='${AZURE_REPO}' from URL: $REMOTE_CLEAN" >&2
+  return 1 2>/dev/null || exit 1
+}
+
+echo "Azure DevOps target: org=${AZURE_ORG} collection=${AZURE_COLLECTION:-<none>} project=${AZURE_PROJECT} repo=${AZURE_REPO}"
+echo "API_BASE=${API_BASE}"
+
 # Export so subsequent python heredocs can read them via os.environ
-export AZURE_ORG AZURE_PROJECT AZURE_REPO API_BASE
+export AZURE_HOST AZURE_ORG AZURE_COLLECTION AZURE_PROJECT AZURE_REPO API_BASE
 ```
 
 Use `${API_BASE}` in place of a hardcoded host for **every** API call below.
+
+> **Why this matters:** prior versions used `cut -d'/' -f4` on the legacy URL, which returns `DefaultCollection` when the URL is `https://{org}.visualstudio.com/DefaultCollection/{project}/_git/{repo}`. The resulting `API_BASE` skipped the project segment. Plain threads still post (the repo is unique within the collection) but inline threads with `threadContext.filePath` 4xx because the file context can't be resolved without a project. The parser above anchors on `_git` so the project is always picked correctly.
 
 ---
 
@@ -342,48 +393,113 @@ curl -sS -w "\nHTTP_STATUS:%{http_code}\n" \
   "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads?api-version=7.1"
 ```
 
-### 4. Post inline comments (one thread per finding)
+### 4. Post inline comments (one thread per finding) — MANDATORY
 
-For each finding with a precise file path and line number, build a payload with `threadContext` and POST to the same threads endpoint:
+This step is mandatory whenever the report contains at least one Critical Issue, Warning, or Suggestion with a file path and line number. **Skipping it is a P0 bug** — the whole point of running four specialized reviewers is to surface findings inline next to the offending code, not just bury them in a summary thread.
+
+Use the loop below — do not try to "remember" the findings and post them with one-off `curl` invocations. Production runs converge on a serialized findings file plus a single posting loop because that is the only way the run stays auditable when there are 5–20 findings.
+
+#### a. Serialize findings to JSONL
+
+After compiling the report (step 7 of the orchestrator), write **one JSON object per finding** to `/tmp/pr_inline_findings.jsonl`. Each object must have:
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `file` | string | yes | Repo-relative path. The script prepends `/` automatically. |
+| `line` | int | yes | 1-indexed line number on the **right** (post-change) side of the diff. |
+| `body` | string | yes | Markdown body of the comment. Must include severity tag, e.g. `**[CRITICAL]** ...`. |
+| `severity` | string | no | `critical` / `warning` / `suggestion` — used only for the summary log. |
 
 ```bash
-cat > /tmp/pr_thread_body.md <<'BODY'
-**[CRITICAL] Sync-over-async deadlock risk**
+python3 - <<'PY' > /tmp/pr_inline_findings.jsonl
+import json
+findings = [
+    {"file": "Xians.Lib/Agents/Core/ActivityRegistrar.cs", "line": 62, "severity": "critical",
+     "body": "**[CRITICAL] Sync-over-async deadlock risk**\n\n`.GetAwaiter().GetResult()` on `GetClientAsync()` in a sync context is a well-known deadlock pattern..."},
+    # ... one entry per Critical / Warning / Suggestion with a precise file:line ...
+]
+for f in findings:
+    print(json.dumps(f))
+PY
+```
 
-`.GetAwaiter().GetResult()` on `GetClientAsync()` in a sync context is a well-known deadlock pattern…
-BODY
+#### b. Loop and POST, one thread per finding, with HTTP status checks
 
-FILE_PATH="Xians.Lib/Agents/Core/ActivityRegistrar.cs" LINE_NUMBER=62 \
-python3 - <<'PY' > /tmp/pr_thread_payload.json
-import json, os
-body = open('/tmp/pr_thread_body.md').read()
+```bash
+INLINE_TOTAL=0
+INLINE_OK=0
+INLINE_FAIL=0
+: > /tmp/pr_inline_failures.log
+
+while IFS= read -r line; do
+  [ -z "$line" ] && continue
+  INLINE_TOTAL=$((INLINE_TOTAL + 1))
+
+  echo "$line" > /tmp/pr_inline_finding.json
+  python3 - <<'PY' > /tmp/pr_thread_payload.json
+import json
+f = json.load(open('/tmp/pr_inline_finding.json'))
 print(json.dumps({
-    "comments": [{"content": body, "commentType": 1}],
+    "comments": [{"content": f["body"], "commentType": 1}],
     "status": "active",
     "properties": {"Microsoft.TeamFoundation.Discussion.SupportsMarkdown": 1},
     "threadContext": {
-        "filePath": "/" + os.environ["FILE_PATH"].lstrip("/"),
-        "rightFileStart": {"line": int(os.environ["LINE_NUMBER"]), "offset": 1},
-        "rightFileEnd":   {"line": int(os.environ["LINE_NUMBER"]), "offset": 1},
+        "filePath": "/" + f["file"].lstrip("/"),
+        "rightFileStart": {"line": int(f["line"]), "offset": 1},
+        "rightFileEnd":   {"line": int(f["line"]), "offset": 1},
     },
 }))
 PY
 
-curl -sS -w "\nHTTP_STATUS:%{http_code}\n" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Basic $(echo -n ":${AZURE_DEVOPS_TOKEN}" | base64 -w0)" \
-  -X POST --data @/tmp/pr_thread_payload.json \
-  "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads?api-version=7.1"
+  RESP=$(curl -sS -w "\nHTTP_STATUS:%{http_code}" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Basic $(echo -n ":${AZURE_DEVOPS_TOKEN}" | base64 -w0)" \
+    -X POST --data @/tmp/pr_thread_payload.json \
+    "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads?api-version=7.1")
+
+  STATUS=$(echo "$RESP" | sed -n 's/^HTTP_STATUS://p')
+  if echo "$STATUS" | grep -qE '^2'; then
+    INLINE_OK=$((INLINE_OK + 1))
+  else
+    INLINE_FAIL=$((INLINE_FAIL + 1))
+    {
+      echo "---"
+      echo "finding: $line"
+      echo "HTTP $STATUS:"
+      echo "$RESP" | sed '$d'
+    } >> /tmp/pr_inline_failures.log
+  fi
+done < /tmp/pr_inline_findings.jsonl
+
+echo "Inline comments: ${INLINE_OK}/${INLINE_TOTAL} posted (${INLINE_FAIL} failed)"
+if [ "$INLINE_FAIL" -gt 0 ]; then
+  echo "WARN: see /tmp/pr_inline_failures.log for failure details" >&2
+  head -40 /tmp/pr_inline_failures.log >&2
+fi
+
+export INLINE_OK INLINE_FAIL INLINE_TOTAL
 ```
 
-Post all inline comments without pausing between them. Always check `HTTP_STATUS:` in the response; non-2xx means the comment did not appear on the PR.
+#### c. Diagnosing zero inline comments
+
+If `INLINE_OK` is `0` while `INLINE_TOTAL` is `0`, the orchestrator skipped step (a) — the JSONL file is empty. Go back to step 7 and serialize the findings.
+
+If `INLINE_OK` is `0` while `INLINE_TOTAL` is `> 0`, every POST failed. Read `/tmp/pr_inline_failures.log` and check:
+
+| HTTP | Cause | Fix |
+|---|---|---|
+| `401` | Token missing or hyphenated (`AZURE-DEVOPS-TOKEN` instead of `AZURE_DEVOPS_TOKEN`). | Re-export with underscores (the hook normally catches this). |
+| `404` | `API_BASE` is wrong — most often the legacy `DefaultCollection` URL was parsed without the project segment. | Re-run the parser at the top of this file; print `API_BASE` and confirm it ends with `/{project}`, not `/{collection}`. |
+| `400` with `threadContext` in the body | `filePath` doesn't match a file in the iteration, or the line number is past EOF. | Confirm the file path is repo-relative (no leading `/` in your JSONL — the script adds one) and the line is on the right (post-change) side. |
 
 ---
 
 ## Output
 
-On completion:
+On completion, use the counters from the inline-comment loop in step 4 (`$INLINE_OK` / `$INLINE_TOTAL`) — do **not** print a hard-coded number.
 
 ```
-Review posted on PR #<id>: <verdict> — <N> inline comments — ${API_BASE}/_git/<repo>/pullrequest/<id>
+Review posted on PR #<id>: <verdict> — ${INLINE_OK}/${INLINE_TOTAL} inline comments — ${API_BASE}/_git/${AZURE_REPO}/pullrequest/<id>
 ```
+
+If `INLINE_OK == 0` but the report had findings with file:line references, treat the run as a partial failure and surface the first few lines of `/tmp/pr_inline_failures.log` in the output so the user knows the inline step did not actually deliver.

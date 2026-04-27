@@ -273,19 +273,40 @@ Use the platform-appropriate method from the Posting the Review section below wi
 
 ## Posting the Review
 
-After compiling the report (and applying fixes if in fix mode), post it to the platform detected in Step 1 immediately without waiting for user input.
+After compiling the report (and applying fixes if in fix mode), post it to the platform detected in Step 1 immediately without waiting for user input. Posting has **three** sub-steps that are all mandatory when the platform supports them — the run is incomplete if any are skipped.
+
+| # | Sub-step | GitHub | Azure DevOps | Generic |
+|---|---|---|---|---|
+| A | Cast the verdict / vote | `gh pr review` flag | `PUT .../reviewers/{id}` with vote | n/a |
+| B | Post the full report body as one PR-level comment | `gh pr review --body` | `POST .../threads` (no `threadContext`) | write to `pr-review-report.md` |
+| C | Post **one inline thread per finding** with a file path and line number | `gh api .../pulls/<n>/comments` per finding | `POST .../threads` with `threadContext` per finding | n/a (skip with note) |
+
+**C is not optional** when the report contains Critical Issues, Warnings, or Suggestions with `path/to/file.ext:NN` references. The whole point of the four specialized reviewers is to surface findings inline next to the offending code; collapsing them into the summary thread defeats the plugin's value. If you find yourself about to print "Review posted" without having posted inline comments, stop and go back to sub-step C.
 
 Read and follow the instructions in the appropriate provider file:
 - **GitHub** → `providers/github.md`
-- **Azure DevOps** → `providers/azure-devops.md`
+- **Azure DevOps** → `providers/azure-devops.md` (sub-step C is the loop in **§4 — MANDATORY**, not the one-off example)
 - **Bitbucket or Unknown Platform** → `providers/generic.md`
 
 > **Blocking vs non-blocking on CRITICAL findings:** by default a `REQUEST CHANGES` verdict is posted as a *blocking* review (GitHub `--request-changes`, Azure DevOps vote `-10`). To run the plugin in advisory / shadow mode, set `PR_REVIEWER_BLOCK_ON_CRITICAL=false` — verdict, report body, and inline comments are unchanged, only the platform-side review type is downgraded to non-blocking. Provider files contain the exact mapping logic.
 
-After posting, output a single confirmation line:
+### Post-posting self-check (do this before printing the confirmation line)
+
+Count the findings in the compiled report that have a `path/to/file.ext:NN` reference (sum across Critical Issues, Warnings, Suggestions) — call this `EXPECTED_INLINE`. Then compare against the inline-thread counter exported by the provider (`INLINE_OK` on Azure DevOps; the count of successful `gh api .../comments` POSTs on GitHub).
+
+- If `INLINE_OK` is `0` and `EXPECTED_INLINE` is `> 0`: posting failed silently. Surface the failure log (`/tmp/pr_inline_failures.log` on Azure DevOps) and treat the run as a partial failure.
+- If `INLINE_OK` is much smaller than `EXPECTED_INLINE`: read the failure log and either retry the failed ones or include them in the output diagnostic.
+
+After posting, output a single confirmation line that uses the **actual** inline count, not a hard-coded one:
 
 ```
-Review posted on PR #<number>: <verdict> — <N> inline comments — <URL>
+Review posted on PR #<number>: <verdict> — <INLINE_OK>/<EXPECTED_INLINE> inline comments — <URL>
+```
+
+If `INLINE_OK < EXPECTED_INLINE`, append a second line:
+
+```
+WARN: <EXPECTED_INLINE - INLINE_OK> inline comment(s) failed to post — see /tmp/pr_inline_failures.log
 ```
 
 If posting is not possible (generic/unknown platform), output:

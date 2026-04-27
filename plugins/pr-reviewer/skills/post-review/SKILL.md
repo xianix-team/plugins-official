@@ -52,12 +52,16 @@ Do not ask for confirmation at any point. Execute all steps autonomously and pro
    | `REQUEST CHANGES` | `REQUEST_CHANGES` | `-10` |
    | `NEEDS DISCUSSION` | `COMMENT` | `0` |
 
-4. **Post the review**
+4. **Post the review** (three sub-steps, all mandatory when supported by the platform)
+
+   1. Cast the verdict / vote (GitHub review flag, Azure DevOps reviewer PUT — see provider).
+   2. Post the full report body as one PR-level comment.
+   3. **Post one inline thread per finding** that has a `path/to/file.ext:NN` reference. This is mandatory — skipping it collapses every finding into the summary thread and defeats the purpose of the review.
 
    Follow the instructions in the appropriate provider file:
 
    - **GitHub** → `providers/github.md`
-   - **Azure DevOps** → `providers/azure-devops.md`
+   - **Azure DevOps** → `providers/azure-devops.md` — inline loop is in **§4 (MANDATORY)**, not the one-off example
    - **Generic / unknown** → `providers/generic.md`
 
 5. **Output result**

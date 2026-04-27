@@ -70,5 +70,21 @@
       "keywords": ["testing", "qa", "test-strategy", "risk-based-testing", "impact-analysis", "test-cases", "coverage-map", "github", "azure-devops"],
       "license": "MIT"
     }
+  ,
+    {
+      "name": "pr-comment-resolver",
+      "source": "./plugins/pr-comment-resolver",
+      "description": "Automated resolution of pull request review threads — classifies each unresolved comment as apply, discuss, or decline, applies actionable ones as commits, replies to the rest, and posts a structured disposition report. Works with GitHub, Azure DevOps, and any git repository.",
+      "version": "1.0.0",
+      "author": {
+        "name": "99x",
+        "email": "xianix-agent@99x.io"
+      },
+      "homepage": "https://opensource.99x.io/xianix-team/",
+      "repository": "https://github.com/xianix-team/xianix-plugins-official",
+      "category": "code-review",
+      "keywords": ["pr-comments", "pull-request", "review-threads", "comment-resolver", "code-changes", "github", "azure-devops"],
+      "license": "MIT"
+    }
   ]
 }

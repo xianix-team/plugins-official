@@ -9,7 +9,15 @@ This template defines the structure for the compiled PR review report. The orche
 **PR:** [title or branch name]
 **Author:** [author]
 **Files Changed:** [count] | **+[additions]** / **-[deletions]**
-**Verdict:** `APPROVE` | `REQUEST CHANGES` | `NEEDS DISCUSSION`
+**Verdict:** one of — `APPROVE` | `APPROVE WITH SUGGESTIONS` | `REQUEST CHANGES` | `NEEDS DISCUSSION`
+
+> The verdict string MUST be one of the four values above, written in uppercase, with no decoration (no ✅, no parentheses, no extras like `APPROVED WITH SUGGESTIONS`). The provider doc maps each value to a platform vote — invented strings (e.g. `APPROVED WITH SUGGESTIONS`) cause the vote step to be skipped silently.
+>
+> Mapping guide:
+> - `APPROVE` — no critical issues, no warnings.
+> - `APPROVE WITH SUGGESTIONS` — no critical issues, no warnings, only suggestions. Plugin still casts a non-blocking vote.
+> - `REQUEST CHANGES` — at least one critical issue.
+> - `NEEDS DISCUSSION` — at least one warning that can't be resolved without input from the author, but no hard blockers.
 
 ---
 

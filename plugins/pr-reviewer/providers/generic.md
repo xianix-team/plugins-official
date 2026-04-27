@@ -61,3 +61,9 @@ This provider is the correct fallback for:
 - Any on-premises git server
 - Local or offline runs where no remote API is available
 - CI environments where only the report file output is needed
+
+---
+
+## `PR_REVIEWER_BLOCK_ON_CRITICAL`
+
+This environment variable has **no effect** on the generic provider — the report is written to a local file regardless of verdict, and there is no remote API to cast a blocking vote against. The variable is consumed only by the GitHub and Azure DevOps providers (see `providers/github.md` and `providers/azure-devops.md`).

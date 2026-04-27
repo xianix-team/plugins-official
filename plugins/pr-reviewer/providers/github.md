@@ -68,12 +68,50 @@ If posting fails, output one warning line and continue.
 | Plugin verdict      | `gh pr review` flags |
 |---------------------|----------------------|
 | `APPROVE`           | `--approve --body "<report>"` |
-| `REQUEST CHANGES`   | `--request-changes --body "<report>"` |
+| `REQUEST CHANGES`   | `--request-changes --body "<report>"` *(see `PR_REVIEWER_BLOCK_ON_CRITICAL` below)* |
 | `NEEDS DISCUSSION`  | `--comment --body "<report>"` |
 
 ```bash
 gh pr review <pr-number> --comment --body "<full compiled report>"
 # Use --approve or --request-changes instead of --comment when appropriate.
+```
+
+#### Optional: `PR_REVIEWER_BLOCK_ON_CRITICAL` (controls merge-blocking behavior)
+
+A `--request-changes` review is a first-class blocking review on GitHub. Under any branch protection rule that requires PR review approval, it blocks the merge button (`Merging is blocked`) until the review is dismissed or the reviewer re-reviews and approves. That is usually what you want when the agent finds CRITICAL issues — but in some workflows (e.g. advisory bot on a repo with strict branch protection, or shadow-mode rollouts) you want the review *visible* but *non-blocking*.
+
+The `PR_REVIEWER_BLOCK_ON_CRITICAL` environment variable controls this:
+
+| Value | Behavior on `REQUEST CHANGES` verdict |
+|---|---|
+| unset / `true` *(default)* | `gh pr review --request-changes` — blocking review |
+| `false` / `0` / `no` | `gh pr review --comment` — non-blocking comment review (verdict text is still in the body) |
+
+The verdict label in the report body, the Critical Issues section, and the inline comments are identical in both modes — only the GitHub review *type* changes.
+
+```bash
+# Map verdict + PR_REVIEWER_BLOCK_ON_CRITICAL to the gh flag
+case "${PR_REVIEWER_BLOCK_ON_CRITICAL:-true}" in
+  false|False|FALSE|0|no|No|NO) BLOCK_ON_CRITICAL=false ;;
+  *)                              BLOCK_ON_CRITICAL=true ;;
+esac
+
+case "${VERDICT}" in
+  "APPROVE"|"APPROVE WITH SUGGESTIONS")
+    REVIEW_FLAG="--approve" ;;
+  "REQUEST CHANGES")
+    if [ "$BLOCK_ON_CRITICAL" = "true" ]; then
+      REVIEW_FLAG="--request-changes"
+    else
+      REVIEW_FLAG="--comment"
+      echo "INFO: PR_REVIEWER_BLOCK_ON_CRITICAL=false — posting REQUEST CHANGES as non-blocking comment"
+    fi
+    ;;
+  "NEEDS DISCUSSION"|*)
+    REVIEW_FLAG="--comment" ;;
+esac
+
+gh pr review <pr-number> $REVIEW_FLAG --body "$(cat /tmp/pr_review_body.md)"
 ```
 
 ### Inline comments (one per finding)

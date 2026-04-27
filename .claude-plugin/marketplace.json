@@ -14,7 +14,7 @@
       "name": "pr-reviewer",
       "source": "./plugins/pr-reviewer",
       "description": "Comprehensive PR review plugin with specialized agents for code quality, security, test coverage, and performance analysis. Works with GitHub, Azure DevOps, Bitbucket, and any git repository.",
-      "version": "1.2.0",
+      "version": "1.4.0",
       "author": {
         "name": "99x",
         "email": "xianix-agent@99x.io"

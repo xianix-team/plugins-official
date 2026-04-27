@@ -280,6 +280,8 @@ Read and follow the instructions in the appropriate provider file:
 - **Azure DevOps** → `providers/azure-devops.md`
 - **Bitbucket or Unknown Platform** → `providers/generic.md`
 
+> **Blocking vs non-blocking on CRITICAL findings:** by default a `REQUEST CHANGES` verdict is posted as a *blocking* review (GitHub `--request-changes`, Azure DevOps vote `-10`). To run the plugin in advisory / shadow mode, set `PR_REVIEWER_BLOCK_ON_CRITICAL=false` — verdict, report body, and inline comments are unchanged, only the platform-side review type is downgraded to non-blocking. Provider files contain the exact mapping logic.
+
 After posting, output a single confirmation line:
 
 ```

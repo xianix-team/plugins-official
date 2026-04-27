@@ -1,10 +1,15 @@
 # Test Strategist Plugin
 
-> Risk-based impact analysis and test strategy generation for QA engineers.
+> Risk-based impact analysis and **manual-tester-focused** test strategy generation.
 
-Given a PR number, Azure DevOps work item ID, or GitHub issue number, this plugin resolves all linked context — requirements, code changes, child items, comments, and documentation — then produces a **self-contained HTML report** (`impact-analysis-report.html`) with test cases, a coverage map, and a QA sign-off checklist.
+Given a PR number, Azure DevOps work item ID, or GitHub issue number, this plugin resolves all linked context — requirements, code changes, child items, comments, and documentation — then produces a **self-contained HTML report** (`impact-analysis-report.html`) that tells a manual tester two things:
 
-Reports are written for **QA engineers, product owners, and non-technical stakeholders**. Test cases describe _what_ to verify and _why it matters_ — not which line of code changed.
+1. **Where the highest business risk is** in this change.
+2. **How to actually test it** — including ready-to-use, copy-pasteable test data.
+
+Every test case is written in plain language. Each one carries a **"Why this matters"** business statement, a specific **user persona**, a **test data table** with realistic sample values (and boundary / negative / PII-flagged variations), step-by-step actions, the **expected business outcome**, and exactly where to verify it.
+
+Reports are written for **manual QA testers, product owners, and non-technical stakeholders**. They never describe which line of code changed.
 
 ---
 
@@ -91,35 +96,73 @@ The command accepts three entry points. Only one is needed — the orchestrator 
 | Agent | Focus |
 |---|---|
 | **requirement-collector** | Consolidates requirements: acceptance criteria (PBI/Feature), repro steps + root cause (Bug), child items, comments, referenced documentation |
-| **change-analyst** | Maps code changes to functional areas; cross-references against requirements; flags "Developer Changes Requiring Clarification" for unexplained changes |
-| **risk-assessor** | Business-level risk summary: what could break, who is affected, how severe; impacted areas with ratings |
+| **change-analyst** | Translates each code change into user-visible behaviour ("what does the user notice?"); cross-references against requirements; flags "Developer Changes Requiring Clarification" with an actionable question for the developer |
+| **risk-assessor** | Business-level risk summary plus a ranked **Top Focus Areas** list that drives the report's "Where Testers Should Focus First" section |
 
 ### Phase 2 — Report Generation
 
 | Agent | Focus |
 |---|---|
-| **test-guide-writer** | Produces the final HTML report with 12 sections, test cases across 7 categories, coverage map, and QA sign-off checklist |
+| **test-guide-writer** | Produces the final HTML report with 13 sections, business-oriented test cases across 7 categories with full test data tables, coverage map, and QA sign-off checklist |
 
 ---
 
 ## Report Sections
 
-The HTML report contains 12 sections:
+The HTML report contains **13 sections**, ordered so a manual tester sees risk and focus areas before any test cases:
 
 | # | Section | Purpose |
 |---|---|---|
-| 1 | **Summary** | Work item metadata, overall risk, test case count, linked PRs |
-| 2 | **Context Gathered** | Linked PRs, child work items, changesets, referenced documentation |
-| 3 | **Code Changes Overview** | Per-PR cards with file-level summaries — no raw diffs |
-| 4 | **Requirements Coverage** | Each requirement mapped to the code changes that address it |
-| 5 | **Developer Changes Requiring Clarification** | Code changes not explained by any stated requirement — flagged for discussion before testing |
-| 6 | **Missing Requirement Coverage** | Requirements with no corresponding code change found |
-| 7 | **Business Risk Assessment** | What could go wrong, who is affected, how severe — business language |
-| 8 | **Test Cases** | All test scenarios across seven categories |
-| 9 | **Coverage Map** | Matrix: requirements → test cases, risks → test cases, explicitly out of scope |
-| 10 | **Impacted Areas** | Direct and indirect impact on user workflows, integrations, and data |
-| 11 | **Environment & Assignment** | Area path, iteration, developer, tester, environment/data/account needs |
-| 12 | **QA Sign-off** | Interactive checklist for the tester to confirm completion |
+| 1 | **Summary** | Work item metadata, overall risk, test case count, linked PRs, and a one-sentence headline business risk |
+| 2 | **Where Testers Should Focus First** | Top 3–5 highest-risk business areas with the test case IDs that cover them — the "first hour of testing" guide |
+| 3 | **Business Risk Assessment** | What could go wrong, who is affected, how severe — business language only |
+| 4 | **Impacted Areas** | Direct and indirect impact on user workflows, integrations, and data |
+| 5 | **Context Gathered** | Linked PRs, child work items, changesets, referenced documentation |
+| 6 | **Code Changes Overview** | Per-PR cards translating file changes into user-visible behaviour — no raw diffs |
+| 7 | **Requirements Coverage** | Each requirement mapped to the code changes that address it, with user-visible evidence |
+| 8 | **Developer Changes Requiring Clarification** | Code changes not explained by any stated requirement — flagged with an actionable question for the developer |
+| 9 | **Missing Requirement Coverage** | Requirements with no corresponding code change found |
+| 10 | **Test Cases** | Self-contained tester instructions across seven categories — see "Test Case Anatomy" below |
+| 11 | **Coverage Map** | Matrix: requirements → test cases, business risks → test cases, explicitly out of scope |
+| 12 | **Environment & Assignment** | Area path, iteration, developer, tester, environment/data/account needs |
+| 13 | **QA Sign-off** | Interactive checklist for the tester to confirm completion |
+
+---
+
+## Test Case Anatomy
+
+Every test case is a self-contained set of instructions a manual tester can run without reading the code. Each one includes:
+
+| Field | Purpose |
+|---|---|
+| **ID + title** | Sequential `TC-NNN` and a plain-language scenario starting with a verb the user performs |
+| **Why this matters** | One or two sentences. Business outcome verified if it passes; business loss if it fails; affected users |
+| **Linked to** | The requirement (AC/RS) **and** the business risk (Risk-N) this case covers — no orphan test cases |
+| **User role / persona** | The specific kind of user running the scenario |
+| **Preconditions** | System state, environment, feature flags, existing data |
+| **Test data** | A table of concrete copy-pasteable sample values, with boundary / PII / PCI / invalid flags |
+| **Steps** | Numbered observable user actions — no code references |
+| **Expected business outcome** | What the user sees and what the business gains |
+| **How to verify** | Where the tester looks: UI cues, emails, records (technical hints permitted only here) |
+| **If this fails** | What evidence to capture, which risk it confirms, who to escalate to |
+
+---
+
+## Test Data Generation
+
+The plugin generates concrete, synthetic test data for every test case — the tester can copy and paste it. Generation covers:
+
+- **Identifiers** — `*.test@example.com` / `Test-NNNN` patterns
+- **Money / quantity** — currency-correct values around any thresholds (just below / at / just above)
+- **Dates / times** — relative to "today", with edge dates (DST, leap day, far past / future) where relevant
+- **Free-text** — short, long, with apostrophes ("O'Brien"), with non-ASCII (José, 王芳)
+- **Geographic data** — postal codes, phone numbers in the system's actual format
+- **Payment data** — known test cards (`4242 4242 4242 4242` for success, `4000 0000 0000 9995` for declined) — never real card numbers
+- **Boundary values** — minimum, just below, maximum, just above, empty, whitespace, special characters, format-invalid
+- **Negative test data** — expired coupons, blocked customers, oversized uploads, SQL/script-like strings, role-escalation attempts
+- **PII / PCI / PHI tags** — every sensitive field is flagged in the test data table
+
+Performance, accessibility, resilience, and compatibility test cases include category-specific extras (load profile, assistive technology, failure simulation, target browsers / OS / API versions).
 
 ---
 

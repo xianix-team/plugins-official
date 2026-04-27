@@ -102,6 +102,34 @@ No additional setup is required beyond having a working git installation.
 
 ---
 
+## Optional: Non-blocking reviews on CRITICAL findings
+
+By default, when the plugin finds CRITICAL issues it posts a **blocking** review:
+
+- **GitHub** → `gh pr review --request-changes` (under branch protection, this shows `Merging is blocked` until the review is dismissed or re-reviewed)
+- **Azure DevOps** → vote `-10` Rejected (under repo branch policy, this prevents PR completion)
+
+In some workflows you want the review and the report to be visible but not actually block merging — e.g.:
+
+- The plugin is rolling out in **shadow / advisory mode** before being trusted to gate merges.
+- A human reviewer is the official gate, and the bot's role is to surface findings.
+- Branch protection is strict and an over-eager bot review would frequently require manual dismissal.
+
+Set the `PR_REVIEWER_BLOCK_ON_CRITICAL` environment variable to disable blocking:
+
+```bash
+export PR_REVIEWER_BLOCK_ON_CRITICAL=false
+```
+
+| Value | Effect on `REQUEST CHANGES` verdict |
+|---|---|
+| unset / `true` *(default)* | GitHub: `--request-changes` · Azure DevOps: vote `-10` (blocking) |
+| `false` / `0` / `no` | GitHub: `--comment` · Azure DevOps: vote `-5` Waiting for author (non-blocking) |
+
+The verdict label, Critical Issues section, and inline comments are identical in both modes — only the platform action changes. The variable has no effect on the generic provider.
+
+---
+
 ## Summary
 
 | Platform | Analysis | Review posting | Token (posting / API) | Fix mode push |
@@ -109,6 +137,12 @@ No additional setup is required beyond having a working git installation.
 | GitHub | `git diff`, `git log`, … | `gh pr review`, `gh pr comment`, `gh api` | `gh auth` / `GH_TOKEN` | `GITHUB_TOKEN` |
 | Azure DevOps | `git diff`, `git log`, … | REST (`curl`) per `providers/azure-devops.md` | `AZURE_DEVOPS_TOKEN` / `AZURE_DEVOPS_TOKEN` | `AZURE_DEVOPS_TOKEN` |
 | Generic | `git diff`, `git log`, … | Write to `pr-review-report.md` | — | `GITHUB_TOKEN` |
+
+### Optional environment variables (all platforms)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PR_REVIEWER_BLOCK_ON_CRITICAL` | `true` | When `false`, posts CRITICAL findings as a non-blocking review (GitHub `--comment`, Azure DevOps vote `-5`). See above. |
 
 ---
 

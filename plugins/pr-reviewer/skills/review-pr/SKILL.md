@@ -25,3 +25,5 @@ If invoked with `--fix`: apply fixes to CRITICAL and WARNING issues, commit, and
 If a branch name is provided (e.g., `/review-pr feature/my-feature`), compare that branch against `main`.
 
 If no argument is given, review the **current branch** against `main`.
+
+**Optional — non-blocking mode:** by default the review is posted as a *blocking* review when CRITICAL issues are found (GitHub `--request-changes` / Azure DevOps vote `-10`), which prevents merge under standard branch protection rules. Set `PR_REVIEWER_BLOCK_ON_CRITICAL=false` in the environment to downgrade `REQUEST CHANGES` to a non-blocking comment review (GitHub `--comment` / Azure DevOps vote `-5`). The verdict label and report body remain unchanged. See `docs/platform-setup.md`.

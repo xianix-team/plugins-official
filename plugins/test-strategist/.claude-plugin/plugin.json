@@ -1,0 +1,35 @@
+{
+  "name": "test-strategist",
+  "version": "1.0.0",
+  "description": "Automated impact analysis and risk-based test strategy generation for bug fixes, PBIs, and feature implementations. Gathers work item requirements, code changes across linked pull requests, comments, child items, and referenced documentation — then produces a business-readable HTML report that serves as the testing guide for QA engineers doing risk-based testing.",
+  "author": {
+    "name": "Xianix",
+    "email": "hello@xianix.com",
+    "url": "https://xianix.com"
+  },
+  "homepage": "https://xianix.com",
+  "repository": "https://github.com/xianix-team/plugins-official",
+  "license": "MIT",
+  "keywords": [
+    "testing",
+    "qa",
+    "test-strategy",
+    "risk-based-testing",
+    "impact-analysis",
+    "test-cases",
+    "coverage-map",
+    "github",
+    "azure-devops"
+  ],
+  "commands": ["./commands/test-strategy.md"],
+  "agents": [
+    "./agents/orchestrator.md",
+    "./agents/requirement-collector.md",
+    "./agents/change-analyst.md",
+    "./agents/risk-assessor.md",
+    "./agents/test-guide-writer.md"
+  ],
+  "skills": "./skills/",
+  "outputStyles": "./styles/",
+  "providers": "./providers/"
+}

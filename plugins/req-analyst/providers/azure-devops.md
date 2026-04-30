@@ -10,7 +10,7 @@ Required environment variable:
 
 | Variable | Purpose |
 |---|---|
-| `AZURE_DEVOPS_TOKEN` | Azure DevOps PAT — must have `Work Items (Read & Write)` scopes |
+| `AZURE-DEVOPS-TOKEN` | Azure DevOps PAT — must have `Work Items (Read & Write)` scopes |
 
 Optional — used to override values parsed from the remote URL:
 
@@ -48,7 +48,7 @@ AZURE_PROJECT=$(echo "$REMOTE" | cut -d'/' -f4)
 Fetch the full work item with all fields, comments, and relations:
 
 ```bash
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   "https://dev.azure.com/${AZURE_ORG}/${AZURE_PROJECT}/_apis/wit/workitems/${WORK_ITEM_ID}?api-version=7.1&\$expand=all"
 ```
 
@@ -71,7 +71,7 @@ Extract from the response:
 Query for related items in the same iteration or area path using WIQL:
 
 ```bash
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   -X POST \
   -H "Content-Type: application/json" \
   "https://dev.azure.com/${AZURE_ORG}/${AZURE_PROJECT}/_apis/wit/wiql?api-version=7.1" \
@@ -81,7 +81,7 @@ curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
 Then fetch details for each related item ID:
 
 ```bash
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   "https://dev.azure.com/${AZURE_ORG}/${AZURE_PROJECT}/_apis/wit/workitems?ids=${ID1},${ID2},${ID3}&api-version=7.1"
 ```
 
@@ -112,7 +112,7 @@ Post each lens as its own work item comment. Each comment must have a clear head
 Azure DevOps must be told that comment bodies are Markdown. If you omit `format=markdown`, the API stores the text as plain content and the UI shows `##`, tables, and emphasis as raw characters.
 
 ```bash
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   -X POST \
   -H "Content-Type: application/json" \
   "https://dev.azure.com/${AZURE_ORG}/${AZURE_PROJECT}/_apis/wit/workitems/${WORK_ITEM_ID}/comments?format=markdown&api-version=7.1-preview.4" \
@@ -131,13 +131,13 @@ COMMENT
 After posting all comments, add the readiness signal tag without replacing existing tags:
 
 ```bash
-EXISTING_TAGS=$(curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+EXISTING_TAGS=$(curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   "https://dev.azure.com/${AZURE_ORG}/${AZURE_PROJECT}/_apis/wit/workitems/${WORK_ITEM_ID}?api-version=7.1&fields=System.Tags" \
   | python3 -c "import sys,json; print(json.load(sys.stdin).get('fields',{}).get('System.Tags',''))")
 
 NEW_TAGS="${EXISTING_TAGS}; ${SIGNAL_TAG}"
 
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   -X PATCH \
   -H "Content-Type: application/json-patch+json" \
   "https://dev.azure.com/${AZURE_ORG}/${AZURE_PROJECT}/_apis/wit/workitems/${WORK_ITEM_ID}?api-version=7.1" \

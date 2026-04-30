@@ -50,7 +50,7 @@ After detection, use **only** the platform-appropriate tool for the rest of the 
 | Platform | Allowed for posting / PR API | Forbidden |
 |---|---|---|
 | GitHub | `gh`, `git` | `curl` to Azure DevOps, `az` |
-| Azure DevOps | `curl` + `AZURE_DEVOPS_TOKEN`, `git` | `gh` (will fail with `gh auth login`), `az login` |
+| Azure DevOps | `curl` + `AZURE-DEVOPS-TOKEN`, `git` | `gh` (will fail with `gh auth login`), `az login` |
 | Bitbucket / Generic | `git` only | `gh`, `curl` to private APIs |
 
 Do **not** probe other CLIs ("just to check"). The hook layer will block obvious mismatches; doing it wrong will block the run.

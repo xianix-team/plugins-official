@@ -9,7 +9,7 @@
 # Credentials
 #   GITHUB_TOKEN          — used by git push for HTTPS authentication (GitHub / generic)
 #                        injected via GIT_CONFIG env vars, never written to disk
-#   AZURE_DEVOPS_TOKEN   — used by git push for HTTPS authentication on Azure DevOps remotes
+#   AZURE-DEVOPS-TOKEN   — used by git push for HTTPS authentication on Azure DevOps remotes
 #                        also used by the az CLI for API calls
 
 set -euo pipefail
@@ -35,7 +35,7 @@ if echo "$COMMAND" | grep -qE "(^|[[:space:]])gh[[:space:]]"; then
     REMOTE_URL=$(git remote get-url origin 2>/dev/null || echo "")
     if [ -n "$REMOTE_URL" ] && ! echo "$REMOTE_URL" | grep -q "github.com"; then
         if echo "$REMOTE_URL" | grep -qE "(dev\.azure\.com|visualstudio\.com)"; then
-            echo '{"decision": "block", "reason": "gh CLI is for GitHub remotes only — this remote is Azure DevOps. Use curl + AZURE_DEVOPS_TOKEN per providers/azure-devops.md."}'
+            echo '{"decision": "block", "reason": "gh CLI is for GitHub remotes only — this remote is Azure DevOps. Use curl + AZURE-DEVOPS-TOKEN per providers/azure-devops.md."}'
         elif echo "$REMOTE_URL" | grep -q "bitbucket.org"; then
             echo '{"decision": "block", "reason": "gh CLI is for GitHub remotes only — this remote is Bitbucket. Use git only and write to pr-review-report.md per providers/generic.md."}'
         else
@@ -47,16 +47,16 @@ if echo "$COMMAND" | grep -qE "(^|[[:space:]])gh[[:space:]]"; then
     exit 0
 fi
 
-# curl to Azure DevOps REST — require AZURE_DEVOPS_TOKEN, with a token-name hygiene check.
+# curl to Azure DevOps REST — require AZURE-DEVOPS-TOKEN, with a token-name hygiene check.
 # Some upstream environments export the token as AZURE-DEVOPS-TOKEN (with hyphens),
 # which is not a valid bash identifier and cannot be referenced as $AZURE-DEVOPS-TOKEN.
 # Detect that and surface a clear, actionable error instead of a silent 401.
 if echo "$COMMAND" | grep -qE "curl.*(dev\.azure\.com|visualstudio\.com|app\.vssps\.visualstudio\.com)"; then
-    if [ -z "${AZURE_DEVOPS_TOKEN:-}" ]; then
+    if [ -z "${AZURE-DEVOPS-TOKEN:-}" ]; then
         if env | grep -q '^AZURE-DEVOPS-TOKEN='; then
-            echo '{"decision": "block", "reason": "Found AZURE-DEVOPS-TOKEN (with hyphens) but AZURE_DEVOPS_TOKEN (with underscores) is empty. Bash cannot reference hyphenated names — re-export as: export AZURE_DEVOPS_TOKEN=\"$(env | sed -n s/^AZURE-DEVOPS-TOKEN=//p)\""}'
+            echo '{"decision": "block", "reason": "Found AZURE-DEVOPS-TOKEN (with hyphens) but AZURE-DEVOPS-TOKEN (with underscores) is empty. Bash cannot reference hyphenated names — re-export as: export AZURE-DEVOPS-TOKEN=\"$(env | sed -n s/^AZURE-DEVOPS-TOKEN=//p)\""}'
         else
-            echo '{"decision": "block", "reason": "AZURE_DEVOPS_TOKEN is not set. Pass it at runtime: AZURE_DEVOPS_TOKEN=<pat> claude ... (see docs/platform-setup.md)"}'
+            echo '{"decision": "block", "reason": "AZURE-DEVOPS-TOKEN is not set. Pass it at runtime: AZURE-DEVOPS-TOKEN=<pat> claude ... (see docs/platform-setup.md)"}'
         fi
         exit 0
     fi
@@ -102,18 +102,18 @@ if echo "$COMMAND" | grep -qE "^git push"; then
     REMOTE_URL=$(git remote get-url origin 2>/dev/null || echo "")
 
     if echo "$REMOTE_URL" | grep -qE "(dev\.azure\.com|visualstudio\.com)"; then
-        # Azure DevOps — use AZURE_DEVOPS_TOKEN
-        if [ -z "${AZURE_DEVOPS_TOKEN:-}" ]; then
-            echo '{"decision": "block", "reason": "AZURE_DEVOPS_TOKEN is not set. Pass it at runtime: AZURE_DEVOPS_TOKEN=<pat> claude ... (see docs/platform-setup.md)"}'
+        # Azure DevOps — use AZURE-DEVOPS-TOKEN
+        if [ -z "${AZURE-DEVOPS-TOKEN:-}" ]; then
+            echo '{"decision": "block", "reason": "AZURE-DEVOPS-TOKEN is not set. Pass it at runtime: AZURE-DEVOPS-TOKEN=<pat> claude ... (see docs/platform-setup.md)"}'
             exit 0
         fi
 
         # Inject the PAT into git credentials for Azure DevOps HTTPS remotes
         # Supports both dev.azure.com and *.visualstudio.com URL formats
         export GIT_CONFIG_COUNT=2
-        export GIT_CONFIG_KEY_0="url.https://x-access-token:${AZURE_DEVOPS_TOKEN}@dev.azure.com/.insteadOf"
+        export GIT_CONFIG_KEY_0="url.https://x-access-token:${AZURE-DEVOPS-TOKEN}@dev.azure.com/.insteadOf"
         export GIT_CONFIG_VALUE_0="https://dev.azure.com/"
-        export GIT_CONFIG_KEY_1="url.https://x-access-token:${AZURE_DEVOPS_TOKEN}@visualstudio.com/.insteadOf"
+        export GIT_CONFIG_KEY_1="url.https://x-access-token:${AZURE-DEVOPS-TOKEN}@visualstudio.com/.insteadOf"
         export GIT_CONFIG_VALUE_1="https://visualstudio.com/"
     else
         # GitHub or generic HTTPS remote — use GITHUB_TOKEN

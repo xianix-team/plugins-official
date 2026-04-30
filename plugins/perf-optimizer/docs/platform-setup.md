@@ -71,7 +71,7 @@ The plugin itself does **not** require the `az` CLI — it uses `curl` against t
 **Personal Access Token**
 
 ```bash
-export AZURE_DEVOPS_TOKEN=<your-pat>
+export AZURE-DEVOPS-TOKEN=<your-pat>
 ```
 
 Add to `~/.zshrc` or `~/.bashrc` to persist.
@@ -86,14 +86,14 @@ Add to `~/.zshrc` or `~/.bashrc` to persist.
 
 ### Credentials for `git push`
 
-The plugin reuses `AZURE_DEVOPS_TOKEN` for `git push` credential injection automatically — no separate token is needed.
+The plugin reuses `AZURE-DEVOPS-TOKEN` for `git push` credential injection automatically — no separate token is needed.
 
 ### Generating a PAT
 
 1. Go to `https://dev.azure.com/<your-org>/_usersSettings/tokens`.
 2. Click **New Token**.
 3. Set the scopes listed above.
-4. Copy the token and export it as `AZURE_DEVOPS_TOKEN`.
+4. Copy the token and export it as `AZURE-DEVOPS-TOKEN`.
 
 ---
 
@@ -108,7 +108,7 @@ GitHub and Azure DevOps are the two platforms the issue-driven flow supports end
 | Platform | Trigger | Analysis input | PR opening | Push token |
 |---|---|---|---|---|
 | GitHub | Issue label `ai-dlc/perf/optimize` | `git ls-files` on the default branch | `gh pr create` | `GITHUB_TOKEN` |
-| Azure DevOps | Work item tag `ai-dlc/perf/optimize` | `git ls-files` on the default branch | REST (`curl`) per `providers/azure-devops.md` | `AZURE_DEVOPS_TOKEN` |
+| Azure DevOps | Work item tag `ai-dlc/perf/optimize` | `git ls-files` on the default branch | REST (`curl`) per `providers/azure-devops.md` | `AZURE-DEVOPS-TOKEN` |
 
 ---
 

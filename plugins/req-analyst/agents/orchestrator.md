@@ -41,7 +41,7 @@ git remote get-url origin
 
 From the remote URL, determine the platform:
 - Contains `github.com` → **GitHub** (use `gh` CLI)
-- Contains `dev.azure.com` or `visualstudio.com` → **Azure DevOps** (use `curl` + `AZURE_DEVOPS_TOKEN`)
+- Contains `dev.azure.com` or `visualstudio.com` → **Azure DevOps** (use `curl` + `AZURE-DEVOPS-TOKEN`)
 - Anything else → **Generic / plain text** (fetch via user input or local file, write the report to disk)
 
 Store the detected platform — it determines how the item is fetched (Step 1) and how the elaboration is delivered (Step 8).
@@ -74,7 +74,7 @@ Parse org, project, and repo from the remote URL — see `providers/azure-devops
 Fetch the work item:
 
 ```bash
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   "https://dev.azure.com/${AZURE_ORG}/${AZURE_PROJECT}/_apis/wit/workitems/${WORK_ITEM_ID}?api-version=7.1&\$expand=all"
 ```
 
@@ -83,7 +83,7 @@ Extract: title (`System.Title`), description (`System.Description`), state, tags
 Find related items in the same iteration/area path:
 
 ```bash
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   -X POST \
   -H "Content-Type: application/json" \
   "https://dev.azure.com/${AZURE_ORG}/${AZURE_PROJECT}/_apis/wit/wiql?api-version=7.1" \

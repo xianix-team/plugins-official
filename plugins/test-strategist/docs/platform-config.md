@@ -46,7 +46,7 @@ GitHub does not support HTML file attachments on issues or PRs. The plugin:
 Set the Personal Access Token as an environment variable:
 
 ```bash
-export AZURE_DEVOPS_TOKEN=xxxxxxxx
+export AZURE-DEVOPS-TOKEN=xxxxxxxx
 ```
 
 ### Required Token Permissions

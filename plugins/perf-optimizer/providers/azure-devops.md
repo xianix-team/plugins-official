@@ -10,7 +10,7 @@ Required environment variable:
 
 | Variable | Purpose |
 |---|---|
-| `AZURE_DEVOPS_TOKEN` | Azure DevOps PAT — must include `Code (Read & Write)`, `Work Items (Read & Write)`, and `Pull Request Threads (Read & Write)` |
+| `AZURE-DEVOPS-TOKEN` | Azure DevOps PAT — must include `Code (Read & Write)`, `Work Items (Read & Write)`, and `Pull Request Threads (Read & Write)` |
 
 Optional — used to override values parsed from the remote URL:
 
@@ -60,7 +60,7 @@ Use `${API_BASE}` in place of a hardcoded host for **every** API call below.
 The orchestrator receives the work item title / description via the rule payload. If you need to re-read it (e.g. local runs), use:
 
 ```bash
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   "https://dev.azure.com/${AZURE_ORG}/_apis/wit/workitems/${WORKITEM_ID}?\$expand=fields&api-version=7.1" \
   | python3 -c "
 import sys, json
@@ -118,7 +118,7 @@ BODY=$(jq -n \
            "- Target runtime: " + $target + "\n" +
            "- Files in scope: " + $files)}')
 
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   -X POST \
   -H "Content-Type: application/json" \
   "https://dev.azure.com/${AZURE_ORG}/${AZURE_PROJECT}/_apis/wit/workItems/${WORKITEM_ID}/comments?api-version=7.1-preview.3" \
@@ -146,7 +146,7 @@ git push -u origin "${NEW_BRANCH}"
 The PR body MUST contain, in order: summary, `Related work item: #${WORKITEM_ID}` plus `AB#${WORKITEM_ID}`, applied-optimizations table, not-applied list, verification checklist, and the full performance report body.
 
 ```bash
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   -X POST \
   -H "Content-Type: application/json" \
   "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullrequests?api-version=7.1" \
@@ -181,7 +181,7 @@ ${API_BASE}/_git/${AZURE_REPO}/pullrequest/<new-pr-id>
 Post a comment thread on the originating work item pointing to the new PR:
 
 ```bash
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   -X POST \
   -H "Content-Type: application/json" \
   "https://dev.azure.com/${AZURE_ORG}/${AZURE_PROJECT}/_apis/wit/workItems/${WORKITEM_ID}/comments?api-version=7.1-preview.3" \

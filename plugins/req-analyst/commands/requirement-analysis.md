@@ -78,7 +78,7 @@ Elaboration posted on issue #<number>: <signal> — <N> comments — <N> open qu
 ## Prerequisites
 
 - **GitHub**: `gh` CLI installed and authenticated (see `docs/platform-config.md`)
-- **Azure DevOps**: `AZURE_DEVOPS_TOKEN` environment variable set (see `docs/platform-config.md`)
+- **Azure DevOps**: `AZURE-DEVOPS-TOKEN` environment variable set (see `docs/platform-config.md`)
 - **Plain text / unknown platform**: nothing — the report is written to a local file
 
 ---

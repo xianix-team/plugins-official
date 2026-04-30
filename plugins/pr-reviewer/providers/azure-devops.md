@@ -10,9 +10,9 @@ Required environment variable:
 
 | Variable | Purpose |
 |---|---|
-| `AZURE_DEVOPS_TOKEN` | Azure DevOps PAT — must have `Code (Read)`, `Pull Request Threads (Read & Write)`, and `User Profile (Read)` scopes |
+| `AZURE-DEVOPS-TOKEN` | Azure DevOps PAT — must have `Code (Read)`, `Pull Request Threads (Read & Write)`, and `User Profile (Read)` scopes |
 
-> **Note on var-name hygiene:** the variable name must be `AZURE_DEVOPS_TOKEN` (underscores). Some upstream environments export `AZURE-DEVOPS-TOKEN` (hyphens) — bash cannot reference hyphenated names, and `curl -u ":${AZURE-DEVOPS-TOKEN}"` will silently send an empty password. The plugin's `PreToolUse` hook detects this case and blocks with a clear message; if you hit it, re-export with underscores.
+> **Note on var-name hygiene:** the variable name must be `AZURE-DEVOPS-TOKEN` (underscores). Some upstream environments export `AZURE-DEVOPS-TOKEN` (hyphens) — bash cannot reference hyphenated names, and `curl -u ":${AZURE-DEVOPS-TOKEN}"` will silently send an empty password. The plugin's `PreToolUse` hook detects this case and blocks with a clear message; if you hit it, re-export with underscores.
 
 Optional — used to override values parsed from the remote URL:
 
@@ -149,7 +149,7 @@ PY
 # 3. POST and check status
 RESP=$(curl -sS -w "\nHTTP_STATUS:%{http_code}" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Basic $(echo -n ":${AZURE_DEVOPS_TOKEN}" | base64 -w0)" \
+  -H "Authorization: Basic $(echo -n ":${AZURE-DEVOPS-TOKEN}" | base64 -w0)" \
   -X POST \
   --data @/tmp/pr_thread_payload.json \
   "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads?api-version=7.1")
@@ -186,7 +186,7 @@ PY
 
 Then POST exactly as in step 3 above.
 
-> **Authentication note:** Both `-u ":${AZURE_DEVOPS_TOKEN}"` and `-H "Authorization: Basic $(echo -n ":${AZURE_DEVOPS_TOKEN}" | base64 -w0)"` work for Azure DevOps PAT auth. The `-H` form is shown above because it makes the auth header visible in `curl -v` traces and is what the model converges on in practice.
+> **Authentication note:** Both `-u ":${AZURE-DEVOPS-TOKEN}"` and `-H "Authorization: Basic $(echo -n ":${AZURE-DEVOPS-TOKEN}" | base64 -w0)"` work for Azure DevOps PAT auth. The `-H` form is shown above because it makes the auth header visible in `curl -v` traces and is what the model converges on in practice.
 
 ---
 
@@ -204,7 +204,7 @@ else
   BRANCH=$(git rev-parse --abbrev-ref HEAD)
 fi
 
-PR_ID=$(curl -sS -u ":${AZURE_DEVOPS_TOKEN}" \
+PR_ID=$(curl -sS -u ":${AZURE-DEVOPS-TOKEN}" \
   "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullrequests?searchCriteria.sourceRefName=refs/heads/${BRANCH}&searchCriteria.status=active&api-version=7.1" \
   | python3 -c "import sys,json; prs=json.load(sys.stdin)['value']; print(prs[0]['pullRequestId'] if prs else '')")
 export PR_ID
@@ -219,7 +219,7 @@ If empty, the branch has no open PR — output a warning and skip posting.
 The PR object on Azure DevOps is the source of truth for title, description, source/target branches, and the author display name. **Use these instead of commit messages** when building the report header — commit subjects can drift from the actual PR title.
 
 ```bash
-PR_JSON=$(curl -sS -u ":${AZURE_DEVOPS_TOKEN}" \
+PR_JSON=$(curl -sS -u ":${AZURE-DEVOPS-TOKEN}" \
   "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullrequests/${PR_ID}?api-version=7.1")
 
 PR_TITLE=$(echo       "$PR_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('title',''))")
@@ -273,7 +273,7 @@ PY
 
 curl -sS -w "\nHTTP_STATUS:%{http_code}\n" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Basic $(echo -n ":${AZURE_DEVOPS_TOKEN}" | base64 -w0)" \
+  -H "Authorization: Basic $(echo -n ":${AZURE-DEVOPS-TOKEN}" | base64 -w0)" \
   -X POST --data @/tmp/pr_thread_payload.json \
   "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads?api-version=7.1"
 ```
@@ -344,7 +344,7 @@ esac
 
 ```bash
 REVIEWER_ID=$(curl -sS \
-  -H "Authorization: Basic $(echo -n ":${AZURE_DEVOPS_TOKEN}" | base64 -w0)" \
+  -H "Authorization: Basic $(echo -n ":${AZURE-DEVOPS-TOKEN}" | base64 -w0)" \
   "https://app.vssps.visualstudio.com/_apis/profile/profiles/me?api-version=7.1" \
   | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))")
 
@@ -353,7 +353,7 @@ if [ -z "$REVIEWER_ID" ]; then
 else
   VOTE_RESP=$(curl -sS -w "\nHTTP_STATUS:%{http_code}" \
     -H "Content-Type: application/json" \
-    -H "Authorization: Basic $(echo -n ":${AZURE_DEVOPS_TOKEN}" | base64 -w0)" \
+    -H "Authorization: Basic $(echo -n ":${AZURE-DEVOPS-TOKEN}" | base64 -w0)" \
     -X PUT \
     "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/reviewers/${REVIEWER_ID}?api-version=7.1" \
     -d "{\"vote\": ${VOTE}, \"id\": \"${REVIEWER_ID}\"}")
@@ -388,7 +388,7 @@ PY
 
 curl -sS -w "\nHTTP_STATUS:%{http_code}\n" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Basic $(echo -n ":${AZURE_DEVOPS_TOKEN}" | base64 -w0)" \
+  -H "Authorization: Basic $(echo -n ":${AZURE-DEVOPS-TOKEN}" | base64 -w0)" \
   -X POST --data @/tmp/pr_thread_payload.json \
   "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads?api-version=7.1"
 ```
@@ -453,7 +453,7 @@ PY
 
   RESP=$(curl -sS -w "\nHTTP_STATUS:%{http_code}" \
     -H "Content-Type: application/json" \
-    -H "Authorization: Basic $(echo -n ":${AZURE_DEVOPS_TOKEN}" | base64 -w0)" \
+    -H "Authorization: Basic $(echo -n ":${AZURE-DEVOPS-TOKEN}" | base64 -w0)" \
     -X POST --data @/tmp/pr_thread_payload.json \
     "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads?api-version=7.1")
 
@@ -488,7 +488,7 @@ If `INLINE_OK` is `0` while `INLINE_TOTAL` is `> 0`, every POST failed. Read `/t
 
 | HTTP | Cause | Fix |
 |---|---|---|
-| `401` | Token missing or hyphenated (`AZURE-DEVOPS-TOKEN` instead of `AZURE_DEVOPS_TOKEN`). | Re-export with underscores (the hook normally catches this). |
+| `401` | Token missing or hyphenated (`AZURE-DEVOPS-TOKEN` instead of `AZURE-DEVOPS-TOKEN`). | Re-export with underscores (the hook normally catches this). |
 | `404` | `API_BASE` is wrong — most often the legacy `DefaultCollection` URL was parsed without the project segment. | Re-run the parser at the top of this file; print `API_BASE` and confirm it ends with `/{project}`, not `/{collection}`. |
 | `400` with `threadContext` in the body | `filePath` doesn't match a file in the iteration, or the line number is past EOF. | Confirm the file path is repo-relative (no leading `/` in your JSONL — the script adds one) and the line is on the right (post-change) side. |
 

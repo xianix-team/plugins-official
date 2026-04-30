@@ -54,7 +54,7 @@ For unsupported platforms, the output is written to `requirement-elaboration-rep
 
 - [Claude Code](https://docs.anthropic.com/claude-code) installed (`claude` CLI)
 - **GitHub**: `gh` CLI installed and authenticated (`gh auth login`) — or `GITHUB_TOKEN` env var
-- **Azure DevOps**: `AZURE_DEVOPS_TOKEN` PAT with `Work Items (Read & Write)` scope
+- **Azure DevOps**: `AZURE-DEVOPS-TOKEN` PAT with `Work Items (Read & Write)` scope
 - **Plain text**: nothing — the report is written to disk
 
 ### Run
@@ -95,7 +95,7 @@ The platform (GitHub, Azure DevOps, etc.) is **auto-detected** from `git remote`
 | Variable | Platform | Required | Purpose |
 |---|---|---|---|
 | `GITHUB_TOKEN` | GitHub | Yes | Authenticate `gh` CLI for reading issues and posting comments |
-| `AZURE_DEVOPS_TOKEN` | Azure DevOps | Yes | PAT for REST API calls (read work items, post comments) |
+| `AZURE-DEVOPS-TOKEN` | Azure DevOps | Yes | PAT for REST API calls (read work items, post comments) |
 
 For CI pipelines, you can also set `PLATFORM`, `REPO_URL`, and `ISSUE_NUMBER` to drive the plugin without interactive input.
 

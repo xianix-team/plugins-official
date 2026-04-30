@@ -74,7 +74,7 @@ The plugin auto-detects the hosting platform from your git remote URL:
 
 - Must be run inside a git repository
 - **GitHub**: `gh` CLI installed and authenticated (see `docs/platform-config.md`)
-- **Azure DevOps**: `AZURE_DEVOPS_TOKEN` environment variable set (see `docs/platform-config.md`)
+- **Azure DevOps**: `AZURE-DEVOPS-TOKEN` environment variable set (see `docs/platform-config.md`)
 
 ---
 

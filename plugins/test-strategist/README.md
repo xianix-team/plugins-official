@@ -265,7 +265,7 @@ This will:
 | Variable | Required | Platform | Purpose |
 |---|---|---|---|
 | `GITHUB_TOKEN` | If not using `gh auth login` | GitHub | GitHub API authentication |
-| `AZURE_DEVOPS_TOKEN` | Yes | Azure DevOps | Personal Access Token for REST API |
+| `AZURE-DEVOPS-TOKEN` | Yes | Azure DevOps | Personal Access Token for REST API |
 | `AZURE_ORG` | No | Azure DevOps | Override org parsed from remote URL |
 | `AZURE_PROJECT` | No | Azure DevOps | Override project parsed from remote URL |
 | `AZURE_REPO` | No | Azure DevOps | Override repo parsed from remote URL |
@@ -295,14 +295,14 @@ This will:
 
 - Must be run inside a git repository
 - **GitHub**: `gh` CLI installed and authenticated (`gh auth login` or `GITHUB_TOKEN`)
-- **Azure DevOps**: `AZURE_DEVOPS_TOKEN` environment variable set
+- **Azure DevOps**: `AZURE-DEVOPS-TOKEN` environment variable set
 
 Verify prerequisites:
 
 ```bash
 git --version    # required
 gh auth status   # GitHub only
-echo $AZURE_DEVOPS_TOKEN  # Azure DevOps only
+echo $AZURE-DEVOPS-TOKEN  # Azure DevOps only
 ```
 
 ---

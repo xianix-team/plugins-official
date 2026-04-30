@@ -83,4 +83,4 @@ Do not ask for confirmation at any point. Execute all steps autonomously and pro
    Elaboration posted on issue #<number>: <signal> — <N> comments — <N> open questions
    ```
 
-> **Note:** GitHub requires `gh` CLI installed and authenticated. Azure DevOps requires `AZURE_DEVOPS_TOKEN`. See `docs/platform-config.md` for setup.
+> **Note:** GitHub requires `gh` CLI installed and authenticated. Azure DevOps requires `AZURE-DEVOPS-TOKEN`. See `docs/platform-config.md` for setup.

@@ -39,9 +39,9 @@ GIT_CONFIG_VALUE_0="https://github.com/"
 
 | Variable | Used by | Purpose |
 |---|---|---|
-| `AZURE_DEVOPS_TOKEN` | `az` CLI + Local `git push` | Authenticate API calls and HTTPS pushes |
+| `AZURE-DEVOPS-TOKEN` | `az` CLI + Local `git push` | Authenticate API calls and HTTPS pushes |
 
-A single PAT covers both API access and git push. The hook injects `AZURE_DEVOPS_TOKEN` for both `dev.azure.com` and `*.visualstudio.com` remote URLs:
+A single PAT covers both API access and git push. The hook injects `AZURE-DEVOPS-TOKEN` for both `dev.azure.com` and `*.visualstudio.com` remote URLs:
 
 ```bash
 GIT_CONFIG_COUNT=2
@@ -69,7 +69,7 @@ GH_TOKEN=ghp_xxx GITHUB_TOKEN=ghp_xxx claude
 
 **Azure DevOps:**
 ```bash
-AZURE_DEVOPS_TOKEN=<pat> claude
+AZURE-DEVOPS-TOKEN=<pat> claude
 ```
 
 ### Via shell export (persistent in current shell)
@@ -80,7 +80,7 @@ export GH_TOKEN=ghp_xxx
 export GITHUB_TOKEN=ghp_xxx
 
 # Azure DevOps
-export AZURE_DEVOPS_TOKEN=<pat>
+export AZURE-DEVOPS-TOKEN=<pat>
 ```
 
 ### Via `.env` file (per-project, never committed)
@@ -93,7 +93,7 @@ GH_TOKEN=ghp_xxx
 GITHUB_TOKEN=ghp_xxx
 
 # Azure DevOps
-AZURE_DEVOPS_TOKEN=<pat>
+AZURE-DEVOPS-TOKEN=<pat>
 ```
 
 Then source it before launching:
@@ -113,7 +113,7 @@ Because credentials are passed at invocation time, you can use a different token
 GITHUB_TOKEN=ghp_my_token claude ...
 
 # Reviewing an Azure DevOps repo
-AZURE_DEVOPS_TOKEN=my_ado_pat claude ...
+AZURE-DEVOPS-TOKEN=my_ado_pat claude ...
 ```
 
 ---
@@ -129,7 +129,7 @@ blocked: GITHUB_TOKEN is not set. Pass it at runtime: GITHUB_TOKEN=ghp_xxx claud
 
 **Azure DevOps:**
 ```
-blocked: AZURE_DEVOPS_TOKEN is not set. Pass it at runtime: AZURE_DEVOPS_TOKEN=<pat> claude ... (see docs/git-auth.md)
+blocked: AZURE-DEVOPS-TOKEN is not set. Pass it at runtime: AZURE-DEVOPS-TOKEN=<pat> claude ... (see docs/git-auth.md)
 ```
 
 `git commit` and other local operations are unaffected — only push requires the token.
@@ -153,5 +153,5 @@ If it completes without a credential prompt, the token is injected correctly.
 | Platform | Token for API | Token for git push |
 |---|---|---|
 | GitHub | `gh auth login` or `GH_TOKEN` / `GITHUB_TOKEN` | `GITHUB_TOKEN` |
-| Azure DevOps | `AZURE_DEVOPS_TOKEN` | `AZURE_DEVOPS_TOKEN` (same) |
+| Azure DevOps | `AZURE-DEVOPS-TOKEN` | `AZURE-DEVOPS-TOKEN` (same) |
 | Generic | — | `GITHUB_TOKEN` |

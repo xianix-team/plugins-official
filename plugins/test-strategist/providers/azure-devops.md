@@ -4,7 +4,7 @@ Use this provider when `git remote get-url origin` contains `dev.azure.com` or `
 
 ## How this fits with the rest of the plugin
 
-- **Reading / analysis** — Use **git** for diffs, **`curl`** + `AZURE_DEVOPS_TOKEN` for work items and PR metadata.
+- **Reading / analysis** — Use **git** for diffs, **`curl`** + `AZURE-DEVOPS-TOKEN` for work items and PR metadata.
 - **Azure DevOps-specific** — The HTML report is **attached as a file** to the work item via the REST API, and a brief notification comment is posted on the work item (and on the PR if triggered from a PR).
 
 ## Prerequisites
@@ -15,7 +15,7 @@ Required environment variable:
 
 | Variable | Purpose |
 |---|---|
-| `AZURE_DEVOPS_TOKEN` | Azure DevOps PAT |
+| `AZURE-DEVOPS-TOKEN` | Azure DevOps PAT |
 
 ### Token Permissions
 
@@ -76,7 +76,7 @@ Use `${API_BASE}` for every API call below.
 ### Fetching Work Item Details
 
 ```bash
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   "${API_BASE}/_apis/wit/workitems/${WORK_ITEM_ID}?api-version=7.1&\$expand=all"
 ```
 
@@ -103,7 +103,7 @@ Extract from the response:
 From the work item `relations`, filter for child links (`System.LinkTypes.Hierarchy-Forward`):
 
 ```bash
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   "${API_BASE}/_apis/wit/workitems?ids=${CHILD_IDS_CSV}&api-version=7.1&\$expand=all"
 ```
 
@@ -114,7 +114,7 @@ For each child, extract title, description, acceptance criteria, repro steps, st
 From the work item `relations`, filter for pull request links (`ArtifactLink` with `vstfs:///Git/PullRequestId/`):
 
 ```bash
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullrequests/${PR_ID}?api-version=7.1"
 ```
 
@@ -123,11 +123,11 @@ curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
 From the work item `relations`, filter for changeset links (`ArtifactLink` with `vstfs:///VersionControl/Changeset/`):
 
 ```bash
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   "${API_BASE}/_apis/tfvc/changesets/${CHANGESET_ID}?api-version=7.1&includeDetails=true"
 
 # Get changeset changes
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   "${API_BASE}/_apis/tfvc/changesets/${CHANGESET_ID}/changes?api-version=7.1"
 ```
 
@@ -138,14 +138,14 @@ curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
 ### Fetching PR Details
 
 ```bash
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullrequests/${PR_ID}?api-version=7.1"
 ```
 
 ### Discovering Linked Work Items from a PR
 
 ```bash
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullrequests/${PR_ID}/workitems?api-version=7.1"
 ```
 
@@ -155,11 +155,11 @@ For each linked work item, fetch it with `$expand=all` (see above).
 
 ```bash
 # Get iterations (each push to the PR)
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullrequests/${PR_ID}/iterations?api-version=7.1"
 
 # Get changes for the latest iteration
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullrequests/${PR_ID}/iterations/${ITERATION_ID}/changes?api-version=7.1"
 ```
 
@@ -174,7 +174,7 @@ git diff origin/${BASE}...${PR_BRANCH}
 ## Finding Related Work Items
 
 ```bash
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   -X POST \
   -H "Content-Type: application/json" \
   "${API_BASE}/_apis/wit/wiql?api-version=7.1" \
@@ -192,7 +192,7 @@ On Azure DevOps, the HTML report is **attached as a file** to the work item, and
 First, upload the file as an attachment:
 
 ```bash
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   -X POST \
   -H "Content-Type: application/octet-stream" \
   "${API_BASE}/_apis/wit/attachments?fileName=impact-analysis-report.html&api-version=7.1" \
@@ -204,7 +204,7 @@ Extract the `url` from the response — this is the attachment URL.
 Then link the attachment to the work item:
 
 ```bash
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   -X PATCH \
   -H "Content-Type: application/json-patch+json" \
   "${API_BASE}/_apis/wit/workitems/${WORK_ITEM_ID}?api-version=7.1" \
@@ -229,7 +229,7 @@ print(json.dumps([
 ### 2. Post a notification comment on the work item
 
 ```bash
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   -X POST \
   -H "Content-Type: application/json" \
   "${API_BASE}/_apis/wit/workitems/${WORK_ITEM_ID}/comments?format=markdown&api-version=7.1-preview.4" \
@@ -255,7 +255,7 @@ COMMENT
 ### 3. If triggered from a PR, also post a notification on the PR
 
 ```bash
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   -X POST \
   -H "Content-Type: application/json" \
   "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullrequests/${PR_ID}/threads?api-version=7.1" \
@@ -265,13 +265,13 @@ curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
 ### 4. Apply the tag
 
 ```bash
-EXISTING_TAGS=$(curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+EXISTING_TAGS=$(curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   "${API_BASE}/_apis/wit/workitems/${WORK_ITEM_ID}?api-version=7.1&fields=System.Tags" \
   | python3 -c "import sys,json; print(json.load(sys.stdin).get('fields',{}).get('System.Tags',''))")
 
 NEW_TAGS="${EXISTING_TAGS}; test-strategy-generated"
 
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   -X PATCH \
   -H "Content-Type: application/json-patch+json" \
   "${API_BASE}/_apis/wit/workitems/${WORK_ITEM_ID}?api-version=7.1" \

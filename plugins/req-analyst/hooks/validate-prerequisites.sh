@@ -37,8 +37,8 @@ fi
 
 # For curl commands targeting Azure DevOps — check token is set
 if echo "$COMMAND" | grep -qE "^curl.*dev\.azure\.com"; then
-    if [ -z "${AZURE_DEVOPS_TOKEN:-}" ]; then
-        echo '{"decision": "block", "reason": "AZURE_DEVOPS_TOKEN is not set. Pass it at runtime: AZURE_DEVOPS_TOKEN=<pat> claude ... (see docs/platform-config.md)"}'
+    if [ -z "${AZURE-DEVOPS-TOKEN:-}" ]; then
+        echo '{"decision": "block", "reason": "AZURE-DEVOPS-TOKEN is not set. Pass it at runtime: AZURE-DEVOPS-TOKEN=<pat> claude ... (see docs/platform-config.md)"}'
         exit 0
     fi
 fi

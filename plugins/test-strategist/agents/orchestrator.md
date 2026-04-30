@@ -54,7 +54,7 @@ git remote get-url origin
 
 From the remote URL, determine the platform:
 - Contains `github.com` → **GitHub** (use `gh` CLI)
-- Contains `dev.azure.com` or `visualstudio.com` → **Azure DevOps** (use `curl` + `AZURE_DEVOPS_TOKEN`)
+- Contains `dev.azure.com` or `visualstudio.com` → **Azure DevOps** (use `curl` + `AZURE-DEVOPS-TOKEN`)
 - Anything else → **Generic** (write locally, no posting)
 
 Validate the entry type is compatible with the detected platform:
@@ -92,11 +92,11 @@ gh issue view ${ISSUE_NUMBER} --json number,title,body,state,labels,assignees,mi
 
 **Azure DevOps:**
 ```bash
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullrequests/${ENTRY_ID}?api-version=7.1"
 
 # PR iterations and changes
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullrequests/${ENTRY_ID}/workitems?api-version=7.1"
 ```
 
@@ -107,7 +107,7 @@ For each linked work item, fetch it with `$expand=all` (see Step 1B).
 Fetch the work item with all fields, comments, and relations:
 
 ```bash
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   "${API_BASE}/_apis/wit/workitems/${ENTRY_ID}?api-version=7.1&\$expand=all"
 ```
 
@@ -120,11 +120,11 @@ Extract: title, description, acceptance criteria (PBI/Feature), repro steps and 
 For each **child work item** and linked PR from `relations`:
 ```bash
 # Bulk-fetch child work items
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   "${API_BASE}/_apis/wit/workitems?ids=${CHILD_IDS_CSV}&api-version=7.1&\$expand=all"
 
 # Fetch each linked PR
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullrequests/${PR_ID}?api-version=7.1"
 ```
 
@@ -175,11 +175,11 @@ gh pr view ${PR_NUMBER} --json files,additions,deletions,commits
 **Azure DevOps fallback:**
 ```bash
 # PR iterations
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullrequests/${PR_ID}/iterations?api-version=7.1"
 
 # Changes for the latest iteration
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullrequests/${PR_ID}/iterations/${ITERATION_ID}/changes?api-version=7.1"
 ```
 

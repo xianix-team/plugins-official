@@ -8,7 +8,7 @@ Required environment variable:
 
 | Variable | Purpose |
 |---|---|
-| `AZURE_DEVOPS_TOKEN` | PAT with `Code (Read & Write)` and `Pull Request Threads (Read & Write)` scopes |
+| `AZURE-DEVOPS-TOKEN` | PAT with `Code (Read & Write)` and `Pull Request Threads (Read & Write)` scopes |
 
 Optional overrides:
 
@@ -60,7 +60,7 @@ If no PR number was passed as an argument:
 ```bash
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullrequests?searchCriteria.sourceRefName=refs/heads/${BRANCH}&searchCriteria.status=active&api-version=7.1" \
   | python3 -c "import sys,json; prs=json.load(sys.stdin)['value']; print(prs[0]['pullRequestId'] if prs else '')"
 ```
@@ -84,7 +84,7 @@ Include this `properties` object on **every** `POST .../threads` body.
 ## Posting the Starting Comment
 
 ```bash
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   -X POST \
   -H "Content-Type: application/json" \
   "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullrequests/${PR_ID}/threads?api-version=7.1" \
@@ -98,7 +98,7 @@ If posting fails, output a single warning line and continue.
 ## Fetching Unresolved Threads
 
 ```bash
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullrequests/${PR_ID}/threads?api-version=7.1"
 ```
 
@@ -137,7 +137,7 @@ Collect each thread's `id`, first comment `id`, `content`, `filePath`, and `line
 For **apply** threads — mark as resolved (`"fixed"`):
 
 ```bash
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   -X PATCH \
   -H "Content-Type: application/json" \
   "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullrequests/${PR_ID}/threads/${THREAD_ID}?api-version=7.1" \
@@ -151,7 +151,7 @@ curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
 Reply to an existing thread with a follow-up comment:
 
 ```bash
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   -X POST \
   -H "Content-Type: application/json" \
   "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullrequests/${PR_ID}/threads/${THREAD_ID}/comments?api-version=7.1" \
@@ -171,7 +171,7 @@ print(json.dumps({
 Post the compiled summary as a new thread:
 
 ```bash
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   -X POST \
   -H "Content-Type: application/json" \
   "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullrequests/${PR_ID}/threads?api-version=7.1" \
@@ -196,7 +196,7 @@ SUMMARY
 When the original PR was already merged:
 
 ```bash
-curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
   -X POST \
   -H "Content-Type: application/json" \
   "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullrequests?api-version=7.1" \

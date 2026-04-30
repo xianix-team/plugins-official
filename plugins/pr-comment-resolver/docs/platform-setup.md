@@ -49,7 +49,7 @@ export GIT_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxx
 
 ### Requirements
 
-- `AZURE_DEVOPS_TOKEN` environment variable set (PAT)
+- `AZURE-DEVOPS-TOKEN` environment variable set (PAT)
 
 ### Create a Personal Access Token
 
@@ -62,7 +62,7 @@ export GIT_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxx
 ### Set the Token
 
 ```bash
-export AZURE_DEVOPS_TOKEN=your_pat_here
+export AZURE-DEVOPS-TOKEN=your_pat_here
 ```
 
 ---

@@ -34,6 +34,6 @@ Use the **orchestrator** agent to drive the flow. The orchestrator will:
 
 - Inside a git repository whose remote resolves to GitHub (`github.com`) or Azure DevOps (`dev.azure.com` / `visualstudio.com`).
 - **GitHub:** `gh` CLI authenticated (`gh auth login`) or `GH_TOKEN` / `GITHUB_TOKEN` set. Token scopes: Contents (R/W), Metadata (R), Issues (R/W), Pull requests (R/W).
-- **Azure DevOps:** `AZURE_DEVOPS_TOKEN` set with **Code (R/W)**, **Work Items (R/W)**, and **Pull Request Threads (R/W)** scopes.
+- **Azure DevOps:** `AZURE-DEVOPS-TOKEN` set with **Code (R/W)**, **Work Items (R/W)**, and **Pull Request Threads (R/W)** scopes.
 
 Do not ask follow-up questions. If a prerequisite is missing, emit a single error line and stop.

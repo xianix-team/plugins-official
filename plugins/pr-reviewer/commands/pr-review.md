@@ -54,8 +54,8 @@ The review produces a structured report with verdict (`APPROVE`, `REQUEST CHANGE
 - Must be run inside a git repository
 - The current branch must have at least one commit ahead of the base branch
 - **GitHub**: `gh` CLI installed and authenticated (see `docs/platform-setup.md`)
-- **Azure DevOps**: `AZURE_DEVOPS_TOKEN` environment variable set (see `docs/platform-setup.md`)
-- **Fix mode**: `GITHUB_TOKEN` (GitHub) or `AZURE_DEVOPS_TOKEN` (Azure DevOps) must be set for `git push`
+- **Azure DevOps**: `AZURE-DEVOPS-TOKEN` environment variable set (see `docs/platform-setup.md`)
+- **Fix mode**: `GITHUB_TOKEN` (GitHub) or `AZURE-DEVOPS-TOKEN` (Azure DevOps) must be set for `git push`
 
 ---
 

@@ -135,7 +135,7 @@ The agent only commits changes for findings it classifies as **low-risk quick wi
 | Variable | Platform | Required | Purpose |
 |---|---|---|---|
 | `GITHUB_TOKEN` | GitHub | Yes | Authenticate `gh` CLI for issue reads, branch push, PR creation, and comment publishing |
-| `AZURE_DEVOPS_TOKEN` | Azure DevOps | Yes | PAT for REST API calls against work items, code, and pull requests |
+| `AZURE-DEVOPS-TOKEN` | Azure DevOps | Yes | PAT for REST API calls against work items, code, and pull requests |
 
 ### GitHub Token Permissions
 
@@ -150,7 +150,7 @@ The `GITHUB_TOKEN` requires:
 
 ### Azure DevOps PAT Scopes
 
-The `AZURE_DEVOPS_TOKEN` requires:
+The `AZURE-DEVOPS-TOKEN` requires:
 
 | Scope | Access | Why it's needed |
 |---|---|---|

@@ -1,8 +1,10 @@
 # Output Style: Impact Analysis & Test Strategy
 
-This style guide defines the conventions used when generating the impact analysis and test strategy report. It applies to the `test-guide-writer` agent and to any markdown summary posted on the platform.
+This style guide defines the conventions used when generating the impact analysis and test strategy. It applies to the `test-guide-writer` agent and to every comment posted on a PR, issue, or work item discussion.
 
-The single most important rule: **write for a manual tester who has not seen the code**. Every section of the report must answer two questions for them — _"where is the highest business risk?"_ and _"how do I actually test it?"_.
+The single most important rule: **write for a manual tester who has not seen the code**. Every section must answer one of two questions — _"where is the highest business risk?"_ or _"how do I actually test it?"_.
+
+The deliverable is a **series of Markdown comments** posted on the platform — never an HTML file. The structure of the series is defined in `styles/report-template.md`.
 
 ---
 
@@ -13,7 +15,7 @@ The primary readers are **manual QA testers**, **product owners**, and **non-tec
 - Describe _what a customer would experience_, not which line of code changed.
 - Describe _who is affected_ and _how their day is impacted_, not the internal mechanism.
 - Use the domain vocabulary from the work item (e.g. "checkout", "policy renewal", "claim approval"), not implementation vocabulary (e.g. "service", "endpoint", "DTO", "repository").
-- When a technical detail is unavoidable, place it in a tester-only "How to verify" sub-block, never in the headline.
+- When a technical detail is unavoidable, place it inside the test case's "How to verify" sub-block, never in headlines, summaries, or risk descriptions.
 
 ### Forbidden phrasing
 
@@ -33,27 +35,41 @@ The report is risk-driven. Manual testers must see _what to focus on first_ befo
 
 The required order for the reader's eye is:
 
-1. **Headline business risk** (one sentence — what could break and who feels it).
-2. **Where Testers Should Focus First** — the 3–5 highest-priority business areas, each with the test case IDs that cover it.
-3. **Per-area details and test cases**, ordered Critical → High → Medium → Low.
+1. **Headline business risk** (one sentence — what could break and who feels it). _Comment 1._
+2. **Where Testers Should Focus First** — the 3–5 highest-priority business areas, each with the test case IDs that cover it. _Comment 1._
+3. **Business risk assessment, impacted areas, code changes overview.** _Comment 2._
+4. **Requirements coverage, clarification items, missing coverage.** _Comment 3._
+5. **Per-area test cases**, one comment per category, ordered Critical → High → Medium → Low. _Comments 4..N-1._
+6. **Coverage map and QA sign-off.** _Comment N._
 
 Test cases never appear before the risk-and-focus framing.
 
 ---
 
-## Test Case Categories
+## Visual Vocabulary (Markdown Only)
 
-Seven categories, each with a color-coded badge. Categories with no realistic surface in the current change must be **skipped entirely** — never generate empty sections.
+GitHub and Azure DevOps strip custom CSS, `<style>` blocks, inline `style="..."` attributes, and `<script>`. Use **emoji and Markdown primitives only**.
 
-| Emoji | Badge Class | Category | When to include |
-|---|---|---|---|
-| 🟢 | `tc-functional` | **Functional** | Always — every change must have functional test coverage |
-| 🔵 | `tc-performance` | **Performance** | Change touches a service, query, or data pipeline with realistic performance exposure |
-| 🔴 | `tc-security` | **Security** | Change touches authentication, data input, API surfaces, or permission logic |
-| 🟡 | `tc-privacy` | **Privacy & PII** | Change handles personal, financial, or health data |
-| 🟣 | `tc-accessibility` | **Accessibility & Usability** | Change touches any user interface |
-| ⚪ | `tc-resilience` | **Resilience** | Change touches a service call, queue, or external dependency |
-| 🟤 | `tc-compatibility` | **Compatibility** | Change touches a UI, public API, integration point, or contract shared with other systems |
+### Risk Badges
+
+| Level | Render in Markdown | Meaning |
+|---|---|---|
+| **Critical** | `🔴 **Critical**` | Production outage, financial loss, regulatory breach, or data loss likely |
+| **High** | `🟠 **High**` | A core user journey is broken, security exposure, or major feature unusable |
+| **Medium** | `🟡 **Medium**` | Partial feature degradation, edge-case failures, or non-blocking inconvenience |
+| **Low** | `🟢 **Low**` | Cosmetic issues or unlikely edge cases |
+
+### Category Badges
+
+| Emoji | Category | When generated |
+|---|---|---|
+| 🟢 | **Functional** | Always — every change must have functional test coverage |
+| 🔵 | **Performance** | Change touches a service, query, or data pipeline with realistic performance exposure |
+| 🔴 | **Security** | Change touches authentication, data input, API surfaces, or permission logic |
+| 🟡 | **Privacy & PII** | Change handles personal, financial, or health data |
+| 🟣 | **Accessibility & Usability** | Change touches any user interface |
+| ⚪ | **Resilience** | Change touches a service call, queue, or external dependency |
+| 🟤 | **Compatibility** | Change touches a UI, public API, integration point, or contract shared with other systems |
 
 ### Category Suppression Flags
 
@@ -62,169 +78,224 @@ Seven categories, each with a color-coded badge. Categories with no realistic su
 | `--no-perf` | Skip 🔵 Performance test cases entirely |
 | `--no-a11y` | Skip 🟣 Accessibility & Usability test cases entirely |
 
-When a flag is active, omit the category from the report, the coverage map, and the QA sign-off checklist.
+When a flag is active, omit the category from its dedicated comment (do not post an empty comment), the test case count, the coverage map, and the QA sign-off checklist.
+
+### Test Data Tags
+
+Tags appear in the **Notes column** of a test data table, after the explanatory text. Multiple tags are comma-separated (` · `).
+
+| Tag | Render | Meaning |
+|---|---|---|
+| PII | `🔒 PII` | Personal data (name, email, address, phone, DOB) |
+| PCI | `💳 PCI` | Payment card data |
+| PHI | `🩺 PHI` | Health information |
+| boundary | `🎯 boundary` | Value sits on an interesting boundary |
+| invalid | `⚠️ invalid` | Value is deliberately invalid |
+
+### Callouts
+
+| Purpose | Render |
+|---|---|
+| "Why this matters" | `> 💡 **Why this matters:** …` (single blockquote) |
+| Warning / clarification block | `> ⚠️ **${COUNT}** code change(s) cannot be mapped to any stated requirement.` |
+| Pointer back to comment 1 | `[← Comment 1](${COMMENT_1_URL})` at the top of every other comment |
+
+### Collapsibles
+
+`<details>` / `<summary>` is the **only** HTML allowed beyond Markdown. Use it for:
+
+- Each test case body (always — keeps the per-category comment scannable).
+- Each per-PR card in the Code Changes Overview.
+- The compact Context Gathered block in Comment 3.
+- Each clarification item in "Developer Changes Requiring Clarification".
+
+```markdown
+<details>
+<summary><strong>TC-001</strong> — Customer applies a valid coupon at checkout · 🟢 Functional · 🔴 <strong>Critical</strong></summary>
+
+…test case body…
+
+</details>
+```
+
+### QA Sign-Off
+
+Markdown task lists. Both GitHub and Azure DevOps render them as live, clickable checkboxes.
+
+```markdown
+- [ ] All **"Where Testers Should Focus First"** areas verified
+- [ ] All 🟢 **Functional** test cases executed and passed
+```
 
 ---
 
 ## Test Case Format (Business-Oriented)
 
-Each test case is a self-contained instruction set for a manual tester. It must read like a story, not like a spec.
+Each test case is a self-contained instruction set. It must read like a story, not like a spec.
 
 | Field | Content |
 |---|---|
-| **ID** | Sequential: `TC-001`, `TC-002`, etc. Numbering is global across all categories. |
+| **ID** | Sequential: `TC-001`, `TC-002`, etc. Numbering is **global** across all categories. |
 | **Title** | Plain-language scenario from the user's perspective. Start with a verb the user performs (e.g. "Customer applies a valid coupon at checkout"). |
-| **Category badge** | One of the 7 badges above |
-| **Priority** | Risk badge: `risk-critical`, `risk-high`, `risk-medium`, `risk-low` — driven by the linked business risk |
-| **Why this matters** | One or two sentences. The business outcome that is verified if the test passes, and the business loss that occurs if it fails. Identifies the affected user group. |
-| **Linked to** | Both the requirement (AC, RS) **and** the business risk (Risk-N) this case covers. |
-| **User role / persona** | The specific kind of user who runs this scenario (e.g. "Returning customer with active loyalty account" or "Customer service agent with refund permission"). |
-| **Preconditions** | System state and configuration that must be true before the test starts (e.g. feature flag on, payment provider in sandbox, customer account exists). |
-| **Test data** | A small table of concrete sample values — see "Test Data Generation Rules" below. |
-| **Steps** | Numbered actions a tester performs. Each step is one observable user action. No code, no API names. |
-| **Expected business outcome** | What the user sees and what the business gains if the test passes. Must be observable. |
-| **How to verify** | Where the tester looks: UI cue, email/SMS, database row, audit log, downstream system. May contain technical hints (table names, log keys) — but only here. |
-| **If this fails** | Optional — what evidence to capture (screenshot, request id, timestamp), what risk it confirms, who to escalate to. |
+| **Category badge** | Emoji + name (`🟢 Functional`) |
+| **Priority badge** | Risk badge driven by the linked business risk (`🔴 **Critical**`, `🟠 **High**`, …) |
+| **Why this matters** | One or two sentences in a `> 💡 **Why this matters:**` blockquote. Business outcome verified if it passes; business loss if it fails; affected users. |
+| **Linked to** | Both the requirement (`AC1` / `RS1`) **and** the business risk (`Risk-N`). |
+| **User role / persona** | The specific user (e.g. "Returning customer with active loyalty account"), never "a user". |
+| **Preconditions** | System state, feature flags, environment, existing data. |
+| **Test data** | A Markdown table with concrete sample values — see "Test Data Generation Rules" below. |
+| **Steps** | Numbered observable user actions. No code, no API names. |
+| **Expected business outcome** | What the user sees and what the business gains. Must be observable from UI / email / receipt — not from logs alone. |
+| **How to verify** | Where the tester looks: UI cue, email/SMS, records. Technical hints (table names, log keys) are permitted **only here**. |
+| **If this fails** | Short note: evidence to capture, which risk it confirms, who to escalate to. |
+
+The whole body sits inside a `<details>` block (see `styles/report-template.md`).
 
 ### Worked Example (Functional)
 
-```
-TC-001 — Customer applies a valid coupon at checkout       🟢 Functional   🔴 Critical
+```markdown
+<details>
+<summary><strong>TC-001</strong> — Customer applies a valid coupon at checkout · 🟢 Functional · 🔴 <strong>Critical</strong></summary>
 
-Why this matters
-  Customers who use a valid coupon expect the discount to be applied and the
-  correct lower amount to be charged. If this fails, customers are charged the
-  full price, leading to chargebacks, refund requests, and trust loss. Affects
-  all paying customers using promotional codes.
+> 💡 **Why this matters:** Customers who use a valid coupon expect the discount to be applied and the correct lower amount to be charged. If this fails, customers are charged the full price, leading to chargebacks, refund requests, and trust loss. Affects all paying customers using promotional codes.
 
-Linked to
-  Requirement: AC1 — "Coupon discounts must reduce the cart total before tax"
-  Risk: Risk-3 — "Customers charged full price despite valid coupon"
+**Linked to:** Requirement `AC1` — "Coupon discounts must reduce the cart total before tax" · Risk `Risk-3` — "Customers charged full price despite valid coupon"
 
-User role / persona
-  Returning customer with an active account and items in the cart.
+**User role / persona:** Returning customer with an active account and items in the cart.
 
-Preconditions
-  - Storefront is in the staging environment with promotions enabled
-  - Coupon SAVE20 exists, is active, and has not reached its usage limit
-  - Customer account `maria.test@example.com` exists and is not blocked
+**Preconditions:**
+- Storefront is in the staging environment with promotions enabled
+- Coupon `SAVE20` exists, is active, and has not reached its usage limit
+- Customer account `maria.test@example.com` exists and is not blocked
 
-Test data
-  | Field         | Sample value                | Notes                                |
-  |---------------|-----------------------------|--------------------------------------|
-  | Customer email| maria.test@example.com      | Pre-seeded test customer             |
-  | Cart contents | 2 × Wireless Headphones     | Each priced at £62.50 = £125.00      |
-  | Coupon code   | SAVE20                      | 20% off, no minimum, expires +30 days|
-  | Payment card  | 4242 4242 4242 4242 / 12-30 | Stripe test card, CVV 123            |
-  | Postal code   | SW1A 1AA                    | Valid UK code in delivery zone       |
+**Test data**
 
-Steps
-  1. Sign in as maria.test@example.com.
-  2. Add 2 × Wireless Headphones to the cart.
-  3. Open the cart; confirm subtotal shows £125.00.
-  4. Enter SAVE20 in the coupon field and click Apply.
-  5. Proceed to checkout; enter the test card and place the order.
+| Field | Sample value | Notes |
+|---|---|---|
+| Customer email | `maria.test@example.com` | Pre-seeded test customer · 🔒 PII |
+| Cart contents | 2 × Wireless Headphones | Each priced at £62.50 = £125.00 |
+| Coupon code | `SAVE20` | 20% off, no minimum, expires +30 days |
+| Payment card | `4242 4242 4242 4242 / 12-30 / 123` | Stripe test card · 💳 PCI |
+| Postal code | `SW1A 1AA` | Valid UK code in delivery zone |
 
-Expected business outcome
-  - Discount line shows "-£25.00 (SAVE20)" and total updates to £100.00.
-  - Order is created and the customer sees the order confirmation page.
-  - Confirmation email is delivered to maria.test@example.com within 1 minute.
+**Steps**
+1. Sign in as `maria.test@example.com`.
+2. Add 2 × Wireless Headphones to the cart.
+3. Open the cart; confirm subtotal shows `£125.00`.
+4. Enter `SAVE20` in the coupon field and click Apply.
+5. Proceed to checkout; enter the test card and place the order.
 
-How to verify
-  - On screen: discount badge "SAVE20" visible on the order summary.
-  - Order admin: order record shows coupon_code = "SAVE20" and total = £100.00.
-  - Email log: one confirmation email queued for the test customer.
+**Expected business outcome**
+- Discount line shows `-£25.00 (SAVE20)` and total updates to `£100.00`.
+- Order is created and the customer sees the order confirmation page.
+- Confirmation email is delivered to `maria.test@example.com` within 1 minute.
 
-If this fails
-  - Capture: cart screenshot, order id, timestamp.
-  - Confirms: Risk-3. Escalate to checkout developer with the order id.
+**How to verify**
+- **On screen:** discount badge `SAVE20` visible on the order summary.
+- **Order admin:** order record shows `coupon_code = "SAVE20"` and `total = £100.00`.
+- **Email log:** one confirmation email queued for the test customer.
+
+**If this fails**
+Capture: cart screenshot, order id, timestamp. Confirms `Risk-3`. Escalate to: checkout developer.
+
+</details>
 ```
 
 ---
 
 ## Test Data Generation Rules
 
-Every test case **must** include test data the tester can copy and use. Where the data is non-trivial, present it as a table. Test data must be **safe, synthetic, and realistic**.
+Every test case **must** include test data the tester can copy and use. Present it as a Markdown table. Test data must be **safe, synthetic, and realistic**.
 
 ### Always include
 
-For each test case, generate sample values for:
-
-- **Identifiers** — emails, usernames, customer ids, order ids, account numbers (use the `*.test@example.com` / `Test-NNNN` pattern)
-- **Money / quantity** — currency-correct (£, $, €) with both whole and fractional values; include thresholds (just below / at / just above)
-- **Dates and times** — relative to "today" (today, yesterday, +30 days), include edge dates (DST boundary, leap day, far past, far future) where relevant
-- **Free-text fields** — short, long, with spaces, with apostrophes ("O'Brien"), with non-ASCII (José, 王芳, naïve)
+- **Identifiers** — emails, usernames, customer ids, order ids (use `*.test@example.com` / `Test-NNNN`)
+- **Money / quantity** — currency-correct (£, $, €), with thresholds (just below / at / just above)
+- **Dates and times** — relative to "today" (today, yesterday, +30 days), with edge dates (DST boundary, leap day, far past, far future) where relevant
+- **Free-text fields** — short, long, with apostrophes ("O'Brien"), with non-ASCII (José, 王芳, naïve)
 - **Boolean / status** — both states explicitly named
-- **Geographic data** — postal codes, phone numbers, country codes in the formats the system actually uses
-- **Payment data** — use known test cards (Stripe `4242 4242 4242 4242`, `4000 0000 0000 9995` for declined), never real PANs
+- **Geographic data** — postal codes, phone numbers, country codes in the system's actual format
+- **Payment data** — known test cards (Stripe `4242 4242 4242 4242`, `4000 0000 0000 9995` for declined), never real PANs
 
 ### Boundary and edge values
 
 For each input field whose validation matters, generate at least one value at each boundary the requirements imply:
 
-- **Minimum** (e.g. age 18, quantity 1, amount £0.01)
+- **Minimum** (age 18, quantity 1, amount £0.01)
 - **Just below minimum** (age 17, quantity 0, amount £0.00)
 - **Maximum** (max length, max amount, max items)
 - **Just above maximum** (one over the limit, to confirm rejection)
 - **Empty / missing**
 - **Whitespace only**
 - **Special characters and unicode**
-- **Format-invalid** (e.g. "abc" in a numeric field, "12/13/2024" in an ISO-only field)
+- **Format-invalid** ("abc" in a numeric field, "12/13/2024" in an ISO-only field)
+
+Mark boundary values in the Notes column with ` · 🎯 boundary`.
 
 ### Negative test data
 
-Each high-risk area must include at least one negative test case with deliberately invalid or malicious data:
+Each high-risk area must include at least one negative test case. Use realistic invalid / malicious data:
 
-- Expired coupon, blocked customer, suspended account
+- Expired coupons, blocked customers, suspended accounts
 - SQL/script-like strings in free-text fields (`'; DROP TABLE users; --`, `<script>alert(1)</script>`)
 - Wrong-currency amounts, wrong-locale dates, oversized uploads
-- Disallowed roles trying privileged actions
+- Disallowed roles attempting privileged actions
 
-### PII and privacy data
+Mark invalid values in the Notes column with ` · ⚠️ invalid`.
+
+### PII / privacy / payment flagging
 
 When the change touches personal, financial, or health data:
 
-- Use synthetic names, addresses, phone numbers — never real PII
-- Clearly mark each field as PII / PCI / PHI in the test data table
-- Include data-subject rights tests where applicable (export-my-data, delete-my-account, withdraw-consent)
-- Verify masking and redaction in logs and audit trails
+- Use synthetic names, addresses, phone numbers — never real PII.
+- Mark every sensitive field in the Notes column with the appropriate tag: `🔒 PII`, `💳 PCI`, `🩺 PHI`.
+- Include data-subject rights tests where applicable (export-my-data, delete-my-account, withdraw-consent).
+- Verify masking and redaction in logs and audit trails.
 
 ### Performance test data
 
-For performance test cases, specify:
+For performance test cases include, **before** the test data table:
 
-- **Volume** — number of records, requests per second, concurrent users
-- **Distribution** — even, bursty, ramp-up
-- **Duration** — short spike, sustained, soak
+- **Load profile** — volume, requests per second, concurrent users, distribution (even / bursty / ramp-up), duration (short spike / sustained / soak)
 - **Acceptance threshold** — p95 latency, error rate, throughput
+- **Business impact if missed** — what business outcome is lost when the threshold is exceeded
 
 ### Compatibility test data
 
-For compatibility test cases, list the **specific** browsers / OS / device versions / API versions / integration partners to verify against — not "all browsers".
+For compatibility test cases, list the **specific** browsers / OS / device versions / API versions / integration partners — never "all browsers" or "all devices".
+
+### Accessibility test data
+
+For accessibility test cases, state the assistive technology / device / setting (e.g. NVDA on Firefox, iOS VoiceOver, 200% browser zoom, keyboard-only) and the user task. Express the expected experience in business language.
+
+### Resilience test data
+
+For resilience test cases, state the failure being simulated (e.g. payment gateway timeout), how to simulate it, the expected user-facing graceful behaviour, and the business outcome (e.g. "customer is told to retry, no double-charge occurs").
 
 ---
 
-## Where Testers Should Focus First
+## Where Testers Should Focus First (Comment 1)
 
-Every report must surface the highest-risk business areas in a dedicated section _before_ the test cases. For each top focus area, include:
+The single most useful artefact for a time-constrained tester. For each top focus area (3–5 maximum, ordered by priority):
 
-- **Area** (e.g. "Checkout & coupon application")
-- **Why it's high risk** (one business sentence)
-- **Who is affected** (which users / customers / partners)
-- **Test cases that cover it** (TC-001, TC-005, TC-012)
-- **Suggested order** (which one to run first)
+```markdown
+### N. ${BUSINESS_AREA} — ${RISK_BADGE}
 
-This is the single most useful artefact for a time-constrained manual tester — it tells them where to spend their first hour.
+- **Why it's high risk:** ${ONE_BUSINESS_SENTENCE_WHAT_BREAKS_AND_WHAT_IS_LOST}
+- **Who is affected:** ${SEGMENT_ROLE_PARTNER_OR_INTERNAL_TEAM}
+- **What to verify first:** ${MOST_IMPORTANT_BEHAVIOUR_TO_CONFIRM}
+- **Test cases:** `${TC_LIST}` — start with `${FIRST_TC}`
+```
+
+Use the business area name in user vocabulary ("Checkout & coupon application"), not implementation vocabulary ("PricingService").
 
 ---
 
-## Developer Changes Requiring Clarification
+## Developer Changes Requiring Clarification (Comment 3)
 
-These are code changes that could not be mapped to any stated requirement. They are flagged, not tested — the tester must discuss with the developer before testing.
+Code changes that could not be mapped to any stated requirement. Flagged, not tested — the tester must discuss with the developer **before testing this area begins**.
 
 ### Category Tags
-
-Each clarification item is tagged with a category:
 
 | Emoji | Category | Meaning |
 |---|---|---|
@@ -237,92 +308,84 @@ Each clarification item is tagged with a category:
 
 ### Clarification Card Format
 
+```markdown
+<details>
+<summary><strong>${CHANGE_TITLE}</strong> · ${CATEGORY_EMOJI} ${CATEGORY}</summary>
+
+- **What changed (in business terms):** ${USER_VISIBLE_EFFECT_EVEN_IF_SUBTLE}
+- **Where it shows up:** ${WORKFLOW_OR_SCREEN_OR_INTEGRATION}
+- **Hypothesis:** ${BEST_GUESS_OF_INTENT}
+- **Question for the developer:** ${SPECIFIC_THING_TESTER_NEEDS_ANSWERED}
+- **Status:** 🟣 **Needs Clarification** — must be resolved before this area is tested.
+
+</details>
 ```
-[Category emoji] [Category] — [Change title]
-  What changed (in business terms): [User-visible effect, even if subtle]
-  Where it shows up:                [The user-facing area / workflow affected]
-  Hypothesis:                       [Best guess of intent — if possible]
-  Question for the developer:       [The specific thing the tester needs answered]
-  Status: Needs Clarification
-```
+
+If there are no clarification items, replace the whole section with a single line:
+
+> _No unexplained changes — every code change maps to a stated requirement._
 
 ---
 
-## Coverage Map
+## Coverage Map (Comment N)
 
-The coverage map provides explicit traceability and makes gaps visible.
+Explicit traceability — gaps must be visible.
 
 ### Requirements → Test Cases
 
-Map every requirement (AC, RS) to the test cases that cover it. Requirements with **no test case** must show a "Gap" status with severity.
+Map every requirement (AC, RS) to the test cases that cover it. Requirements with **no test case** show a `🔴 **Gap**` status with a specific reason ("No price-rounding logic found in any linked PR" — not "uncovered").
 
 ### Risks → Test Cases
 
-Map every identified business risk to the test cases that mitigate it. Risks with **no test case** must show "Unmitigated" with severity.
+Map every identified business risk to the test cases that mitigate it. Risks with **no test case** show `🟠 **Unmitigated**` (or `🔴 **Unmitigated**` if the risk is Critical).
 
 ### Explicitly Out of Scope
 
-List items deliberately excluded from testing, with a reason (deferred, not applicable, separate work item).
+List items deliberately excluded from testing, with a reason (deferred / not applicable / separate work item).
 
 ---
 
-## Business Risk Assessment
+## Business Risk Assessment (Comment 2)
 
 Risk descriptions must use business language only:
 
 - ❌ "The null check on line 45 might fail"
 - ✅ "Customers who haven't completed profile setup will see an error when accessing the dashboard"
 
-Risk levels:
+Each risk in the matrix must name **who is affected**, **what they experience**, and **what business consequence follows** (lost sales, support tickets, brand damage, regulatory exposure).
 
-| Level | CSS Class | Meaning |
-|---|---|---|
-| **Critical** | `risk-critical` | Production outage, financial loss, regulatory breach, or data loss likely |
-| **High** | `risk-high` | A core user journey is broken, security exposure, or major feature unusable |
-| **Medium** | `risk-medium` | Partial feature degradation, edge-case failures, or non-blocking inconvenience |
-| **Low** | `risk-low` | Cosmetic issues or unlikely edge cases |
-
-Each risk must name **who is affected**, **what they experience**, and **what business consequence follows** (lost sales, support tickets, brand damage, regulatory exposure).
+The "What Could Go Wrong" table phrases each scenario in user terms, with a clear business consequence column (revenue / trust / regulatory / operational).
 
 ---
 
-## Report Filename
+## Comment Series Mechanics
 
-The report must always be written to:
+The `test-guide-writer` agent produces a list of Markdown blobs — one per planned comment. Each blob is named:
 
 ```
-impact-analysis-report.html
+01-overview-and-focus.md
+02-risk-and-impact.md
+03-requirements-and-gaps.md
+04-tests-functional.md
+05-tests-performance.md
+06-tests-security.md
+07-tests-privacy.md
+08-tests-accessibility.md
+09-tests-resilience.md
+10-tests-compatibility.md
+NN-coverage-and-signoff.md
 ```
 
----
+(Number prefixes pad to 2 digits so files sort correctly. Categories with no surface or suppressed by a flag are not generated.)
 
-## Markdown Summary (for platform comments)
+Each blob:
 
-When posting a comment on a PR or issue, use this condensed format. The summary is for a tester glancing at the PR — it must lead with risk and focus areas, not test counts.
+- Starts with the heading `# 🧪 Impact Analysis & Test Strategy — \`[k/N]\` <Title>`.
+- Includes a `[← Comment 1](${COMMENT_1_URL})` link directly under the heading on every comment except #1.
+- Ends with a navigation footer linking to the previous and next comment.
+- Stays under **50 KB** (split categories at test-case boundaries if needed; recompute `N`).
 
-```markdown
-## 🧪 Impact Analysis & Test Strategy
-
-**Work Item:** #[id] — [title]
-**Overall Risk:** [RISK LEVEL]
-**Headline:** [One business sentence — what could break and who feels it]
-
-### Where Testers Should Focus First
-1. **[Area]** — [why it's high risk; covered by TC-001, TC-003]
-2. **[Area]** — [why; covered by TC-005, TC-008]
-3. **[Area]** — [why; covered by TC-012]
-
-### Test Cases
-[total] (🟢 [n] Functional | 🔵 [n] Performance | 🔴 [n] Security | 🟡 [n] Privacy | 🟣 [n] Accessibility | ⚪ [n] Resilience | 🟤 [n] Compatibility)
-
-### Developer Changes Requiring Clarification
-[count] items flagged — review with the developer before testing begins.
-
-### Coverage Gaps
-[bullet list of requirements / risks not covered, with severity]
-
-> Full report with steps, test data, and verification details: `impact-analysis-report.html`
-```
+The provider (GitHub / Azure DevOps / Generic) is responsible for posting these blobs in order, capturing each comment's URL, and editing Comment 1's Table of Contents to deep-link to every subsequent comment.
 
 ---
 
@@ -338,3 +401,5 @@ When posting a comment on a PR or issue, use this condensed format. The summary 
 8. Categories with no surface are omitted, not listed as empty.
 9. Use `--no-perf` and `--no-a11y` flags to suppress categories.
 10. Technical detail (table names, log keys, request paths) is permitted only inside the **How to verify** sub-block of a test case — never in titles, summaries, or risk descriptions.
+11. Use only Markdown plus `<details>` / `<summary>` — no `<style>`, no inline `style="..."`, no `<script>`, no custom CSS classes. Both GitHub and Azure DevOps strip these.
+12. Stay under the per-comment size budget — split a long category at a test case boundary, never inside one.

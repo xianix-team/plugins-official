@@ -58,7 +58,7 @@
     {
       "name": "test-strategist",
       "source": "./plugins/test-strategist",
-      "description": "Automated impact analysis and risk-based test strategy generation for bug fixes, PBIs, and feature implementations. Gathers work item requirements, code changes across linked pull requests, comments, child items, and referenced documentation — then produces a business-readable HTML report that serves as the testing guide for QA engineers doing risk-based testing.",
+      "description": "Automated impact analysis and risk-based test strategy generation for bug fixes, PBIs, and feature implementations. Gathers work item requirements, code changes across linked pull requests, comments, child items, and referenced documentation — then posts a business-readable Markdown comment series on the PR / issue / work item discussion that serves as the testing guide for QA engineers doing risk-based testing. No HTML files written to the repo.",
       "version": "1.0.0",
       "author": {
         "name": "99x",

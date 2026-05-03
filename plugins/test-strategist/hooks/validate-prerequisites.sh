@@ -8,8 +8,14 @@ set -euo pipefail
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | grep -o '"command":"[^"]*"' | head -1 | cut -d'"' -f4 2>/dev/null || echo "")
 
-# Only validate git, gh, and curl commands
-if ! echo "$COMMAND" | grep -qE "^(git |gh |curl )"; then
+# Only validate git, gh, curl, and jq commands
+if ! echo "$COMMAND" | grep -qE "^(git |gh |curl |jq )"; then
+    exit 0
+fi
+
+# All providers rely on jq for index.json munging and API response parsing.
+if ! command -v jq > /dev/null 2>&1; then
+    echo '{"decision": "block", "reason": "jq is not installed or not in PATH. Install it: brew install jq (macOS), winget install jqlang.jq (Windows), or apt install jq (Linux). See docs/platform-config.md"}'
     exit 0
 fi
 

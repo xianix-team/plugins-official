@@ -1,8 +1,10 @@
 # Test Strategist Plugin
 
-> Risk-based impact analysis and **manual-tester-focused** test strategy generation.
+> Risk-based impact analysis and **manual-tester-focused** test strategy generation, posted as a logical series of Markdown comments on the PR / issue / work item.
 
-Given a PR number, Azure DevOps work item ID, or GitHub issue number, this plugin resolves all linked context — requirements, code changes, child items, comments, and documentation — then produces a **self-contained HTML report** (`impact-analysis-report.html`) that tells a manual tester two things:
+Given a PR number, Azure DevOps work item ID, or GitHub issue number, this plugin resolves all linked context — requirements, code changes, child items, comments, and documentation — then posts a **business-readable Markdown comment series** on the pull request, issue, or work item discussion. Each comment is self-contained with a `[k/N]` header. The first comment carries a Table of Contents that deep-links to every other comment.
+
+The series tells a manual tester two things:
 
 1. **Where the highest business risk is** in this change.
 2. **How to actually test it** — including ready-to-use, copy-pasteable test data.
@@ -10,6 +12,8 @@ Given a PR number, Azure DevOps work item ID, or GitHub issue number, this plugi
 Every test case is written in plain language. Each one carries a **"Why this matters"** business statement, a specific **user persona**, a **test data table** with realistic sample values (and boundary / negative / PII-flagged variations), step-by-step actions, the **expected business outcome**, and exactly where to verify it.
 
 Reports are written for **manual QA testers, product owners, and non-technical stakeholders**. They never describe which line of code changed.
+
+**No HTML file is produced and nothing is written to the repository working tree.**
 
 ---
 
@@ -67,12 +71,28 @@ flowchart TD
     P --> Q
     Q --> R[test-guide-writer]
 
-    R --> S["impact-analysis-report.html"]
+    R --> S["Markdown comment series<br/>(directory of .md files + index.json)"]
     S --> T{Platform?}
-    T -->|GitHub| U["Markdown summary comment + local HTML"]
-    T -->|Azure DevOps| V["HTML attached to work item + comment"]
-    T -->|Generic| W["Local HTML file only"]
+    T -->|GitHub| U["Post comment series on PR / issue<br/>back-fill TOC in Comment 1"]
+    T -->|Azure DevOps| V["Post comment series on work item discussion<br/>(or PR thread); pointer thread on linked PR"]
+    T -->|Generic| W["No posting — combined .md in temp dir"]
 ```
+
+---
+
+## Comment Series Structure
+
+A typical run produces **5 to 8 comments**. Categories with no realistic surface (and categories suppressed by `--no-perf` / `--no-a11y`) are skipped — they do not get a comment.
+
+| # | Comment Title | Always Present? | Contents |
+|---|---|---|---|
+| 1 | `[1/N] Overview & Focus Areas` | Yes | Header, headline business risk, **Where Testers Should Focus First**, test case count summary, linked PRs, **Table of Contents** (back-filled with comment URLs) |
+| 2 | `[2/N] Risk & Impact` | Yes | Business Risk Assessment (overall + risk matrix + What Could Go Wrong), Impacted Areas, Code Changes Overview |
+| 3 | `[3/N] Requirements & Gaps` | Yes | Requirements Coverage, Developer Changes Requiring Clarification, Missing Requirement Coverage, Context Gathered |
+| 4..N-1 | `[k/N] Test Cases: <Category>` | Per non-empty category | One comment per category; each test case in `<details>` for scannability; size-split if a category exceeds ~50 KB |
+| N | `[N/N] Coverage Map & QA Sign-off` | Yes | Coverage Map (req → TC, risk → TC, out-of-scope), Environment & Assignment, **QA Sign-off** as Markdown task list |
+
+Each comment is kept under **50 KB** so it fits comfortably within both GitHub's (~64 KB) and Azure DevOps' (~150 KB) per-comment body limits. Long categories are split at a test-case boundary into `Part 1 of 2`, `Part 2 of 2`, etc.
 
 ---
 
@@ -99,48 +119,30 @@ The command accepts three entry points. Only one is needed — the orchestrator 
 | **change-analyst** | Translates each code change into user-visible behaviour ("what does the user notice?"); cross-references against requirements; flags "Developer Changes Requiring Clarification" with an actionable question for the developer |
 | **risk-assessor** | Business-level risk summary plus a ranked **Top Focus Areas** list that drives the report's "Where Testers Should Focus First" section |
 
-### Phase 2 — Report Generation
+### Phase 2 — Comment Series Generation
 
 | Agent | Focus |
 |---|---|
-| **test-guide-writer** | Produces the final HTML report with 13 sections, business-oriented test cases across 7 categories with full test data tables, coverage map, and QA sign-off checklist |
+| **test-guide-writer** | Produces a directory of Markdown files (one per planned comment) plus an `index.json` describing the comment series. Honours `--no-perf` and `--no-a11y` flags. Skips test case categories with no realistic surface. |
 
----
+### Phase 3 — Posting
 
-## Report Sections
-
-The HTML report contains **13 sections**, ordered so a manual tester sees risk and focus areas before any test cases:
-
-| # | Section | Purpose |
-|---|---|---|
-| 1 | **Summary** | Work item metadata, overall risk, test case count, linked PRs, and a one-sentence headline business risk |
-| 2 | **Where Testers Should Focus First** | Top 3–5 highest-risk business areas with the test case IDs that cover them — the "first hour of testing" guide |
-| 3 | **Business Risk Assessment** | What could go wrong, who is affected, how severe — business language only |
-| 4 | **Impacted Areas** | Direct and indirect impact on user workflows, integrations, and data |
-| 5 | **Context Gathered** | Linked PRs, child work items, changesets, referenced documentation |
-| 6 | **Code Changes Overview** | Per-PR cards translating file changes into user-visible behaviour — no raw diffs |
-| 7 | **Requirements Coverage** | Each requirement mapped to the code changes that address it, with user-visible evidence |
-| 8 | **Developer Changes Requiring Clarification** | Code changes not explained by any stated requirement — flagged with an actionable question for the developer |
-| 9 | **Missing Requirement Coverage** | Requirements with no corresponding code change found |
-| 10 | **Test Cases** | Self-contained tester instructions across seven categories — see "Test Case Anatomy" below |
-| 11 | **Coverage Map** | Matrix: requirements → test cases, business risks → test cases, explicitly out of scope |
-| 12 | **Environment & Assignment** | Area path, iteration, developer, tester, environment/data/account needs |
-| 13 | **QA Sign-off** | Interactive checklist for the tester to confirm completion |
+The orchestrator hands the working directory to the platform provider, which posts each comment in order, captures URLs, and back-fills the Table of Contents in Comment 1 with the captured URLs.
 
 ---
 
 ## Test Case Anatomy
 
-Every test case is a self-contained set of instructions a manual tester can run without reading the code. Each one includes:
+Every test case is a self-contained set of instructions a manual tester can run without reading the code. Each one is rendered inside a `<details>` block (so the per-category comment stays scannable) and includes:
 
 | Field | Purpose |
 |---|---|
 | **ID + title** | Sequential `TC-NNN` and a plain-language scenario starting with a verb the user performs |
-| **Why this matters** | One or two sentences. Business outcome verified if it passes; business loss if it fails; affected users |
-| **Linked to** | The requirement (AC/RS) **and** the business risk (Risk-N) this case covers — no orphan test cases |
+| **Why this matters** | One or two sentences in a `> 💡 **Why this matters:**` blockquote. Business outcome verified if it passes; business loss if it fails; affected users |
+| **Linked to** | The requirement (`AC` / `RS`) **and** the business risk (`Risk-N`) this case covers — no orphan test cases |
 | **User role / persona** | The specific kind of user running the scenario |
 | **Preconditions** | System state, environment, feature flags, existing data |
-| **Test data** | A table of concrete copy-pasteable sample values, with boundary / PII / PCI / invalid flags |
+| **Test data** | A Markdown table of concrete copy-pasteable sample values, with boundary / PII / PCI / invalid flags in the Notes column |
 | **Steps** | Numbered observable user actions — no code references |
 | **Expected business outcome** | What the user sees and what the business gains |
 | **How to verify** | Where the tester looks: UI cues, emails, records (technical hints permitted only here) |
@@ -158,9 +160,9 @@ The plugin generates concrete, synthetic test data for every test case — the t
 - **Free-text** — short, long, with apostrophes ("O'Brien"), with non-ASCII (José, 王芳)
 - **Geographic data** — postal codes, phone numbers in the system's actual format
 - **Payment data** — known test cards (`4242 4242 4242 4242` for success, `4000 0000 0000 9995` for declined) — never real card numbers
-- **Boundary values** — minimum, just below, maximum, just above, empty, whitespace, special characters, format-invalid
-- **Negative test data** — expired coupons, blocked customers, oversized uploads, SQL/script-like strings, role-escalation attempts
-- **PII / PCI / PHI tags** — every sensitive field is flagged in the test data table
+- **Boundary values** — minimum, just below, maximum, just above, empty, whitespace, special characters, format-invalid (marked with `🎯 boundary`)
+- **Negative test data** — expired coupons, blocked customers, oversized uploads, SQL/script-like strings, role-escalation attempts (marked with `⚠️ invalid`)
+- **PII / PCI / PHI tags** — every sensitive field is flagged in the test data table (`🔒 PII`, `💳 PCI`, `🩺 PHI`)
 
 Performance, accessibility, resilience, and compatibility test cases include category-specific extras (load profile, assistive technology, failure simulation, target browsers / OS / API versions).
 
@@ -188,9 +190,9 @@ The plugin auto-detects the hosting platform from the git remote URL:
 
 | Remote URL contains | Platform | Fetch | Deliver |
 |---|---|---|---|
-| `github.com` | GitHub | `gh` CLI | Markdown summary comment on the issue/PR + local `impact-analysis-report.html` |
-| `dev.azure.com` / `visualstudio.com` | Azure DevOps | REST API | HTML report **attached to the work item** + notification comment (+ PR thread if triggered from PR) |
-| Anything else | Generic | Git + user input | Local `impact-analysis-report.html` only |
+| `github.com` | GitHub | `gh` CLI | Comment series posted on the issue or PR; TOC in Comment 1 deep-links to every other comment via `#issuecomment-` URLs |
+| `dev.azure.com` / `visualstudio.com` | Azure DevOps | REST API | Comment series posted on the work item discussion (or on the PR thread if the entry was a PR with no linked work item); pointer thread posted on each linked PR |
+| Anything else | Generic | Git + user input | No posting; comment files written to a temp directory plus a combined `impact-analysis-report.md` for offline reading — repository working tree stays clean |
 
 ---
 
@@ -207,8 +209,9 @@ This will:
 2. Discover linked issues from closingIssuesReferences and PR body
 3. Fetch each linked issue's body, labels, and comments
 4. Run the 4-agent pipeline
-5. Post a markdown summary comment on the PR
-6. Write impact-analysis-report.html locally
+5. Generate the comment series in a temp directory
+6. Post each comment in order on the PR, capturing URLs
+7. Back-fill the Table of Contents in Comment 1 with the captured URLs
 ```
 
 ### GitHub — Issue
@@ -222,8 +225,9 @@ This will:
 2. Discover linked PRs via timeline API and body search
 3. Fetch diffs from each linked PR
 4. Run the 4-agent pipeline
-5. Post a markdown summary comment on the issue
-6. Write impact-analysis-report.html locally
+5. Generate the comment series in a temp directory
+6. Post each comment in order on the issue, capturing URLs
+7. Back-fill the Table of Contents in Comment 1 with the captured URLs
 ```
 
 ### Azure DevOps — PR
@@ -238,8 +242,10 @@ This will:
 3. Fetch each work item with all fields, comments, and relations
 4. Fetch child work items and changesets
 5. Run the 4-agent pipeline
-6. Attach impact-analysis-report.html to the work item
-7. Post a notification comment on the work item and a thread on the PR
+6. Generate the comment series in a temp directory
+7. Post the series on the linked work item's discussion (or on the PR thread if no linked work item)
+8. Back-fill the Table of Contents in Comment 1
+9. Post a single pointer thread on the PR linking back to the work item discussion
 ```
 
 ### Azure DevOps — Work Item
@@ -254,8 +260,10 @@ This will:
 3. Discover all linked PRs and child work items
 4. Fetch changesets attached to the work item
 5. Run the 4-agent pipeline
-6. Attach impact-analysis-report.html to the work item
-7. Post a notification comment on the work item
+6. Generate the comment series in a temp directory
+7. Post the series on the work item discussion, capturing comment IDs
+8. Back-fill the Table of Contents in Comment 1
+9. Post a pointer thread on each linked PR linking back to the work item discussion
 ```
 
 ---
@@ -278,7 +286,7 @@ This will:
 |---|---|
 | Contents | Read |
 | Metadata | Read |
-| Issues | Read |
+| Issues | Read & Write |
 | Pull requests | Read & Write |
 
 **Azure DevOps:**
@@ -287,7 +295,7 @@ This will:
 |---|---|
 | Work Items | Read & Write |
 | Code | Read |
-| Pull Requests | Read |
+| Pull Requests | Read & Write |
 
 ---
 
@@ -296,12 +304,14 @@ This will:
 - Must be run inside a git repository
 - **GitHub**: `gh` CLI installed and authenticated (`gh auth login` or `GITHUB_TOKEN`)
 - **Azure DevOps**: `AZURE-DEVOPS-TOKEN` environment variable set
+- `jq` available on the `PATH` (used by all platform providers for JSON munging)
 
 Verify prerequisites:
 
 ```bash
-git --version    # required
-gh auth status   # GitHub only
+git --version           # required
+jq --version            # required
+gh auth status          # GitHub only
 echo $AZURE-DEVOPS-TOKEN  # Azure DevOps only
 ```
 
@@ -320,7 +330,7 @@ test-strategist/
 │   ├── requirement-collector.md  # Consolidates testable requirements
 │   ├── change-analyst.md     # Analyzes code changes vs requirements
 │   ├── risk-assessor.md      # Business-level risk assessment
-│   └── test-guide-writer.md  # Produces the 12-section HTML report
+│   └── test-guide-writer.md  # Produces the Markdown comment series + index.json
 ├── commands/
 │   └── test-strategy.md      # /test-strategy command definition
 ├── docs/
@@ -329,9 +339,9 @@ test-strategist/
 │   ├── hooks.json            # Hook configuration
 │   └── validate-prerequisites.sh  # Pre-run validation
 ├── providers/
-│   ├── azure-devops.md       # Azure DevOps API instructions
-│   ├── generic.md            # Generic/fallback platform
-│   └── github.md             # GitHub CLI instructions
+│   ├── azure-devops.md       # Azure DevOps multi-comment posting flow
+│   ├── generic.md            # Generic/fallback (combined .md in temp dir)
+│   └── github.md             # GitHub multi-comment posting flow + TOC back-fill
 ├── skills/
 │   ├── analyze-changes/SKILL.md
 │   ├── assess-risk/SKILL.md
@@ -340,6 +350,6 @@ test-strategist/
 │   ├── post-strategy/SKILL.md
 │   └── write-test-guide/SKILL.md
 └── styles/
-    ├── report-template.md    # 12-section HTML template
-    └── strategy.md           # Output style conventions
+    ├── report-template.md    # Markdown comment-series template
+    └── strategy.md           # Output style conventions (Markdown only)
 ```

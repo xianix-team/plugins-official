@@ -93,7 +93,7 @@ The command never pushes to the repository's default branch. All edits go on the
 
 - Must be run inside a git repository
 - The repository must have a detectable default branch
-- **GitHub**: `gh` CLI installed and authenticated, or `GITHUB_TOKEN` set (see `docs/platform-setup.md`)
+- **GitHub**: `gh` CLI installed and authenticated, or `GITHUB-TOKEN` set (see `docs/platform-setup.md`)
 - **Azure DevOps**: `AZURE-DEVOPS-TOKEN` environment variable set (see `docs/platform-setup.md`)
 
 ---

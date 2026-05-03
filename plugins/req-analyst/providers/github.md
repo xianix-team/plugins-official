@@ -10,7 +10,7 @@ The `gh` CLI must be installed and authenticated. Verify with:
 gh auth status
 ```
 
-If not authenticated, the user needs to run `gh auth login` or set the `GITHUB_TOKEN` environment variable.
+If not authenticated, the user needs to run `gh auth login` or set the `GITHUB-TOKEN` environment variable.
 
 ---
 

@@ -28,8 +28,8 @@ if echo "$COMMAND" | grep -qE "^gh "; then
         exit 0
     fi
     if ! gh auth status > /dev/null 2>&1; then
-        if [ -z "${GITHUB_TOKEN:-}" ]; then
-            echo '{"decision": "block", "reason": "gh CLI is not authenticated and GITHUB_TOKEN is not set. Run: gh auth login — or export GITHUB_TOKEN=ghp_xxx. See docs/platform-config.md"}'
+        if [ -z "${GITHUB-TOKEN:-}" ]; then
+            echo '{"decision": "block", "reason": "gh CLI is not authenticated and GITHUB-TOKEN is not set. Run: gh auth login — or export GITHUB-TOKEN=ghp_xxx. See docs/platform-config.md"}'
             exit 0
         fi
     fi

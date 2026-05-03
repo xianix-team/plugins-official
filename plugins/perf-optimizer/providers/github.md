@@ -10,7 +10,7 @@ Use this provider when `git remote get-url origin` contains `github.com`.
 ## Prerequisites
 
 - **GitHub CLI** (`gh`) installed: https://cli.github.com
-- Authenticated: `gh auth login`, or non-interactive `GH_TOKEN` / `GITHUB_TOKEN`
+- Authenticated: `gh auth login`, or non-interactive `GH_TOKEN` / `GITHUB-TOKEN`
 
 **Token scopes / permissions:**
 

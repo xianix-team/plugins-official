@@ -15,7 +15,7 @@ The `gh` CLI must be installed and authenticated:
 ```bash
 gh auth login
 # or
-export GITHUB_TOKEN=ghp_xxxxx
+export GITHUB-TOKEN=ghp_xxxxx
 ```
 
 Verify with:

@@ -31,7 +31,7 @@ You will receive:
 3. **One logical change per commit.** Commit message format: `perf: <short description> (<file>:<lines>)`.
 4. **The PR targets `default_branch`.**
 5. **Never silently drop a finding.** If a suggested rewrite doesn't apply cleanly or would change observable behavior, skip it and list it under "Not applied" in the PR body with the reason.
-6. **No secrets, no token leakage.** Rely on credentials already provisioned in the environment (`GITHUB_TOKEN` / `AZURE-DEVOPS-TOKEN`). Do not write them to any file.
+6. **No secrets, no token leakage.** Rely on credentials already provisioned in the environment (`GITHUB-TOKEN` / `AZURE-DEVOPS-TOKEN`). Do not write them to any file.
 
 ## Steps
 

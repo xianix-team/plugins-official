@@ -20,7 +20,7 @@ Install **`gh`** so the plugin can:
 gh auth login
 ```
 
-For CI or scripted use, set **`GITHUB_TOKEN`** (preferred) or **`GH_TOKEN`** instead of interactive login.
+For CI or scripted use, set **`GITHUB-TOKEN`** (preferred) or **`GH_TOKEN`** instead of interactive login.
 
 ### Token permissions
 
@@ -37,18 +37,18 @@ The plugin does **not** use the GitHub MCP server.
 
 ### Credentials for `git push`
 
-The `perf-pr-author` agent pushes the new `perf/issue-<number>-<slug>` branch (never the default branch). The `GITHUB_TOKEN` is reused as the push credential — the `hooks/validate-prerequisites.sh` PreToolUse hook injects it into git via `GIT_CONFIG_*` environment variables just for that one push. No separate `GIT_TOKEN` is required.
+The `perf-pr-author` agent pushes the new `perf/issue-<number>-<slug>` branch (never the default branch). The `GITHUB-TOKEN` is reused as the push credential — the `hooks/validate-prerequisites.sh` PreToolUse hook injects it into git via `GIT_CONFIG_*` environment variables just for that one push. No separate `GIT_TOKEN` is required.
 
 Pass it at runtime:
 
 ```bash
-GITHUB_TOKEN=ghp_your_token_here claude ...
+GITHUB-TOKEN=ghp_your_token_here claude ...
 ```
 
 Or export in your shell:
 
 ```bash
-export GITHUB_TOKEN=ghp_your_token_here
+export GITHUB-TOKEN=ghp_your_token_here
 ```
 
 ---
@@ -107,7 +107,7 @@ GitHub and Azure DevOps are the two platforms the issue-driven flow supports end
 
 | Platform | Trigger | Analysis input | PR opening | Push token |
 |---|---|---|---|---|
-| GitHub | Issue label `ai-dlc/perf/optimize` | `git ls-files` on the default branch | `gh pr create` | `GITHUB_TOKEN` |
+| GitHub | Issue label `ai-dlc/perf/optimize` | `git ls-files` on the default branch | `gh pr create` | `GITHUB-TOKEN` |
 | Azure DevOps | Work item tag `ai-dlc/perf/optimize` | `git ls-files` on the default branch | REST (`curl`) per `providers/azure-devops.md` | `AZURE-DEVOPS-TOKEN` |
 
 ---

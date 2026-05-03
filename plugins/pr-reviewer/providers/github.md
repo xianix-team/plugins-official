@@ -10,7 +10,7 @@ Use this provider when `git remote get-url origin` contains `github.com`.
 ## Prerequisites for posting
 
 - **GitHub CLI** (`gh`) installed: [https://cli.github.com](https://cli.github.com)
-- Authenticated: `gh auth login`, or non-interactive `GH_TOKEN` / `GITHUB_TOKEN` (same scopes as below)
+- Authenticated: `gh auth login`, or non-interactive `GH_TOKEN` / `GITHUB-TOKEN` (same scopes as below)
 
 **Token scopes:** `repo` (private repos) or `public_repo` (public only); `read:org` if needed for org repos.
 

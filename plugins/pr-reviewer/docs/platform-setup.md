@@ -15,7 +15,7 @@ Diffs and logs come from **git**. Install **`gh`** so the plugin can resolve the
 gh auth login
 ```
 
-For CI or scripts, set **`GH_TOKEN`** or **`GITHUB_TOKEN`** instead of interactive login (same scopes as below).
+For CI or scripts, set **`GH_TOKEN`** or **`GITHUB-TOKEN`** instead of interactive login (same scopes as below).
 
 **Token scopes:** `repo` (private repos) or `public_repo` (public repos only), `read:org` (optional).
 
@@ -26,13 +26,13 @@ The plugin does **not** use the GitHub MCP server. See `providers/github.md` for
 When using `--fix`, the agent pushes commits. Pass the token at runtime:
 
 ```bash
-GITHUB_TOKEN=ghp_your_token_here claude ...
+GITHUB-TOKEN=ghp_your_token_here claude ...
 ```
 
 Or export in your shell:
 
 ```bash
-export GITHUB_TOKEN=ghp_your_token_here
+export GITHUB-TOKEN=ghp_your_token_here
 ```
 
 ---
@@ -83,7 +83,7 @@ export AZURE-DEVOPS-TOKEN=<your-pat>
 
 ### Credentials for `git push` (fix mode)
 
-The plugin reuses `AZURE-DEVOPS-TOKEN` for `git push` credential injection automatically — no separate `GITHUB_TOKEN` is needed for Azure DevOps remotes.
+The plugin reuses `AZURE-DEVOPS-TOKEN` for `git push` credential injection automatically — no separate `GITHUB-TOKEN` is needed for Azure DevOps remotes.
 
 ### Generating a PAT
 
@@ -134,9 +134,9 @@ The verdict label, Critical Issues section, and inline comments are identical in
 
 | Platform | Analysis | Review posting | Token (posting / API) | Fix mode push |
 |---|---|---|---|---|
-| GitHub | `git diff`, `git log`, … | `gh pr review`, `gh pr comment`, `gh api` | `gh auth` / `GH_TOKEN` | `GITHUB_TOKEN` |
+| GitHub | `git diff`, `git log`, … | `gh pr review`, `gh pr comment`, `gh api` | `gh auth` / `GH_TOKEN` | `GITHUB-TOKEN` |
 | Azure DevOps | `git diff`, `git log`, … | REST (`curl`) per `providers/azure-devops.md` | `AZURE-DEVOPS-TOKEN` / `AZURE-DEVOPS-TOKEN` | `AZURE-DEVOPS-TOKEN` |
-| Generic | `git diff`, `git log`, … | Write to `pr-review-report.md` | — | `GITHUB_TOKEN` |
+| Generic | `git diff`, `git log`, … | Write to `pr-review-report.md` | — | `GITHUB-TOKEN` |
 
 ### Optional environment variables (all platforms)
 

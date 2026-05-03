@@ -9,7 +9,7 @@
 #            Never to the repository's default branch.
 #
 # Credentials
-#   GITHUB_TOKEN / GH_TOKEN — used by gh CLI and by git push for HTTPS auth on github.com
+#   GITHUB-TOKEN / GH_TOKEN — used by gh CLI and by git push for HTTPS auth on github.com
 #   AZURE-DEVOPS-TOKEN      — used by git push for HTTPS auth on Azure DevOps remotes,
 #                             and by curl for REST calls (work items, PRs, comments)
 
@@ -90,9 +90,9 @@ if echo "$COMMAND" | grep -qE "^git push"; then
         export GIT_CONFIG_KEY_1="url.https://x-access-token:${AZURE-DEVOPS-TOKEN}@visualstudio.com/.insteadOf"
         export GIT_CONFIG_VALUE_1="https://visualstudio.com/"
     elif echo "$REMOTE_URL" | grep -qE "github\.com"; then
-        GH_CREDENTIAL="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+        GH_CREDENTIAL="${GITHUB-TOKEN:-${GH_TOKEN:-}}"
         if [ -z "${GH_CREDENTIAL}" ]; then
-            echo '{"decision": "block", "reason": "GITHUB_TOKEN (or GH_TOKEN) is not set. Pass it at runtime: GITHUB_TOKEN=<token> claude ... (see docs/platform-setup.md)"}'
+            echo '{"decision": "block", "reason": "GITHUB-TOKEN (or GH_TOKEN) is not set. Pass it at runtime: GITHUB-TOKEN=<token> claude ... (see docs/platform-setup.md)"}'
             exit 0
         fi
         export GIT_CONFIG_COUNT=1

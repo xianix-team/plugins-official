@@ -32,7 +32,7 @@ gh auth login
 Or set the token directly:
 
 ```bash
-export GITHUB_TOKEN=ghp_your_actual_token_here
+export GITHUB-TOKEN=ghp_your_actual_token_here
 ```
 
 ### Generating a GitHub Token
@@ -40,7 +40,7 @@ export GITHUB_TOKEN=ghp_your_actual_token_here
 1. Go to [github.com/settings/tokens](https://github.com/settings/tokens)
 2. Click **Generate new token (classic)**
 3. Select `repo` scope (required for issues)
-4. Copy the token and export as `GITHUB_TOKEN` or use `gh auth login`
+4. Copy the token and export as `GITHUB-TOKEN` or use `gh auth login`
 
 ### Verification
 
@@ -115,7 +115,7 @@ For CI pipelines or webhook-driven runs, these variables drive the plugin withou
 | `PLATFORM` | `github` \| `azuredevops` \| `generic` — overrides remote-URL detection |
 | `REPO_URL` | Full HTTPS URL of the target repository |
 | `ISSUE_NUMBER` | Issue / work item ID to elaborate |
-| `GITHUB_TOKEN` | Required when `PLATFORM=github` |
+| `GITHUB-TOKEN` | Required when `PLATFORM=github` |
 | `AZURE-DEVOPS-TOKEN` | Required when `PLATFORM=azuredevops` |
 
 ---
@@ -124,6 +124,6 @@ For CI pipelines or webhook-driven runs, these variables drive the plugin withou
 
 | Platform | How items are fetched | How elaboration is delivered | Credentials |
 |---|---|---|---|
-| GitHub | `gh` CLI | `gh issue comment` (one comment per lens) | `GITHUB_TOKEN` or `gh auth login` |
+| GitHub | `gh` CLI | `gh issue comment` (one comment per lens) | `GITHUB-TOKEN` or `gh auth login` |
 | Azure DevOps | REST API (`curl`) | REST API `wit/comments?format=markdown` | `AZURE-DEVOPS-TOKEN` env var |
 | Generic / plain text | User-provided or local file | Written to `requirement-elaboration-report.md` | — |

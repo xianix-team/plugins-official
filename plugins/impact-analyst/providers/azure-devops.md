@@ -1,0 +1,240 @@
+# Provider: Azure DevOps
+
+Use this provider when `git remote get-url origin` contains `dev.azure.com` or `visualstudio.com`.
+
+## How this fits with the rest of the plugin
+
+- **Reading / analysis** — Use **git** for diffs, **`curl`** + `AZURE_DEVOPS_TOKEN` for work items and PR metadata.
+- **Azure DevOps-specific** — The HTML report is **attached as a file** to the work item via the REST API, and a brief notification comment is posted on the work item (and on the PR if triggered from a PR).
+
+## Prerequisites
+
+Required environment variable:
+
+| Variable | Purpose |
+|---|---|
+| `AZURE_DEVOPS_TOKEN` | Azure DevOps Personal Access Token (PAT) |
+
+### Token Permissions
+
+| Permission | Access | Why it's needed |
+|---|---|---|
+| **Work Items** | Read & Write | Fetch fields, repro steps, acceptance criteria, root cause, and comments; attach report and post notification |
+| **Code** | Read | Access PR diffs, file history, commit details, and changesets |
+| **Pull Requests** | Read | Fetch PR metadata and navigate work item ↔ PR links |
+
+Optional overrides:
+
+| Variable | Default |
+|---|---|
+| `AZURE_ORG` | Parsed from remote URL |
+| `AZURE_PROJECT` | Parsed from remote URL |
+| `AZURE_REPO` | Parsed from remote URL |
+
+---
+
+## Parsing the Remote URL
+
+**HTTPS format:** `https://dev.azure.com/{org}/{project}/_git/{repo}`
+
+```bash
+REMOTE=$(git remote get-url origin)
+AZURE_ORG=$(echo "$REMOTE"   | sed 's|https://dev.azure.com/||' | cut -d'/' -f1)
+AZURE_PROJECT=$(echo "$REMOTE" | sed 's|https://dev.azure.com/||' | cut -d'/' -f2)
+AZURE_REPO=$(echo "$REMOTE"  | sed 's|.*/_git/||' | sed 's|\.git$||')
+```
+
+**Legacy HTTPS format:** `https://{org}.visualstudio.com/{project}/_git/{repo}`
+
+```bash
+AZURE_ORG=$(echo "$REMOTE"   | sed 's|https://||' | cut -d'.' -f1)
+AZURE_PROJECT=$(echo "$REMOTE" | cut -d'/' -f4)
+AZURE_REPO=$(echo "$REMOTE"  | sed 's|.*/_git/||' | sed 's|\.git$||')
+```
+
+### API Base URL
+
+```bash
+if [[ "$REMOTE" =~ \.visualstudio\.com ]]; then
+  API_BASE="https://${AZURE_ORG}.visualstudio.com/${AZURE_PROJECT}"
+else
+  API_BASE="https://dev.azure.com/${AZURE_ORG}/${AZURE_PROJECT}"
+fi
+```
+
+---
+
+## Entry Point: Work Item (`wi`)
+
+### Fetching Work Item Details
+
+```bash
+curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+  "${API_BASE}/_apis/wit/workitems/${WORK_ITEM_ID}?api-version=7.1&\$expand=all"
+```
+
+Extract: title, description, acceptance criteria (PBI/Feature), repro steps (Bug), root cause (Bug), work item type, state, severity, priority, tags, assigned developer, iteration path, area path, relations, comments.
+
+### Fetching Child Work Items
+
+```bash
+curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+  "${API_BASE}/_apis/wit/workitems?ids=${CHILD_IDS_CSV}&api-version=7.1&\$expand=all"
+```
+
+### Fetching Linked Pull Requests
+
+```bash
+curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+  "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullrequests/${PR_ID}?api-version=7.1"
+```
+
+### Fetching Changesets
+
+```bash
+curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+  "${API_BASE}/_apis/tfvc/changesets/${CHANGESET_ID}?api-version=7.1&includeDetails=true"
+curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+  "${API_BASE}/_apis/tfvc/changesets/${CHANGESET_ID}/changes?api-version=7.1"
+```
+
+---
+
+## Entry Point: PR (`pr`)
+
+### Fetching PR Details
+
+```bash
+curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+  "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullrequests/${PR_ID}?api-version=7.1"
+```
+
+### Discovering Linked Work Items from a PR
+
+```bash
+curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+  "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullrequests/${PR_ID}/workitems?api-version=7.1"
+```
+
+### PR Iterations and Changes
+
+```bash
+curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+  "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullrequests/${PR_ID}/iterations?api-version=7.1"
+curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+  "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullrequests/${PR_ID}/iterations/${ITERATION_ID}/changes?api-version=7.1"
+```
+
+Alternatively, use git locally if the PR branch is available:
+```bash
+git diff origin/${BASE}...${PR_BRANCH}
+```
+
+---
+
+## Posting the Report
+
+### 1. Attach the HTML report to the work item
+
+Upload the file:
+
+```bash
+curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+  -X POST \
+  -H "Content-Type: application/octet-stream" \
+  "${API_BASE}/_apis/wit/attachments?fileName=${REPORT_FILENAME}&api-version=7.1" \
+  --data-binary @${REPORT_FILENAME}
+```
+
+Link the attachment to the work item:
+
+```bash
+curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+  -X PATCH \
+  -H "Content-Type: application/json-patch+json" \
+  "${API_BASE}/_apis/wit/workitems/${WORK_ITEM_ID}?api-version=7.1" \
+  -d "$(python3 -c "
+import json
+print(json.dumps([
+  {
+    'op': 'add',
+    'path': '/relations/-',
+    'value': {
+      'rel': 'AttachedFile',
+      'url': '${ATTACHMENT_URL}',
+      'attributes': {
+        'comment': 'Impact Analysis & Test Strategy Report — generated by impact-analyst plugin'
+      }
+    }
+  }
+]))
+")"
+```
+
+### 2. Post a notification comment on the work item
+
+```bash
+curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+  -X POST \
+  -H "Content-Type: application/json" \
+  "${API_BASE}/_apis/wit/workitems/${WORK_ITEM_ID}/comments?format=markdown&api-version=7.1-preview.4" \
+  -d "$(python3 -c "
+import json, sys
+body = sys.stdin.read()
+print(json.dumps({'text': body}))
+" <<'COMMENT'
+## 🧪 Impact Analysis & Test Strategy Generated
+
+**Overall Risk:** ${RISK_LEVEL}
+**Test Cases:** ${TOTAL_COUNT} (🟢 ${FUNCTIONAL} Functional | 🔵 ${PERF} Performance | 🔴 ${SECURITY} Security | 🟡 ${PRIVACY} Privacy | 🟣 ${A11Y} Accessibility | ⚪ ${RESILIENCE} Resilience | 🟤 ${COMPAT} Compatibility)
+**Blast Radius:** ${BLAST_RADIUS_SUMMARY}
+
+${EXECUTIVE_SUMMARY}
+
+**Developer Changes Requiring Clarification:** ${CLARIFICATION_COUNT} items flagged — review before testing begins.
+
+📎 The full HTML report has been attached to this work item.
+COMMENT
+)"
+```
+
+### 3. If triggered from a PR, also post on the PR
+
+```bash
+curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+  -X POST \
+  -H "Content-Type: application/json" \
+  "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullrequests/${PR_ID}/threads?api-version=7.1" \
+  -d '{"comments":[{"content":"🧪 **Impact analysis & test strategy generated** for work item #'"${WORK_ITEM_ID}"'.\n\nBlast radius: '"${BLAST_RADIUS_SUMMARY}"'. Overall risk: '"${RISK_LEVEL}"' — '"${TOTAL_COUNT}"' test cases generated. The full HTML report has been attached to the work item.","commentType":1}],"status":"active","properties":{"Microsoft.TeamFoundation.Discussion.SupportsMarkdown":1}}'
+```
+
+### 4. Apply the tag
+
+```bash
+EXISTING_TAGS=$(curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+  "${API_BASE}/_apis/wit/workitems/${WORK_ITEM_ID}?api-version=7.1&fields=System.Tags" \
+  | python3 -c "import sys,json; print(json.load(sys.stdin).get('fields',{}).get('System.Tags',''))")
+
+NEW_TAGS="${EXISTING_TAGS}; impact-analysis-generated"
+
+curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
+  -X PATCH \
+  -H "Content-Type: application/json-patch+json" \
+  "${API_BASE}/_apis/wit/workitems/${WORK_ITEM_ID}?api-version=7.1" \
+  -d "$(python3 -c "
+import json
+print(json.dumps([
+  {'op': 'replace', 'path': '/fields/System.Tags', 'value': '''${NEW_TAGS}'''}
+]))
+")"
+```
+
+---
+
+## Output
+
+On completion:
+
+```
+Impact analysis complete for <entry-type> #<id>: <risk-level> — <N> test cases — report: <filename>
+```

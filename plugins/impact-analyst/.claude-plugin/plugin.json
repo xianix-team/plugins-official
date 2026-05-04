@@ -1,0 +1,38 @@
+{
+  "name": "impact-analyst",
+  "version": "1.0.0",
+  "description": "Unified impact analysis and risk-based test strategy plugin. Combines blast radius analysis, dependency tracing, feature mapping, and structured test case generation into a single HTML report. Works from a PR, GitHub issue, or Azure DevOps work item.",
+  "author": {
+    "name": "Xianix",
+    "email": "hello@xianix.com",
+    "url": "https://xianix.com"
+  },
+  "homepage": "https://xianix.com",
+  "repository": "https://github.com/xianix-team/plugins-official",
+  "license": "MIT",
+  "keywords": [
+    "impact-analysis",
+    "test-strategy",
+    "risk-based-testing",
+    "blast-radius",
+    "qa",
+    "test-cases",
+    "coverage-map",
+    "github",
+    "azure-devops"
+  ],
+  "commands": ["./commands/impact-analysis.md"],
+  "agents": [
+    "./agents/orchestrator.md",
+    "./agents/requirement-collector.md",
+    "./agents/change-analyst.md",
+    "./agents/dependency-tracer.md",
+    "./agents/feature-mapper.md",
+    "./agents/risk-assessor.md",
+    "./agents/report-writer.md"
+  ],
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json",
+  "outputStyles": "./styles/",
+  "providers": "./providers/"
+}

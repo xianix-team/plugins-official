@@ -47,7 +47,7 @@ Store: `ENTRY_TYPE`, `ENTRY_ID`, `SKIP_PERF`, `SKIP_A11Y`.
 
 ## Step 1: Detect Platform + Gather Git Context
 
-Run the following **single Bash script** to collect all git context and detect the platform in one shot:
+If entry type is `wi`, skip this step (work item analysis fetches context via Azure DevOps REST API in Step 3; no repository is required). For `pr` or `issue` entry types, run the following **single Bash script** to collect all git context and detect the platform in one shot:
 
 ```bash
 BASE=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||' || echo "main")
@@ -93,7 +93,7 @@ Validate entry type compatibility:
 
 ## Step 2: Pre-Compute Codebase Fingerprint
 
-Run this **single Bash script** to pre-fetch shared context for all sub-agents:
+If entry type is `wi`, skip this step (no repository available). For `pr` or `issue` entry types, run this **single Bash script** to pre-fetch shared context for all sub-agents:
 
 ```bash
 BASE=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||' || echo "main")

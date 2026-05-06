@@ -86,5 +86,21 @@
       "keywords": ["pr-comments", "pull-request", "review-threads", "comment-resolver", "code-changes", "github", "azure-devops"],
       "license": "MIT"
     }
+  ,
+    {
+      "name": "impact-analyst",
+      "source": "./plugins/impact-analyst",
+      "description": "Unified impact analysis and risk-based test strategy plugin. Combines blast radius analysis, dependency tracing, feature mapping, and structured test case generation into a single HTML report. Works from a PR, GitHub issue, or Azure DevOps work item.",
+      "version": "1.0.0",
+      "author": {
+        "name": "99x",
+        "email": "xianix-agent@99x.io"
+      },
+      "homepage": "https://opensource.99x.io/xianix-team/",
+      "repository": "https://github.com/xianix-team/xianix-plugins-official",
+      "category": "testing",
+      "keywords": ["impact-analysis", "test-strategy", "risk-based-testing", "blast-radius", "qa", "test-cases", "coverage-map", "github", "azure-devops"],
+      "license": "MIT"
+    }
   ]
 }

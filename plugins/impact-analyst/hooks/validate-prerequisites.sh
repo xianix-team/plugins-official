@@ -31,7 +31,7 @@ if echo "$COMMAND" | grep -qE "^gh "; then
         echo '{"decision": "block", "reason": "gh CLI is not installed. Install it: brew install gh (macOS), winget install GitHub.cli (Windows), or apt install gh (Linux). See docs/platform-config.md"}'
         exit 0
     fi
-    if ! gh auth status > /dev/null 2>&1; then
+    if ! timeout 10s gh auth status > /dev/null 2>&1; then
         if [ -z "${GITHUB_TOKEN:-}" ]; then
             echo '{"decision": "block", "reason": "gh CLI is not authenticated and GITHUB_TOKEN is not set. Run: gh auth login — or export GITHUB_TOKEN=ghp_xxx. See docs/platform-config.md"}'
             exit 0

@@ -35,7 +35,7 @@ Do not ask for confirmation at any point. Execute all steps autonomously and pro
 
    **Azure DevOps:**
    ```bash
-   curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
+   curl -s -u ":${AZURE_DEVOPS_TOKEN}" \
      "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullrequests/${PR_NUMBER}?api-version=7.1"
    ```
    Parse org, project, repo, and `API_BASE` from `git remote get-url origin` as described in `providers/azure-devops.md`.
@@ -44,13 +44,14 @@ Do not ask for confirmation at any point. Execute all steps autonomously and pro
 
 3. **Format the review**
 
-   Map the verdict to the platform event type:
+   Map the verdict to the platform event type. The exact GitHub flag / Azure DevOps vote for `REQUEST CHANGES` depends on `PR_REVIEWER_BLOCK_ON_CRITICAL` (default **non-blocking** — see the provider files, which are authoritative):
 
    | Plugin verdict | GitHub event | Azure DevOps vote |
    |---|---|---|
    | `APPROVE` | `APPROVE` | `10` |
-   | `REQUEST CHANGES` | `REQUEST_CHANGES` | `-10` |
-   | `NEEDS DISCUSSION` | `COMMENT` | `0` |
+   | `APPROVE WITH SUGGESTIONS` | `APPROVE` | `5` |
+   | `REQUEST CHANGES` | `COMMENT` (default) / `REQUEST_CHANGES` if `PR_REVIEWER_BLOCK_ON_CRITICAL=true` | `-5` (default) / `-10` if `PR_REVIEWER_BLOCK_ON_CRITICAL=true` |
+   | `NEEDS DISCUSSION` | `COMMENT` | `-5` |
 
 4. **Post the review** (three sub-steps, all mandatory when supported by the platform)
 
@@ -85,4 +86,4 @@ Do not ask for confirmation at any point. Execute all steps autonomously and pro
 
    If any step fails, output the error and stop — do not retry or ask for input.
 
-> **Note:** GitHub posting requires the **`gh` CLI** installed and authenticated. Azure DevOps posting uses `curl` with the `AZURE-DEVOPS-TOKEN` environment variable (PAT with Pull Request Threads Read & Write scope). See `docs/platform-setup.md` for setup instructions. On Azure DevOps, follow `providers/azure-devops.md` exactly — including thread `properties` so Markdown in PR comments renders (this differs from Work Item comments, which use `?format=markdown` on a different API).
+> **Note:** GitHub posting requires the **`gh` CLI** installed and authenticated. Azure DevOps posting uses `curl` with the `AZURE_DEVOPS_TOKEN` environment variable (PAT with Pull Request Threads Read & Write scope). See `docs/platform-setup.md` for setup instructions. On Azure DevOps, follow `providers/azure-devops.md` exactly — including thread `properties` so Markdown in PR comments renders (this differs from Work Item comments, which use `?format=markdown` on a different API).

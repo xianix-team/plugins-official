@@ -51,13 +51,16 @@ Every finding must follow this structure:
 
 ## Verdict Labels
 
-The final PR verdict must be one of exactly three values, rendered as inline code:
+The final PR verdict must be one of exactly **four** values, rendered as inline code, in uppercase with no decoration (no ✅, no parentheses, no variants like `APPROVED WITH SUGGESTIONS`). The provider files map each value to a platform vote — any other string causes the vote step to be skipped silently.
 
 | Verdict | Meaning |
 |---|---|
-| `APPROVE` | No critical issues; warnings and suggestions are minor |
+| `APPROVE` | No critical issues and no warnings |
+| `APPROVE WITH SUGGESTIONS` | No critical issues and no warnings — only suggestions. Still posted as a non-blocking vote |
 | `REQUEST CHANGES` | One or more critical issues must be resolved before merge |
-| `NEEDS DISCUSSION` | Architectural or design concerns that require team input |
+| `NEEDS DISCUSSION` | At least one warning that needs author input, but no hard blockers |
+
+> This set must stay in sync with `styles/report-template.md`, `providers/github.md`, `providers/azure-devops.md`, and `skills/post-review/SKILL.md`. Do not add or rename values in one place without updating the others.
 
 ---
 

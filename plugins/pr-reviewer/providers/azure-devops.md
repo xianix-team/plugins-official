@@ -10,9 +10,9 @@ Required environment variable:
 
 | Variable | Purpose |
 |---|---|
-| `AZURE-DEVOPS-TOKEN` | Azure DevOps PAT — must have `Code (Read)`, `Pull Request Threads (Read & Write)`, and `User Profile (Read)` scopes |
+| `AZURE_DEVOPS_TOKEN` | Azure DevOps PAT — must have `Code (Read)`, `Pull Request Threads (Read & Write)`, and `User Profile (Read)` scopes |
 
-> **Note on var-name hygiene:** the variable name must be `AZURE-DEVOPS-TOKEN` (underscores). Some upstream environments export `AZURE-DEVOPS-TOKEN` (hyphens) — bash cannot reference hyphenated names, and `curl -u ":${AZURE-DEVOPS-TOKEN}"` will silently send an empty password. The plugin's `PreToolUse` hook detects this case and blocks with a clear message; if you hit it, re-export with underscores.
+> **Note on var-name hygiene:** reference the token as `AZURE_DEVOPS_TOKEN` (**underscores**) everywhere in bash. The framework may inject the secret under the dashed key `AZURE-DEVOPS-TOKEN`; bash cannot reference hyphenated names (a dashed reference parses as `$AZURE` minus `DEVOPS-TOKEN`) and would silently send an empty password. The Xianix Executor re-exports any dashed env var as an underscored alias, so `AZURE_DEVOPS_TOKEN` is the referenceable name. If it is empty but a dashed `AZURE-DEVOPS-TOKEN` exists, the plugin's `PreToolUse` hook blocks with a re-export command.
 
 Optional — used to override values parsed from the remote URL:
 
@@ -149,7 +149,7 @@ PY
 # 3. POST and check status
 RESP=$(curl -sS -w "\nHTTP_STATUS:%{http_code}" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Basic $(echo -n ":${AZURE-DEVOPS-TOKEN}" | base64 -w0)" \
+  -H "Authorization: Basic $(echo -n ":${AZURE_DEVOPS_TOKEN}" | base64 -w0)" \
   -X POST \
   --data @/tmp/pr_thread_payload.json \
   "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads?api-version=7.1")
@@ -186,7 +186,7 @@ PY
 
 Then POST exactly as in step 3 above.
 
-> **Authentication note:** Both `-u ":${AZURE-DEVOPS-TOKEN}"` and `-H "Authorization: Basic $(echo -n ":${AZURE-DEVOPS-TOKEN}" | base64 -w0)"` work for Azure DevOps PAT auth. The `-H` form is shown above because it makes the auth header visible in `curl -v` traces and is what the model converges on in practice.
+> **Authentication note:** Both `-u ":${AZURE_DEVOPS_TOKEN}"` and `-H "Authorization: Basic $(echo -n ":${AZURE_DEVOPS_TOKEN}" | base64 -w0)"` work for Azure DevOps PAT auth. The `-H` form is shown above because it makes the auth header visible in `curl -v` traces and is what the model converges on in practice.
 
 ---
 
@@ -204,7 +204,7 @@ else
   BRANCH=$(git rev-parse --abbrev-ref HEAD)
 fi
 
-PR_ID=$(curl -sS -u ":${AZURE-DEVOPS-TOKEN}" \
+PR_ID=$(curl -sS -u ":${AZURE_DEVOPS_TOKEN}" \
   "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullrequests?searchCriteria.sourceRefName=refs/heads/${BRANCH}&searchCriteria.status=active&api-version=7.1" \
   | python3 -c "import sys,json; prs=json.load(sys.stdin)['value']; print(prs[0]['pullRequestId'] if prs else '')")
 export PR_ID
@@ -219,7 +219,7 @@ If empty, the branch has no open PR — output a warning and skip posting.
 The PR object on Azure DevOps is the source of truth for title, description, source/target branches, and the author display name. **Use these instead of commit messages** when building the report header — commit subjects can drift from the actual PR title.
 
 ```bash
-PR_JSON=$(curl -sS -u ":${AZURE-DEVOPS-TOKEN}" \
+PR_JSON=$(curl -sS -u ":${AZURE_DEVOPS_TOKEN}" \
   "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullrequests/${PR_ID}?api-version=7.1")
 
 PR_TITLE=$(echo       "$PR_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('title',''))")
@@ -232,7 +232,7 @@ PR_AUTHOR_EMAIL=$(echo "$PR_JSON" | python3 -c "import sys,json; d=json.load(sys
 export PR_TITLE PR_DESC PR_SOURCE PR_TARGET PR_AUTHOR PR_AUTHOR_EMAIL
 ```
 
-Use `$PR_TARGET` as the **base branch** for diffs. Resolve it to a concrete SHA the same way the orchestrator step 3 does — try `refs/remotes/origin/${PR_TARGET}` first, then fall back to `refs/heads/${PR_TARGET}` (worktrees may not have remote-tracking refs), then take `git merge-base` against `HEAD`.
+Use `$PR_TARGET` as the **base branch** for diffs. Resolve it to a concrete SHA the same way Step 3 of `commands/pr-review.md` does — try `refs/remotes/origin/${PR_TARGET}` first, then fall back to `refs/heads/${PR_TARGET}` (worktrees may not have remote-tracking refs), then take `git merge-base` against `HEAD`.
 
 ---
 
@@ -273,7 +273,7 @@ PY
 
 curl -sS -w "\nHTTP_STATUS:%{http_code}\n" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Basic $(echo -n ":${AZURE-DEVOPS-TOKEN}" | base64 -w0)" \
+  -H "Authorization: Basic $(echo -n ":${AZURE_DEVOPS_TOKEN}" | base64 -w0)" \
   -X POST --data @/tmp/pr_thread_payload.json \
   "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads?api-version=7.1"
 ```
@@ -302,21 +302,21 @@ If the report contains a non-conforming verdict (e.g. `APPROVED WITH SUGGESTIONS
 
 #### Optional: `PR_REVIEWER_BLOCK_ON_CRITICAL` (controls merge-blocking behavior)
 
-A `-10` Rejected vote on Azure DevOps is treated as blocking by repo branch policies that have *"Require a minimum number of reviewers"* with *"Allow requestors to approve their own changes"* disabled — it both blocks completion and resets approval counters. In some workflows (advisory bot, shadow-mode rollout, repos where the bot is not yet in the trusted reviewer set) you want the review and the report visible but the vote *non-blocking*.
+A `-10` Rejected vote on Azure DevOps is treated as blocking by repo branch policies that have *"Require a minimum number of reviewers"* with *"Allow requestors to approve their own changes"* disabled — it both blocks completion and resets approval counters. **By default this plugin runs in advisory / shadow mode**, so a `REQUEST CHANGES` verdict casts a *non-blocking* `-5` vote: the review and report stay visible but never gate the merge. Set `PR_REVIEWER_BLOCK_ON_CRITICAL=true` to make CRITICAL findings cast the blocking `-10` Rejected vote instead.
 
 The `PR_REVIEWER_BLOCK_ON_CRITICAL` environment variable controls this:
 
 | Value | Vote cast on `REQUEST CHANGES` verdict |
 |---|---|
-| unset / `true` *(default)* | `-10` (Rejected — blocking under branch policy) |
-| `false` / `0` / `no` | `-5` (Waiting for author — visible, non-blocking) |
+| unset / `false` / `0` / `no` *(default)* | `-5` (Waiting for author — visible, non-blocking) |
+| `true` / `1` / `yes` | `-10` (Rejected — blocking under branch policy) |
 
 The verdict label in the report body, the Critical Issues section, and the inline comment threads are identical in both modes — only the cast vote changes.
 
 ```bash
-case "${PR_REVIEWER_BLOCK_ON_CRITICAL:-true}" in
-  false|False|FALSE|0|no|No|NO) BLOCK_ON_CRITICAL=false ;;
-  *)                              BLOCK_ON_CRITICAL=true ;;
+case "${PR_REVIEWER_BLOCK_ON_CRITICAL:-false}" in
+  true|True|TRUE|1|yes|Yes|YES) BLOCK_ON_CRITICAL=true ;;
+  *)                              BLOCK_ON_CRITICAL=false ;;
 esac
 
 case "${VERDICT}" in
@@ -327,7 +327,7 @@ case "${VERDICT}" in
       VOTE=-10
     else
       VOTE=-5
-      echo "INFO: PR_REVIEWER_BLOCK_ON_CRITICAL=false — casting -5 (non-blocking) instead of -10"
+      echo "INFO: advisory mode (PR_REVIEWER_BLOCK_ON_CRITICAL not set to true) — casting -5 (non-blocking) instead of -10"
     fi
     ;;
   "NEEDS DISCUSSION")            VOTE=-5  ;;
@@ -344,7 +344,7 @@ esac
 
 ```bash
 REVIEWER_ID=$(curl -sS \
-  -H "Authorization: Basic $(echo -n ":${AZURE-DEVOPS-TOKEN}" | base64 -w0)" \
+  -H "Authorization: Basic $(echo -n ":${AZURE_DEVOPS_TOKEN}" | base64 -w0)" \
   "https://app.vssps.visualstudio.com/_apis/profile/profiles/me?api-version=7.1" \
   | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))")
 
@@ -353,7 +353,7 @@ if [ -z "$REVIEWER_ID" ]; then
 else
   VOTE_RESP=$(curl -sS -w "\nHTTP_STATUS:%{http_code}" \
     -H "Content-Type: application/json" \
-    -H "Authorization: Basic $(echo -n ":${AZURE-DEVOPS-TOKEN}" | base64 -w0)" \
+    -H "Authorization: Basic $(echo -n ":${AZURE_DEVOPS_TOKEN}" | base64 -w0)" \
     -X PUT \
     "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/reviewers/${REVIEWER_ID}?api-version=7.1" \
     -d "{\"vote\": ${VOTE}, \"id\": \"${REVIEWER_ID}\"}")
@@ -388,7 +388,7 @@ PY
 
 curl -sS -w "\nHTTP_STATUS:%{http_code}\n" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Basic $(echo -n ":${AZURE-DEVOPS-TOKEN}" | base64 -w0)" \
+  -H "Authorization: Basic $(echo -n ":${AZURE_DEVOPS_TOKEN}" | base64 -w0)" \
   -X POST --data @/tmp/pr_thread_payload.json \
   "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads?api-version=7.1"
 ```
@@ -401,7 +401,7 @@ Use the loop below — do not try to "remember" the findings and post them with 
 
 #### a. Serialize findings to JSONL
 
-After compiling the report (step 7 of the orchestrator), write **one JSON object per finding** to `/tmp/pr_inline_findings.jsonl`. Each object must have:
+After compiling the report (step 7 of `commands/pr-review.md`), write **one JSON object per finding** to `/tmp/pr_inline_findings.jsonl`. Each object must have:
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -453,7 +453,7 @@ PY
 
   RESP=$(curl -sS -w "\nHTTP_STATUS:%{http_code}" \
     -H "Content-Type: application/json" \
-    -H "Authorization: Basic $(echo -n ":${AZURE-DEVOPS-TOKEN}" | base64 -w0)" \
+    -H "Authorization: Basic $(echo -n ":${AZURE_DEVOPS_TOKEN}" | base64 -w0)" \
     -X POST --data @/tmp/pr_thread_payload.json \
     "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads?api-version=7.1")
 
@@ -482,13 +482,13 @@ export INLINE_OK INLINE_FAIL INLINE_TOTAL
 
 #### c. Diagnosing zero inline comments
 
-If `INLINE_OK` is `0` while `INLINE_TOTAL` is `0`, the orchestrator skipped step (a) — the JSONL file is empty. Go back to step 7 and serialize the findings.
+If `INLINE_OK` is `0` while `INLINE_TOTAL` is `0`, step (a) was skipped — the JSONL file is empty. Go back to step 7 of `commands/pr-review.md` and serialize the findings.
 
 If `INLINE_OK` is `0` while `INLINE_TOTAL` is `> 0`, every POST failed. Read `/tmp/pr_inline_failures.log` and check:
 
 | HTTP | Cause | Fix |
 |---|---|---|
-| `401` | Token missing or hyphenated (`AZURE-DEVOPS-TOKEN` instead of `AZURE-DEVOPS-TOKEN`). | Re-export with underscores (the hook normally catches this). |
+| `401` | `AZURE_DEVOPS_TOKEN` empty — often because only the dashed `AZURE-DEVOPS-TOKEN` is set and the underscored alias is missing. | Re-export with underscores: `export AZURE_DEVOPS_TOKEN="$(env \| sed -n 's/^AZURE-DEVOPS-TOKEN=//p')"` (the hook normally catches this). |
 | `404` | `API_BASE` is wrong — most often the legacy `DefaultCollection` URL was parsed without the project segment. | Re-run the parser at the top of this file; print `API_BASE` and confirm it ends with `/{project}`, not `/{collection}`. |
 | `400` with `threadContext` in the body | `filePath` doesn't match a file in the iteration, or the line number is past EOF. | Confirm the file path is repo-relative (no leading `/` in your JSONL — the script adds one) and the line is on the right (post-change) side. |
 

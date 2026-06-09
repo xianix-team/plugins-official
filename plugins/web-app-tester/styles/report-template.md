@@ -12,7 +12,9 @@ Reports are read by **developers, QA engineers, and product owners** reviewing a
 
 ## Report Structure
 
-The report is posted as a single GitHub comment. Use this exact structure:
+The report is posted as a single comment. It has three mandatory sections — **Header**, **Summary table**, and **Detailed Step Log** — followed by an optional **Failed / Blocked Steps** roll-up.
+
+### 1. Header
 
 ```markdown
 🤖 web-app-tester — Test Execution Report
@@ -20,15 +22,50 @@ URL tested: {TEST_URL}
 {IF PRODUCTION_WARNING}⚠️ URL appears to be production. Executed read-only steps only.{END IF}
 Total: {N} | ✅ Passed: {X} | ❌ Failed: {Y} | 🔴 Blocked: {Z}
 Overall: {PASSED | FAILED | BLOCKED}
-
-| # | Step | Status |
-|---|------|--------|
-| 1 | {step description} | ✅ PASSED |
-| 2 | {step description} | ❌ FAILED |
-| 3 | {step description} | 🔴 BLOCKED |
 ```
 
-If there are any FAILED or BLOCKED steps, append a details section:
+### 2. Summary table
+
+A one-row-per-step at-a-glance view. The `Attempts` column shows how many tries the step needed (1–3).
+
+```markdown
+## Summary
+
+| # | Step | Status | Attempts |
+|---|------|--------|----------|
+| 1 | {step description} | ✅ PASSED | 1 |
+| 2 | {step description} | ❌ FAILED | 3 |
+| 3 | {step description} | 🔴 BLOCKED | 3 |
+```
+
+### 3. Detailed Step Log (mandatory — every step, including passing ones)
+
+For **each** step in the result list, in order, emit one sub-section with the following exact fields. Steps that passed on the first try still get a full entry — this is the test execution record and must be complete.
+
+```markdown
+## Detailed Step Log
+
+### Step {N} — {step description}
+- **Action:** {plain-language description of what was attempted, e.g. "Click the Sign In button"}
+- **Target:** {role + accessible name of the element, or the URL for navigate; omit line if not applicable}
+- **Input:** {value entered, or `[REDACTED]` for secrets; omit line if the step had no input}
+- **Expected:** {one sentence — the outcome the step was supposed to produce}
+- **Observed:** {one sentence — what the post-action snapshot actually showed}
+- **Status:** ✅ PASSED | ❌ FAILED | 🔴 BLOCKED
+- **Attempts:** {1..3}
+- **Screenshot:** {captured at point of failure (`_wat_screenshot_{N}.png`) | not applicable}
+- **Reason:** {only present when Status is FAILED or BLOCKED — short cause}
+```
+
+**Field rules:**
+
+- `Target`, `Input`, `Screenshot`, and `Reason` lines are **conditional** — omit them when not applicable rather than emitting empty values like `Target: —`.
+- `Action`, `Expected`, `Observed`, `Status`, and `Attempts` are **always** present, even for PASSED steps.
+- Plain business language only. Do not describe Playwright commands, `eN` refs, CSS selectors, or YAML snapshots.
+
+### 4. Failed / Blocked Steps (only when applicable)
+
+When the run contains at least one FAILED or BLOCKED step, append a compact roll-up so reviewers can jump straight to problems without scrolling the full log:
 
 ```markdown
 ---
@@ -36,13 +73,11 @@ If there are any FAILED or BLOCKED steps, append a details section:
 ### Failed / Blocked Steps
 
 **Step {N} — {step description}**
-Reason: {what went wrong, after 3 retries}
-Screenshot: {captured at point of failure / not available}
-
-**Step {N} — {step description}**
-Reason: {what went wrong}
+Reason: {short cause, same as in the detailed log}
 Screenshot: {captured at point of failure / not available}
 ```
+
+This section repeats information already in the Detailed Step Log on purpose — it's a quick-jump index, not the source of truth.
 
 ---
 
@@ -118,13 +153,20 @@ Steps that were skipped due to this restriction are listed in the table as `🔴
 
 ## Report Boundaries (strictly enforced)
 
-**The report is strictly bounded to the sections defined above.** Never add content outside this structure. Prohibited additions include:
+**The report is strictly bounded to the sections defined above** — Header, Summary table, Detailed Step Log, and the optional Failed / Blocked roll-up. Nothing else.
 
-- Suggested fixes or workarounds
-- Recommendations or advice
-- Root cause analysis
-- Next steps or action items
-- Code snippets or diffs
-- Explanatory commentary or observations
+✅ **Allowed and required** in the Detailed Step Log:
+- Factual description of the action attempted (plain language)
+- Factual description of the observed outcome from the post-action snapshot
+- The expected outcome as stated or implied by the test plan
+- Attempts count, screenshot reference, and short failure cause
 
-The report is a test execution record, not a debugging guide. Any insight beyond pass/fail/blocked belongs in a separate human review — not in this comment.
+❌ **Prohibited** anywhere in the report:
+- Suggested fixes, workarounds, or "you should try…" statements
+- Recommendations, advice, or test-improvement ideas
+- Root cause analysis (why the bug exists, where in the code it might live)
+- Next steps or action items for the developer
+- Code snippets, diffs, stack traces, selectors, or YAML snapshot dumps
+- Subjective commentary ("the UI feels slow", "this seems intentional")
+
+The distinction: documenting **what was tried and what happened** is the test execution record and belongs in the report. Reasoning about **why** it happened or **what to do next** is debugging and belongs in a separate human review — not in this comment.

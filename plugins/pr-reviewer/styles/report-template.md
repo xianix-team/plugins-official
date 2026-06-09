@@ -1,6 +1,6 @@
 # PR Review Report Template
 
-This template defines the structure for the compiled PR review report. The orchestrator agent must follow this format exactly when compiling findings from sub-agents.
+This template defines the structure for the compiled PR review report. The `/pr-review` command (`commands/pr-review.md`) must follow this format exactly when compiling findings from the sub-agents.
 
 ---
 

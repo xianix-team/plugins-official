@@ -138,7 +138,7 @@ The auto-generated plan is posted as a GitHub comment before execution begins.
 
 ## Report Format
 
-The plugin posts a single GitHub comment with this exact structure — nothing more:
+The plugin posts a single comment containing a header, a summary table, and a **Detailed Step Log that documents every step** — action attempted, target element, input (with secrets redacted), expected outcome, observed outcome, attempts, status, and any screenshot. No recommendations, root-cause analysis, or commentary are ever added.
 
 ```
 🤖 web-app-tester — Test Execution Report
@@ -146,20 +146,65 @@ URL tested: https://preview.example.com
 Total: 5 | ✅ Passed: 4 | ❌ Failed: 1 | 🔴 Blocked: 0
 Overall: FAILED
 
-| # | Step | Status |
-|---|------|--------|
-| 1 | Navigate to /login | ✅ PASSED |
-| 2 | Fill email and password, click Sign In | ✅ PASSED |
-| 3 | Verify redirect to /dashboard | ✅ PASSED |
-| 4 | Click New Order button | ❌ FAILED |
-| 5 | Verify order form appears | ✅ PASSED |
+## Summary
+
+| # | Step | Status | Attempts |
+|---|------|--------|----------|
+| 1 | Navigate to /login | ✅ PASSED | 1 |
+| 2 | Fill email and password, click Sign In | ✅ PASSED | 1 |
+| 3 | Verify redirect to /dashboard | ✅ PASSED | 1 |
+| 4 | Click New Order button | ❌ FAILED | 3 |
+| 5 | Verify order form appears | ✅ PASSED | 1 |
+
+## Detailed Step Log
+
+### Step 1 — Navigate to /login
+- **Action:** Open the /login page in the browser
+- **Target:** https://preview.example.com/login
+- **Expected:** Login form with email and password fields is visible
+- **Observed:** Login page loaded; email field, password field, and Sign In button rendered
+- **Status:** ✅ PASSED
+- **Attempts:** 1
+
+### Step 2 — Fill email and password, click Sign In
+- **Action:** Fill the email and password fields, then click Sign In
+- **Target:** Email field, password field, Sign In button (textbox / button roles)
+- **Input:** qa.user@example.com / [REDACTED]
+- **Expected:** Form submits and the page navigates away from /login
+- **Observed:** Inputs accepted, Sign In click registered, URL changed away from /login
+- **Status:** ✅ PASSED
+- **Attempts:** 1
+
+### Step 3 — Verify redirect to /dashboard
+- **Action:** Verify the current URL and that dashboard content is visible
+- **Expected:** URL is /dashboard and the dashboard greeting is displayed
+- **Observed:** URL is /dashboard; greeting "Welcome, QA User" present in the header
+- **Status:** ✅ PASSED
+- **Attempts:** 1
+
+### Step 4 — Click New Order button
+- **Action:** Click the New Order button in the dashboard toolbar
+- **Target:** button "New Order"
+- **Expected:** New Order form opens in a modal or new view
+- **Observed:** Button element was not present in the DOM on any of the 3 attempts; toolbar rendered without it
+- **Status:** ❌ FAILED
+- **Attempts:** 3
+- **Screenshot:** captured at point of failure (`_wat_screenshot_4.png`)
+- **Reason:** New Order button not found after 3 retries — element not in DOM
+
+### Step 5 — Verify order form appears
+- **Action:** Verify the New Order form is visible on the page
+- **Expected:** Order form with customer, product, and quantity fields is displayed
+- **Observed:** Order form was already open from a prior session and rendered correctly with all fields
+- **Status:** ✅ PASSED
+- **Attempts:** 1
 
 ---
 
 ### Failed / Blocked Steps
 
 **Step 4 — Click New Order button**
-Reason: Button not found after 3 retries — element not in DOM
+Reason: New Order button not found after 3 retries — element not in DOM
 Screenshot: captured at point of failure
 ```
 

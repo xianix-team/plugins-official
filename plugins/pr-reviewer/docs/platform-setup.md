@@ -15,7 +15,7 @@ Diffs and logs come from **git**. Install **`gh`** so the plugin can resolve the
 gh auth login
 ```
 
-For CI or scripts, set **`GH_TOKEN`** or **`GITHUB-TOKEN`** instead of interactive login (same scopes as below).
+For CI or scripts, set **`GH_TOKEN`** or **`GITHUB_TOKEN`** instead of interactive login (same scopes as below).
 
 **Token scopes:** `repo` (private repos) or `public_repo` (public repos only), `read:org` (optional).
 
@@ -26,13 +26,13 @@ The plugin does **not** use the GitHub MCP server. See `providers/github.md` for
 When using `--fix`, the agent pushes commits. Pass the token at runtime:
 
 ```bash
-GITHUB-TOKEN=ghp_your_token_here claude ...
+GITHUB_TOKEN=ghp_your_token_here claude ...
 ```
 
 Or export in your shell:
 
 ```bash
-export GITHUB-TOKEN=ghp_your_token_here
+export GITHUB_TOKEN=ghp_your_token_here
 ```
 
 ---
@@ -60,20 +60,20 @@ az devops configure --defaults organization=https://dev.azure.com/<your-org>
 **Option B: Personal Access Token (recommended for CI or scripted use)**
 
 ```bash
-export AZURE-DEVOPS-TOKEN=<your-pat>
-echo $AZURE-DEVOPS-TOKEN | az devops login --org https://dev.azure.com/<your-org>
+export AZURE_DEVOPS_TOKEN=<your-pat>
+echo $AZURE_DEVOPS_TOKEN | az devops login --org https://dev.azure.com/<your-org>
 ```
 
 Add to `~/.zshrc` or `~/.bashrc` to persist:
 
 ```bash
-export AZURE-DEVOPS-TOKEN=<your-pat>
+export AZURE_DEVOPS_TOKEN=<your-pat>
 ```
 
-> **Variable-name hygiene (important):** the variable name must be `AZURE-DEVOPS-TOKEN` — **underscores only**. Some CI systems and orchestrators (e.g. when reading from a YAML key like `azure-devops-token`) export it as `AZURE-DEVOPS-TOKEN` with hyphens. Bash cannot reference hyphenated names (`$AZURE-DEVOPS-TOKEN` parses as `$AZURE` minus `DEVOPS-TOKEN`), so `curl -u ":${AZURE-DEVOPS-TOKEN}"` will silently send an empty password and every Azure DevOps API call will fail with 401. The plugin's `PreToolUse` hook detects this case and blocks with an actionable message; if you hit it, re-export under the underscore name:
+> **Variable-name hygiene (important):** reference the token as `AZURE_DEVOPS_TOKEN` — **underscores only**. Some CI systems and orchestrators (e.g. when reading from a YAML key like `azure-devops-token`) inject it as `AZURE-DEVOPS-TOKEN` with hyphens. Bash cannot reference hyphenated names (a dashed reference parses as `$AZURE` minus `DEVOPS-TOKEN`), so a dashed `curl -u ":..."` would silently send an empty password and every Azure DevOps API call would fail with 401. The Xianix Executor automatically re-exports any dashed env var as an underscored alias, so `AZURE_DEVOPS_TOKEN` is normally already set. If it is missing while a dashed `AZURE-DEVOPS-TOKEN` exists, the plugin's `PreToolUse` hook blocks with an actionable message; re-export under the underscore name:
 >
 > ```bash
-> export AZURE-DEVOPS-TOKEN="$(env | sed -n 's/^AZURE-DEVOPS-TOKEN=//p')"
+> export AZURE_DEVOPS_TOKEN="$(env | sed -n 's/^AZURE-DEVOPS-TOKEN=//p')"
 > ```
 
 **PAT scopes needed:**
@@ -83,14 +83,14 @@ export AZURE-DEVOPS-TOKEN=<your-pat>
 
 ### Credentials for `git push` (fix mode)
 
-The plugin reuses `AZURE-DEVOPS-TOKEN` for `git push` credential injection automatically — no separate `GITHUB-TOKEN` is needed for Azure DevOps remotes.
+The plugin reuses `AZURE_DEVOPS_TOKEN` for `git push` credential injection automatically — no separate `GITHUB_TOKEN` is needed for Azure DevOps remotes.
 
 ### Generating a PAT
 
 1. Go to `https://dev.azure.com/<your-org>/_usersSettings/tokens`
 2. Click **New Token**
 3. Set the scopes listed above
-4. Copy the token and export it as `AZURE-DEVOPS-TOKEN`
+4. Copy the token and export it as `AZURE_DEVOPS_TOKEN`
 
 ---
 
@@ -102,29 +102,25 @@ No additional setup is required beyond having a working git installation.
 
 ---
 
-## Optional: Non-blocking reviews on CRITICAL findings
+## Optional: Blocking reviews on CRITICAL findings
 
-By default, when the plugin finds CRITICAL issues it posts a **blocking** review:
+By **default** the plugin runs in **advisory / shadow mode**: even when it finds CRITICAL issues, the review and report are posted but the platform vote does **not** block merging:
 
-- **GitHub** → `gh pr review --request-changes` (under branch protection, this shows `Merging is blocked` until the review is dismissed or re-reviewed)
-- **Azure DevOps** → vote `-10` Rejected (under repo branch policy, this prevents PR completion)
+- **GitHub** → `gh pr review --comment` (visible, never shows `Merging is blocked`)
+- **Azure DevOps** → vote `-5` Waiting for author (visible, does not prevent PR completion)
 
-In some workflows you want the review and the report to be visible but not actually block merging — e.g.:
+This is the safest default for rolling the bot out — a human reviewer stays the official gate and an over-eager bot review never forces manual dismissal.
 
-- The plugin is rolling out in **shadow / advisory mode** before being trusted to gate merges.
-- A human reviewer is the official gate, and the bot's role is to surface findings.
-- Branch protection is strict and an over-eager bot review would frequently require manual dismissal.
-
-Set the `PR_REVIEWER_BLOCK_ON_CRITICAL` environment variable to disable blocking:
+Once you trust the plugin to gate merges, set `PR_REVIEWER_BLOCK_ON_CRITICAL=true` to make CRITICAL findings post a **blocking** review:
 
 ```bash
-export PR_REVIEWER_BLOCK_ON_CRITICAL=false
+export PR_REVIEWER_BLOCK_ON_CRITICAL=true
 ```
 
 | Value | Effect on `REQUEST CHANGES` verdict |
 |---|---|
-| unset / `true` *(default)* | GitHub: `--request-changes` · Azure DevOps: vote `-10` (blocking) |
-| `false` / `0` / `no` | GitHub: `--comment` · Azure DevOps: vote `-5` Waiting for author (non-blocking) |
+| unset / `false` / `0` / `no` *(default)* | GitHub: `--comment` · Azure DevOps: vote `-5` Waiting for author (non-blocking) |
+| `true` / `1` / `yes` | GitHub: `--request-changes` · Azure DevOps: vote `-10` Rejected (blocking) |
 
 The verdict label, Critical Issues section, and inline comments are identical in both modes — only the platform action changes. The variable has no effect on the generic provider.
 
@@ -134,15 +130,16 @@ The verdict label, Critical Issues section, and inline comments are identical in
 
 | Platform | Analysis | Review posting | Token (posting / API) | Fix mode push |
 |---|---|---|---|---|
-| GitHub | `git diff`, `git log`, … | `gh pr review`, `gh pr comment`, `gh api` | `gh auth` / `GH_TOKEN` | `GITHUB-TOKEN` |
-| Azure DevOps | `git diff`, `git log`, … | REST (`curl`) per `providers/azure-devops.md` | `AZURE-DEVOPS-TOKEN` / `AZURE-DEVOPS-TOKEN` | `AZURE-DEVOPS-TOKEN` |
-| Generic | `git diff`, `git log`, … | Write to `pr-review-report.md` | — | `GITHUB-TOKEN` |
+| GitHub | `git diff`, `git log`, … | `gh pr review`, `gh pr comment`, `gh api` | `gh auth` / `GH_TOKEN` | `GITHUB_TOKEN` |
+| Azure DevOps | `git diff`, `git log`, … | REST (`curl`) per `providers/azure-devops.md` | `AZURE_DEVOPS_TOKEN` | `AZURE_DEVOPS_TOKEN` |
+| Generic | `git diff`, `git log`, … | Write to `pr-review-report.md` | — | `GITHUB_TOKEN` |
 
 ### Optional environment variables (all platforms)
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `PR_REVIEWER_BLOCK_ON_CRITICAL` | `true` | When `false`, posts CRITICAL findings as a non-blocking review (GitHub `--comment`, Azure DevOps vote `-5`). See above. |
+| `PR_REVIEWER_BLOCK_ON_CRITICAL` | `false` | Advisory by default: CRITICAL findings post a non-blocking review (GitHub `--comment`, Azure DevOps vote `-5`). Set to `true` to post a blocking review (GitHub `--request-changes`, Azure DevOps vote `-10`). See above. |
+| `PR_REVIEWER_MODEL` | unset | Pins the model used by the four reviewer sub-agents (e.g. `claude-haiku-4-5`). When unset, the reviewers are tiered by diff size: small PRs (≤ 300 diff lines) use a fast low-cost model; larger or high-risk PRs use the lead's inherited model. See step 6 of `commands/pr-review.md`. |
 
 ---
 

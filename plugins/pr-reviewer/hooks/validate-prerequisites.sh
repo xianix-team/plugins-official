@@ -6,10 +6,13 @@
 # Reading  — git for diffs/logs (all hosts); gh only when posting to GitHub
 # Writing  — requires local git for commit/push; validated here
 #
-# Credentials
-#   GITHUB-TOKEN          — used by git push for HTTPS authentication (GitHub / generic)
+# Credentials (reference the underscored names — bash cannot use dashes in identifiers).
+# The framework may inject these secrets under dashed keys (GITHUB-TOKEN /
+# AZURE-DEVOPS-TOKEN); the Xianix Executor re-exports any dashed env var as an underscored
+# alias, so GITHUB_TOKEN / AZURE_DEVOPS_TOKEN are what is referenceable at runtime.
+#   GITHUB_TOKEN          — used by git push for HTTPS authentication (GitHub / generic)
 #                        injected via GIT_CONFIG env vars, never written to disk
-#   AZURE-DEVOPS-TOKEN   — used by git push for HTTPS authentication on Azure DevOps remotes
+#   AZURE_DEVOPS_TOKEN    — used by git push for HTTPS authentication on Azure DevOps remotes
 #                        also used by the az CLI for API calls
 
 set -euo pipefail
@@ -31,11 +34,11 @@ if echo "$COMMAND" | grep -qE "(^|[[:space:]])gh[[:space:]]"; then
     # Platform-exclusive CLI: gh is for GitHub remotes only.
     # On Azure DevOps / Bitbucket / generic remotes, gh will fail with
     # "gh auth login" prompts and waste turns. Block early with a clear message
-    # pointing the orchestrator at the correct provider doc.
+    # pointing the review lead at the correct provider doc.
     REMOTE_URL=$(git remote get-url origin 2>/dev/null || echo "")
     if [ -n "$REMOTE_URL" ] && ! echo "$REMOTE_URL" | grep -q "github.com"; then
         if echo "$REMOTE_URL" | grep -qE "(dev\.azure\.com|visualstudio\.com)"; then
-            echo '{"decision": "block", "reason": "gh CLI is for GitHub remotes only — this remote is Azure DevOps. Use curl + AZURE-DEVOPS-TOKEN per providers/azure-devops.md."}'
+            echo '{"decision": "block", "reason": "gh CLI is for GitHub remotes only — this remote is Azure DevOps. Use curl + AZURE_DEVOPS_TOKEN per providers/azure-devops.md."}'
         elif echo "$REMOTE_URL" | grep -q "bitbucket.org"; then
             echo '{"decision": "block", "reason": "gh CLI is for GitHub remotes only — this remote is Bitbucket. Use git only and write to pr-review-report.md per providers/generic.md."}'
         else
@@ -47,16 +50,17 @@ if echo "$COMMAND" | grep -qE "(^|[[:space:]])gh[[:space:]]"; then
     exit 0
 fi
 
-# curl to Azure DevOps REST — require AZURE-DEVOPS-TOKEN, with a token-name hygiene check.
-# Some upstream environments export the token as AZURE-DEVOPS-TOKEN (with hyphens),
-# which is not a valid bash identifier and cannot be referenced as $AZURE-DEVOPS-TOKEN.
-# Detect that and surface a clear, actionable error instead of a silent 401.
+# curl to Azure DevOps REST — require AZURE_DEVOPS_TOKEN (underscored; the referenceable name).
+# The token may be injected upstream under the dashed key AZURE-DEVOPS-TOKEN, which bash cannot
+# reference as $AZURE-DEVOPS-TOKEN. The Xianix Executor re-exports dashed env vars as underscored
+# aliases, so AZURE_DEVOPS_TOKEN should be set. If it is empty but a dashed AZURE-DEVOPS-TOKEN
+# exists in the raw environment, the alias step did not run — surface an actionable error.
 if echo "$COMMAND" | grep -qE "curl.*(dev\.azure\.com|visualstudio\.com|app\.vssps\.visualstudio\.com)"; then
-    if [ -z "${AZURE-DEVOPS-TOKEN:-}" ]; then
+    if [ -z "${AZURE_DEVOPS_TOKEN:-}" ]; then
         if env | grep -q '^AZURE-DEVOPS-TOKEN='; then
-            echo '{"decision": "block", "reason": "Found AZURE-DEVOPS-TOKEN (with hyphens) but AZURE-DEVOPS-TOKEN (with underscores) is empty. Bash cannot reference hyphenated names — re-export as: export AZURE-DEVOPS-TOKEN=\"$(env | sed -n s/^AZURE-DEVOPS-TOKEN=//p)\""}'
+            echo '{"decision": "block", "reason": "AZURE_DEVOPS_TOKEN is empty but a dashed AZURE-DEVOPS-TOKEN exists in the environment. Bash cannot reference hyphenated names — re-export as: export AZURE_DEVOPS_TOKEN=\"$(env | sed -n s/^AZURE-DEVOPS-TOKEN=//p)\""}'
         else
-            echo '{"decision": "block", "reason": "AZURE-DEVOPS-TOKEN is not set. Pass it at runtime: AZURE-DEVOPS-TOKEN=<pat> claude ... (see docs/platform-setup.md)"}'
+            echo '{"decision": "block", "reason": "AZURE_DEVOPS_TOKEN is not set. Pass it at runtime: AZURE_DEVOPS_TOKEN=<pat> claude ... (see docs/platform-setup.md)"}'
         fi
         exit 0
     fi
@@ -102,30 +106,30 @@ if echo "$COMMAND" | grep -qE "^git push"; then
     REMOTE_URL=$(git remote get-url origin 2>/dev/null || echo "")
 
     if echo "$REMOTE_URL" | grep -qE "(dev\.azure\.com|visualstudio\.com)"; then
-        # Azure DevOps — use AZURE-DEVOPS-TOKEN
-        if [ -z "${AZURE-DEVOPS-TOKEN:-}" ]; then
-            echo '{"decision": "block", "reason": "AZURE-DEVOPS-TOKEN is not set. Pass it at runtime: AZURE-DEVOPS-TOKEN=<pat> claude ... (see docs/platform-setup.md)"}'
+        # Azure DevOps — use AZURE_DEVOPS_TOKEN
+        if [ -z "${AZURE_DEVOPS_TOKEN:-}" ]; then
+            echo '{"decision": "block", "reason": "AZURE_DEVOPS_TOKEN is not set. Pass it at runtime: AZURE_DEVOPS_TOKEN=<pat> claude ... (see docs/platform-setup.md)"}'
             exit 0
         fi
 
         # Inject the PAT into git credentials for Azure DevOps HTTPS remotes
         # Supports both dev.azure.com and *.visualstudio.com URL formats
         export GIT_CONFIG_COUNT=2
-        export GIT_CONFIG_KEY_0="url.https://x-access-token:${AZURE-DEVOPS-TOKEN}@dev.azure.com/.insteadOf"
+        export GIT_CONFIG_KEY_0="url.https://x-access-token:${AZURE_DEVOPS_TOKEN}@dev.azure.com/.insteadOf"
         export GIT_CONFIG_VALUE_0="https://dev.azure.com/"
-        export GIT_CONFIG_KEY_1="url.https://x-access-token:${AZURE-DEVOPS-TOKEN}@visualstudio.com/.insteadOf"
+        export GIT_CONFIG_KEY_1="url.https://x-access-token:${AZURE_DEVOPS_TOKEN}@visualstudio.com/.insteadOf"
         export GIT_CONFIG_VALUE_1="https://visualstudio.com/"
     else
-        # GitHub or generic HTTPS remote — use GITHUB-TOKEN
-        if [ -z "${GITHUB-TOKEN:-}" ]; then
-            echo '{"decision": "block", "reason": "GITHUB-TOKEN is not set. Pass it at runtime: GITHUB-TOKEN=<token> claude ... (see docs/platform-setup.md)"}'
+        # GitHub or generic HTTPS remote — use GITHUB_TOKEN
+        if [ -z "${GITHUB_TOKEN:-}" ]; then
+            echo '{"decision": "block", "reason": "GITHUB_TOKEN is not set. Pass it at runtime: GITHUB_TOKEN=<token> claude ... (see docs/platform-setup.md)"}'
             exit 0
         fi
 
         # Inject token via env-based git config — no files written, no global config touched,
         # scoped to this shell session only.
         export GIT_CONFIG_COUNT=1
-        export GIT_CONFIG_KEY_0="url.https://x-access-token:${GITHUB-TOKEN}@github.com/.insteadOf"
+        export GIT_CONFIG_KEY_0="url.https://x-access-token:${GITHUB_TOKEN}@github.com/.insteadOf"
         export GIT_CONFIG_VALUE_0="https://github.com/"
     fi
 fi

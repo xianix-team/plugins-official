@@ -109,13 +109,19 @@ It produces the variables `TEST_URL`, `PRODUCTION_WARNING`, `TEST_PLAN`, and (fo
 
 Read and follow `skills/run-playwright-session/SKILL.md`, passing in `TEST_URL`, `PRODUCTION_WARNING`, and `TEST_PLAN`.
 
-It produces an inline list of per-step results with the shape:
+It produces an inline list of fully documented per-step results — one entry per step in `TEST_PLAN`, in order — with the shape:
 
 ```
-{ n, desc, status: PASSED|FAILED|BLOCKED, reason, screenshot }
+{
+  n, desc,
+  action: { verb, target, ref, input },
+  expected, observed,
+  status: PASSED|FAILED|BLOCKED,
+  attempts, reason, screenshot
+}
 ```
 
-The skill enforces the global execution rules (single browser session, retries, cleanup) and honours `PRODUCTION_WARNING` by skipping any data-modifying step.
+Every step (including PASSED ones) is recorded in full so Phase 3 can render a complete test execution log. The skill enforces the global execution rules (single browser session, retries, cleanup), honours `PRODUCTION_WARNING` by skipping any data-modifying step, and redacts credential inputs as `[REDACTED]`.
 
 ---
 

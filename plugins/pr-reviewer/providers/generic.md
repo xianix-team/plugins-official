@@ -66,4 +66,4 @@ This provider is the correct fallback for:
 
 ## `PR_REVIEWER_BLOCK_ON_CRITICAL`
 
-This environment variable has **no effect** on the generic provider — the report is written to a local file regardless of verdict, and there is no remote API to cast a blocking vote against. The variable is consumed only by the GitHub and Azure DevOps providers (see `providers/github.md` and `providers/azure-devops.md`).
+This environment variable has **no effect** on the generic provider — the report is written to a local file regardless of verdict, and there is no remote API to cast a blocking vote against. The variable is consumed only by the GitHub and Azure DevOps providers, where it defaults to advisory / non-blocking (set it to `true` to make CRITICAL findings blocking — see `providers/github.md` and `providers/azure-devops.md`).

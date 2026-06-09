@@ -18,12 +18,19 @@ Execute every step below autonomously and in order. Do not ask for confirmation,
 
 ## What This Does
 
+This command runs a **cost-tiered** review and posts the results back to the PR. The tier is chosen automatically from the diff (see step 5):
+
+- **Default — low-cost path:** two parallel Haiku finder agents scan the diff for correctness/regression bugs and security/edge-case issues; you then self-verify and keep the strongest findings (capped at 8). This is the path for ordinary PRs and keeps token cost low.
+- **Escalated — full specialist path:** when the diff touches a **high-risk surface** (auth/authz, payments/billing, crypto, DB migrations/schema, or public APIs), the dedicated specialized reviewers run instead for deeper coverage:
+
 | Reviewer | Focus |
 |----------|-------|
 | `code-reviewer` | Readability, naming, duplication, error handling, design patterns |
 | `security-reviewer` | OWASP Top 10, secrets, injection, auth/authz vulnerabilities |
 | `test-reviewer` | Coverage gaps, test quality, edge cases, missing regression tests |
 | `performance-reviewer` | N+1 queries, O(n²) loops, memory leaks, blocking I/O |
+
+Either way the outcome is identical downstream: a verdict, a summary comment, and **one inline comment per finding** posted to the detected platform.
 
 ## Platform Support
 
@@ -205,95 +212,145 @@ fi
 
 If indexing was performed, use `Read` on key config/manifest files (`package.json`, `*.csproj`, `go.mod`) and `Grep` to locate patterns such as the main entry point, base classes, or shared utilities referenced by the changed files. Otherwise skip directly to step 5.
 
-## 5. Understand the Change
+## 5. Understand the Change & Choose the Review Tier
 
-Before launching sub-agents:
+Before launching any agents:
 - Identify the type of change (feature, bugfix, refactor, config, docs)
 - Note which languages/frameworks are involved
-- Identify critical or high-risk files (auth, payments, database migrations, public APIs)
 - Estimate scope (small/medium/large)
 
-### Select which reviewers to run (cost gate — do not run all four blindly)
+### Decide the tier: default Haiku finders vs. escalated specialists
 
-Running all four reviewers on a docs-only or config-only PR is pure waste. Use the changed-file mix in `/tmp/pr_changed_files.txt` to decide which of the four sub-agents to spawn in step 6. Always run `code-reviewer`; gate the other three:
+The review runs on the **cheap Haiku-finder path by default** (step 6A) and only **escalates to the full specialist reviewers** (step 6B) when the diff touches a high-risk surface. Detect high-risk changes from both the file list and the diff content:
 
-| Reviewer | Run when the diff contains… | Skip when… |
-|---|---|---|
-| `code-reviewer` | **always** | never |
-| `security-reviewer` | source code, auth/authz, input handling, dependencies/lockfiles, IaC, or any externally-reachable surface | the diff is **only** docs/markdown/images |
-| `test-reviewer` | source code with behaviour (functions/methods/classes) | the diff is **only** docs, config, or pure formatting/rename — i.e. nothing whose behaviour a test would assert |
-| `performance-reviewer` | DB queries/ORM, loops over collections, I/O, hot paths, large data structures, or algorithm changes | the diff is **only** docs/config, or trivial code with no data/IO/loops |
+```bash
+# 1. High-risk by file path
+HIGH_RISK_FILES=$(grep -iE \
+  '(auth|login|signin|session|password|passwd|secret|token|jwt|oauth|crypto|encrypt|decrypt|payment|billing|charge|invoice|checkout|migration|schema|\.sql$|webhook|/api/|/controllers?/|/routes?/|/handlers?/|iam|rbac|permission)' \
+  /tmp/pr_changed_files.txt || true)
 
-Rules:
-- A file counts as "docs" only if it is markdown/text/images with no code fences that ship as code. `package.json`/`*.csproj`/lockfile changes are **not** docs — they keep `security-reviewer` in scope (dependency risk).
-- When uncertain whether a reviewer applies, **run it** — a skipped reviewer that should have run is worse than one wasted pass. The table is for clear-cut cases (e.g. a README typo PR), not borderline ones.
-- Record the chosen set; step 6 spawns exactly those reviewers (between 1 and 4). If only `code-reviewer` qualifies, spawn just that one — that is expected and correct for trivial PRs.
+# 2. High-risk by changed content (added lines only)
+HIGH_RISK_DIFF=$(grep -iE '^\+' /tmp/pr_full_diff.patch \
+  | grep -iE '(password|secret|api[_-]?key|private[_-]?key|authorize|authenticate|hashpw|bcrypt|jwt|sql|exec\(|eval\(|subprocess|os\.system|pickle\.loads)' \
+  || true)
 
-## 6. Orchestrate Specialized Reviews (parallel sub-agent calls — MANDATORY)
+if [ -n "$HIGH_RISK_FILES" ] || [ -n "$HIGH_RISK_DIFF" ]; then
+  REVIEW_TIER="specialists"
+  echo "High-risk surface detected — escalating to specialist reviewers."
+else
+  REVIEW_TIER="haiku"
+  echo "No high-risk surface — using low-cost Haiku finder path."
+fi
+export REVIEW_TIER
+```
 
-This step is the entire point of the review. Skipping it is a P0 bug. **You run this yourself** — you are the top-level agent, so the `Task` / `Agent` tool is available to you here.
+- `REVIEW_TIER=haiku` → go to **step 6A** (two Haiku finders). This is the common case.
+- `REVIEW_TIER=specialists` → go to **step 6B** (gated specialist sub-agents).
 
-### What to do
+When genuinely uncertain whether a change is high-risk, prefer **specialists** — a missed vulnerability costs far more than one extra review pass. The heuristic above is intentionally broad for exactly this reason.
 
-In **one assistant turn**, emit **one parallel sub-agent invocation per reviewer selected in step 5** (between 1 and 4). The tool is exposed under two equivalent names depending on the Claude Code SDK version (`Task` and/or `Agent`). Use whichever your SDK accepts; if one returns `No such tool available`, immediately retry the same call with the other name in the next turn.
+## 6. Run the Review (parallel sub-agent calls — MANDATORY)
 
-| `subagent_type` | Focus | Spawn? |
-|---|---|---|
-| `code-reviewer` | Code quality, readability, maintainability | always |
-| `security-reviewer` | Vulnerabilities, secrets, input validation | per step 5 gate |
-| `test-reviewer` | Test coverage and test quality | per step 5 gate |
-| `performance-reviewer` | Bottlenecks, inefficiencies, resource usage | per step 5 gate |
+Run **exactly one** of the two paths below, chosen by `REVIEW_TIER` from step 5. Both paths run **real, parallel, top-level sub-agents** (you are the top-level agent, so `Task` / `Agent` is available here) and both feed the same step 7. The tool is exposed under two equivalent names depending on the Claude Code SDK version (`Task` and/or `Agent`). Use whichever your SDK accepts; if one returns `No such tool available`, immediately retry the same call with the other name. If your SDK requires the plugin prefix, use `pr-reviewer:<name>` instead of the bare name.
 
-> If your SDK requires the plugin prefix for sub-agent names, use `pr-reviewer:code-reviewer` (etc.) instead of the bare name.
+**Constraints every sub-agent prompt below must include, verbatim:**
 
-> **Mandatory ≠ all four.** "MANDATORY" means the selected reviewers must run as **real, parallel, top-level sub-agents** — not that you must always run four. Running 1–3 because step 5 gated the rest is correct and expected; **simulating** any reviewer in your own context (see anti-patterns below) is the P0 bug, regardless of count.
-
-Each invocation prompt must include, verbatim:
-
-- The path `/tmp/pr_full_diff.patch` (the full diff written in step 3) and the path `/tmp/pr_changed_files.txt`
-- `BASE_SHA` and `HEAD_SHA`
-- The PR title and description (from the platform metadata fetched in step 2)
 - A reminder: *"Do not re-fetch git data; the diff at /tmp/pr_full_diff.patch is authoritative. Return findings only."*
-- A file-reading constraint: *"When you need full file context, read only the enclosing function/class (±60 lines around each changed hunk). Do not read any file in its entirety if it exceeds 400 lines — use `Bash(sed -n '<start>,<end>p' <file>)` scoped to the changed region instead. Read at most 3 files beyond the diff."*
 - A line-number constraint: *"Every `path/to/file.ext:NN` reference must use the POST-CHANGE file line number — the line as it appears in the new version of the file. Derive `NN` from the `@@ -old,+new @@` hunk header's `+new` start plus the offset of the flagged `+` line within that hunk. Never report the diff's own line position or an old-side line number. Findings on deleted (`-`) lines must reference the nearest surviving line."*
 
-> **Cost guard (mandatory):** Before emitting the sub-agent calls, check the diff size:
+> **Diff size (used by both paths):**
 > ```bash
 > DIFF_LINES=$(wc -l < /tmp/pr_full_diff.patch)
-> echo "Diff size: $DIFF_LINES lines"
+> echo "Diff size: $DIFF_LINES lines  |  Tier: $REVIEW_TIER"
 > ```
-> - If `DIFF_LINES ≤ 300`: this is a small PR. Pass the diff **inline** in each sub-agent prompt (not by path) — it is small enough that inline context is cheaper than sub-agents opening and re-reading a shared file.
-> - If `DIFF_LINES > 300`: pass by path (`/tmp/pr_full_diff.patch`) as normal.
 
-> **Model selection (cost tiering):** the reviewer agents declare `model: inherit`, so by default they run on the lead's model. Pass an explicit `model` in each sub-agent call to control cost; respect the `PR_REVIEWER_MODEL` environment variable when it is set, otherwise tier by diff size:
-> - `PR_REVIEWER_MODEL` set → use that model for every reviewer.
-> - else `DIFF_LINES ≤ 300` (small PR) → use a fast, low-cost model (e.g. `claude-haiku-4-5`) for all reviewers.
-> - else `DIFF_LINES > 300` or any high-risk file (auth, payments, crypto, DB migrations, public API) is in scope → use the lead's default/inherited model for accuracy.
-> A single explicit model applies to all selected reviewers in the same turn — do not run different tiers in one fan-out.
+---
 
-Wait for all selected sub-agents to return, then proceed to step 7.
+### 6A. Default path — two parallel Haiku finders (`REVIEW_TIER=haiku`)
 
-### What NOT to do (anti-patterns observed in production)
+Lowest-cost path for ordinary PRs.
 
-These look like progress but are actually you **simulating** sub-agents in your own context. They double cost, double latency, and lose the specialization benefit. **Stop the moment you catch yourself doing any of them:**
+**Pre-load context (at most 3 `Read` calls, strict size cap).** From `/tmp/pr_changed_files.txt` pick the **top 3 highest-risk files** (business logic, data access first; skip pure test/generated files unless they are the only changes). For each:
+- If the file is **≤ 400 lines**, read it in full.
+- If **> 400 lines**, extract only the changed regions: `grep -n '^@@' /tmp/pr_full_diff.patch` to find hunk positions, then `sed -n '<start>,<end>p' <file>` for ±60 lines around each hunk.
 
-- ❌ Spawning a single `orchestrator` / "PR review" sub-agent and asking it to run the reviewers. That sub-agent cannot spawn sub-agents — the fan-out will fail and the review will degrade to a text summary that never gets posted. Run the selected reviewers from here.
-- ❌ Running `Bash` with `cat <<'ANALYSIS' ... === CODE QUALITY REVIEW === ... ANALYSIS` — that is **you pretending to be the code-reviewer**, not invoking it. If you find yourself writing the heredoc text, delete it and emit a sub-agent call instead.
-- ❌ A long thinking turn (>20 s) followed by directly compiling the report. That long pause is internal reasoning that should have been parallel sub-agent work.
-- ❌ Sequential `Task` / `Agent` calls — each one waits for the previous to finish. They MUST be in the same assistant turn so the runtime parallelizes them.
-- ❌ Passing the full diff inline in the sub-agent prompt when `/tmp/pr_full_diff.patch` exists *and the diff is large* (> 300 lines). Pass the path; the sub-agent will `Read` it.
+Concatenate the snippets into `/tmp/pr_context.txt` (a filepath header before each). **Never read any file in its entirety if it exceeds 400 lines; never read more than 3 files.**
+
+Then emit **both Agent calls in the same assistant turn** (so they run in parallel). Both **must** set `"model": "claude-haiku-4-5"`. Neither agent may call `Read`, `Bash`, `Grep`, or any other tool — they work only from the two files named in the prompt.
+
+**Agent 1 — Correctness & regressions**
+
+```json
+{
+  "description": "Correctness & regression finder",
+  "model": "claude-haiku-4-5",
+  "prompt": "Read /tmp/pr_full_diff.patch then /tmp/pr_context.txt.\n\nFind correctness bugs and behavioural regressions introduced by the diff. Focus on:\n- Logic errors in changed code paths\n- Changed conditions that now allow or block cases they shouldn't\n- Null / empty / zero edge cases on new code paths\n- Removed guards that previously protected against a bad state\n- Interface/contract mismatches between callers and the changed function\n\nFor each finding output exactly:\nFILE: <path>\nLINE: <post-change file line number from the @@ hunk header's +new start plus the offset of the flagged + line within that hunk; never the diff's own line position>\nSEVERITY: CRITICAL | WARNING\nISSUE: <one sentence>\n\nIf you find nothing, output: NONE\nDo not call any tools."
+}
+```
+
+**Agent 2 — Security & edge cases**
+
+```json
+{
+  "description": "Security & edge-case finder",
+  "model": "claude-haiku-4-5",
+  "prompt": "Read /tmp/pr_full_diff.patch then /tmp/pr_context.txt.\n\nFind security issues and missing edge-case handling in the diff. Focus on:\n- Input not validated before use (injection, path traversal)\n- Authentication or authorisation checks removed or weakened\n- Sensitive data written to logs\n- Exception or error paths that swallow failures silently\n- Resource leaks (connections, file handles) on error paths\n- Off-by-one errors or boundary conditions in new loops/ranges\n\nFor each finding output exactly:\nFILE: <path>\nLINE: <post-change file line number from the @@ hunk header's +new start plus the offset of the flagged + line within that hunk; never the diff's own line position>\nSEVERITY: CRITICAL | WARNING | SUGGESTION\nISSUE: <one sentence>\n\nIf you find nothing, output: NONE\nDo not call any tools."
+}
+```
+
+**Verify and compile (you are the verifier — no extra agents).** For each finding from both agents: (1) confirm the flagged line appears in `/tmp/pr_full_diff.patch` as a `+` line (new code, not pre-existing); (2) discard pre-existing issues, linter/compiler-caught problems, pedantic style, and obvious false positives; (3) merge duplicates and **cap at 8 findings**, ranked CRITICAL → WARNING → SUGGESTION. Then go to step 7.
+
+---
+
+### 6B. Escalated path — gated specialist sub-agents (`REVIEW_TIER=specialists`)
+
+Deeper coverage for high-risk diffs. Run `code-reviewer` **always**; gate the other three by the changed-file mix so you never spawn a reviewer with nothing to do:
+
+| `subagent_type` | Focus | Run when the diff contains… | Skip when… |
+|---|---|---|---|
+| `code-reviewer` | Code quality, readability, maintainability | **always** | never |
+| `security-reviewer` | Vulnerabilities, secrets, input validation | source code, auth/authz, input handling, dependencies/lockfiles, IaC, any externally-reachable surface | the diff is **only** docs/markdown/images |
+| `test-reviewer` | Test coverage and test quality | source code with behaviour (functions/methods/classes) | the diff is **only** docs, config, or pure formatting/rename |
+| `performance-reviewer` | Bottlenecks, inefficiencies, resource usage | DB queries/ORM, loops over collections, I/O, hot paths, large data structures, algorithm changes | the diff is **only** docs/config, or trivial code with no data/IO/loops |
+
+`package.json`/`*.csproj`/lockfile changes are **not** docs — they keep `security-reviewer` in scope (dependency risk). When uncertain whether a reviewer applies, **run it**.
+
+In **one assistant turn**, emit one parallel sub-agent invocation per selected reviewer (between 1 and 4). Each invocation prompt must include, in addition to the two shared constraints above:
+
+- The path `/tmp/pr_full_diff.patch` and the path `/tmp/pr_changed_files.txt`
+- `BASE_SHA` and `HEAD_SHA`
+- The PR title and description (from the platform metadata fetched in step 2)
+- A file-reading constraint: *"When you need full file context, read only the enclosing function/class (±60 lines around each changed hunk). Do not read any file in its entirety if it exceeds 400 lines — use `Bash(sed -n '<start>,<end>p' <file>)` scoped to the changed region instead. Read at most 3 files beyond the diff."*
+
+> **Pass-by-value vs path:** if `DIFF_LINES ≤ 300`, pass the diff **inline** in each prompt (cheaper than each sub-agent re-opening a shared file); if `DIFF_LINES > 300`, pass the path `/tmp/pr_full_diff.patch`.
+
+> **Model selection:** reviewer agents declare `model: inherit`. Respect `PR_REVIEWER_MODEL` when set (use it for every reviewer); otherwise — because this path was chosen for high-risk changes — use the lead's default/inherited model for accuracy. A single explicit model applies to all selected reviewers in the same turn.
+
+Wait for all selected sub-agents to return, then go to step 7.
+
+---
+
+### What NOT to do (anti-patterns — apply to both paths)
+
+These look like progress but are actually you **simulating** sub-agents in your own context. They double cost, double latency, and lose the benefit. **Stop the moment you catch yourself doing any of them:**
+
+- ❌ Spawning a single `orchestrator` / "PR review" sub-agent and asking it to run the reviewers. That sub-agent cannot spawn sub-agents — the fan-out fails and the review degrades to a text summary that never gets posted. Run the agents from here.
+- ❌ Running `Bash` with `cat <<'ANALYSIS' ... === CODE QUALITY REVIEW === ... ANALYSIS` — that is **you pretending to be a reviewer**, not invoking it. Delete the heredoc and emit a real agent call instead.
+- ❌ A long thinking turn (>20 s) followed by directly compiling the report. That pause is internal reasoning that should have been parallel sub-agent work.
+- ❌ Sequential `Task` / `Agent` calls — they MUST be in the same assistant turn so the runtime parallelizes them.
+- ❌ Passing a large diff (> 300 lines) inline when `/tmp/pr_full_diff.patch` exists. Pass the path.
 - ❌ `cat <<'DIFF_EOF' ... DIFF_EOF` echoing the diff back into the conversation. You already have it. Don't.
 
 ### Fallback if sub-agents are genuinely unavailable
 
-If **both** `Task` and `Agent` return `No such tool available` (a stripped-down runtime that exposes neither), do not give up on the review:
+If **both** `Task` and `Agent` return `No such tool available` (a stripped-down runtime that exposes neither), do not give up:
 
-1. Perform the **selected** review dimensions yourself, inline, one focused pass each (the step-5 set among code quality, security, tests, performance), using `/tmp/pr_full_diff.patch` as the source of truth.
+1. Perform the review yourself, inline — for the Haiku path do the two finder passes (correctness, security); for the specialist path do one focused pass per selected dimension — using `/tmp/pr_full_diff.patch` as the source of truth.
 2. Then **continue to steps 7 and "Posting the Review" exactly as normal** — a degraded analysis path must still post the report and inline comments. Producing a text summary and stopping is a failure.
 
 ### Self-check before emitting the report
 
-Before step 7, your conversation history should contain one `Task` (or `Agent`) tool result in the prior turn for **each reviewer selected in step 5** (`code-reviewer` plus whichever of `security-reviewer` / `test-reviewer` / `performance-reviewer` the gate kept). If a selected reviewer has no result *and* you did not take the documented fallback path above, you skipped it. Go back and do it. (A reviewer that step 5 deliberately skipped should have no result — that is correct.)
+Before step 7, your conversation history should contain a `Task` (or `Agent`) tool result in the prior turn for the path you ran: **two Haiku finders** (6A) or **one result per selected specialist** (6B). If those results are missing *and* you did not take the documented fallback above, you skipped the review. Go back and do it.
 
 ## 7. Compile Final Report
 

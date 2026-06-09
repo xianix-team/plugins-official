@@ -11,7 +11,7 @@
     "repository": "https://github.com/99x/xianix-team",
     "license": "MIT",
     "keywords": ["pr-review", "pull-request", "review", "code-quality", "security", "testing", "azure-devops", "github"],
-    "commands": ["./commands/pr-review.md", "./commands/code-review.md"],
+    "commands": ["./commands/pr-review.md"],
     "skills": "./skills/",
     "hooks": "./hooks/hooks.json",
     "outputStyles": "./styles/",

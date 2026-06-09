@@ -21,6 +21,16 @@ This template defines the structure for the compiled PR review report. The `/pr-
 
 ---
 
+### Re-review delta
+> Include this block **only in re-review mode** (a prior plugin review exists). Omit it entirely on the first review.
+
+Reviewed [N] new commit(s) since the last review (`[prior sha]`..`[current sha]`).
+- ✅ Fixed: [count] previously-flagged issue(s) resolved
+- ⏳ Still open: [count] carried-over issue(s)
+- 🆕 New: [count] issue(s) introduced since the last review
+
+---
+
 ### Summary
 [2-3 sentence overall assessment of the change]
 

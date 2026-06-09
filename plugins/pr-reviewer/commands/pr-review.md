@@ -16,19 +16,21 @@ Execute every step below autonomously and in order. Do not ask for confirmation,
 
 **Fix mode vs report mode:** if the invocation includes a `--fix` flag or the instruction explicitly says to fix issues, apply fixes and push (see *Applying Fixes*). Otherwise, compile and post the review report only.
 
+**Re-review awareness (first review vs. follow-up review).** Before reviewing, the command checks whether *this plugin* has already reviewed the PR (it stamps every comment it posts with a hidden marker — see *Comment markers* below). If a prior review is found, the run switches to **re-review mode**: it reconciles old findings against the current head (resolving the ones the author fixed, leaving the unresolved ones open without re-posting duplicates), focuses on the commits pushed since the last review, and posts a short re-review delta instead of a brand-new wall of comments. The first review of a PR always runs in **initial mode**. This is automatic; no flag is required. Set `PR_REVIEWER_RECONCILE=false` to force a full, stateless review that ignores prior findings.
+
 ## What This Does
 
 This command runs a **cost-tiered** review and posts the results back to the PR. The tier is chosen automatically from the diff (see step 5):
 
 - **Default — low-cost path:** two parallel Haiku finder agents scan the diff for correctness/regression bugs and security/edge-case issues; you then self-verify and keep the strongest findings (capped at 8). This is the path for ordinary PRs and keeps token cost low.
-- **Escalated — full specialist path:** when the diff touches a **high-risk surface** (auth/authz, payments/billing, crypto, DB migrations/schema, or public APIs), the dedicated specialized reviewers run instead for deeper coverage:
+- **Escalated — full specialist path:** when the diff touches a **high-risk surface** (auth/authz, payments/billing, crypto, DB migrations/schema, or public APIs), the dedicated specialized reviewers run instead for deeper coverage. They run on **mixed model tiers** so frontier-model spend goes only where it pays off (see *Model selection* in step 6B):
 
-| Reviewer | Focus |
-|----------|-------|
-| `code-reviewer` | Readability, naming, duplication, error handling, design patterns |
-| `security-reviewer` | OWASP Top 10, secrets, injection, auth/authz vulnerabilities |
-| `test-reviewer` | Coverage gaps, test quality, edge cases, missing regression tests |
-| `performance-reviewer` | N+1 queries, O(n²) loops, memory leaks, blocking I/O |
+| Reviewer | Focus | Model tier |
+|----------|-------|------------|
+| `code-reviewer` | Readability, naming, duplication, error handling, design patterns | quality (cheap, e.g. Haiku) |
+| `test-reviewer` | Coverage gaps, test quality, edge cases, missing regression tests | quality (cheap, e.g. Haiku) |
+| `security-reviewer` | OWASP Top 10, secrets, injection, auth/authz vulnerabilities | risk (frontier / lead's model) |
+| `performance-reviewer` | N+1 queries, O(n²) loops, memory leaks, blocking I/O | risk (frontier / lead's model) |
 
 Either way the outcome is identical downstream: a verdict, a summary comment, and **one inline comment per finding** posted to the detected platform.
 
@@ -49,6 +51,48 @@ The plugin auto-detects the hosting platform from your git remote URL:
 - **GitHub**: `gh` CLI installed and authenticated (see `docs/platform-setup.md`)
 - **Azure DevOps**: `AZURE_DEVOPS_TOKEN` environment variable set (see `docs/platform-setup.md`)
 - **Fix mode**: `GITHUB_TOKEN` (GitHub) or `AZURE_DEVOPS_TOKEN` (Azure DevOps) must be set for `git push`
+
+---
+
+# Comment markers and finding identity (read before posting)
+
+Re-review depends on the plugin being able to recognise its **own** previous comments and match each old finding to the current code. Two pieces of metadata make this possible. Both are written on **every** comment the plugin posts (initial *and* re-review) so that the *next* run can read them.
+
+### 1. The marker (identifies a comment as ours)
+
+Stamp every comment the plugin posts with a hidden marker string:
+
+```
+<!-- pr-reviewer:v1 kind=<finding|summary> fid=<finding-id> sha=<HEAD_SHA> -->
+```
+
+- `kind` — `finding` for an inline finding thread, `summary` for the PR-level report comment.
+- `fid` — the stable finding id (below). Omit for `kind=summary`.
+- `sha` — the `HEAD_SHA` the comment was generated against (lets the next run compute the incremental range).
+
+On **GitHub** the marker is an HTML comment appended to the comment body — it renders invisibly. On **Azure DevOps**, HTML comments are *not* reliably hidden, so the same fields are stored as thread **`properties`** (`pr-reviewer.kind`, `pr-reviewer.fid`, `pr-reviewer.sha`) instead of in the body. The provider files show the exact mechanics.
+
+Only comments carrying this marker are ever reconciled, replied to, or resolved by the plugin. Human review comments are never touched.
+
+### 2. The finding id `fid` (matches a finding across revisions)
+
+`fid` must be **deterministic** and **independent of line number** (lines drift as the author edits), so the same logical issue produces the same id on every run. Compute it from the file path plus a normalised issue signature:
+
+```bash
+# fid = first 12 hex of sha1( lowercased repo-relative path + "|" + normalised issue text )
+# Normalisation: lowercase, keep [a-z0-9 ], collapse runs of whitespace, trim.
+compute_fid() {  # args: <file> <issue-text>
+  python3 - "$1" "$2" <<'PY'
+import sys, re, hashlib
+path = sys.argv[1].strip().lower()
+issue = re.sub(r'[^a-z0-9 ]', ' ', sys.argv[2].lower())
+issue = re.sub(r'\s+', ' ', issue).strip()
+print(hashlib.sha1(f"{path}|{issue}".encode()).hexdigest()[:12])
+PY
+}
+```
+
+Use the **issue summary sentence** (not the code snippet, not the line) as the issue text. The same wording each run keeps the id stable; if the reviewer rephrases an issue slightly between runs it may be treated as new — acceptable, since the worst case is one duplicate rather than a missed regression.
 
 ---
 
@@ -180,7 +224,50 @@ Writing the diff to `/tmp/pr_full_diff.patch` lets you pass it by **path** to su
 
 Use `git show ${HEAD_SHA}:<filepath>` or the `Read` tool to read the full content of any file that requires deeper analysis beyond the patch.
 
-**Platform CLIs are not used in this step.** Use **`gh`** only when posting to GitHub and **`curl`/Azure DevOps REST** only when posting to Azure DevOps (see the provider docs and "Posting the Review" below).
+**Platform CLIs are not used in this diff step.** Use **`gh`** only when posting to GitHub and **`curl`/Azure DevOps REST** only when posting to Azure DevOps (see the provider docs and "Posting the Review" below).
+
+### Detect a prior review and compute the re-review range
+
+This is the one place reading platform PR comments is required, because it determines whether the run is an **initial** review or a **re-review**. Skip entirely on the generic platform (no API) and when `PR_REVIEWER_RECONCILE=false`.
+
+1. List the existing review comments/threads on the PR and keep only those carrying the plugin marker (`<!-- pr-reviewer:v1 ... -->` on GitHub, or the `pr-reviewer.*` thread properties on Azure DevOps). Use the platform helper:
+   - **GitHub** → `providers/github.md` → *Detecting a prior review* (GraphQL: review threads with `id`, `isResolved`, body, fid).
+   - **Azure DevOps** → `providers/azure-devops.md` → *Detecting a prior review* (`GET .../threads`, filter by `properties["pr-reviewer.fid"]`).
+
+2. Decide the mode:
+
+```bash
+# /tmp/pr_prior_findings.jsonl is written by the provider helper: one JSON object per
+# prior marked finding thread: {fid, status(open|resolved), thread_ref[, comment_ref]}.
+# Matching is by fid alone, so file/line are not needed here.
+# PRIOR_SUMMARY_SHA is the sha= from the most recent summary marker, or empty.
+if [ "${PR_REVIEWER_RECONCILE:-true}" = "false" ] || [ ! -s /tmp/pr_prior_findings.jsonl ]; then
+  REVIEW_MODE="initial"
+  RANGE_BASE="$BASE_SHA"
+else
+  REVIEW_MODE="rereview"
+  # New commits since the last review; fall back to BASE_SHA if the recorded sha is gone.
+  if [ -n "${PRIOR_SUMMARY_SHA:-}" ] && git cat-file -e "${PRIOR_SUMMARY_SHA}^{commit}" 2>/dev/null; then
+    RANGE_BASE="$PRIOR_SUMMARY_SHA"
+  else
+    RANGE_BASE="$BASE_SHA"
+  fi
+fi
+echo "Review mode: $REVIEW_MODE  |  incremental range: ${RANGE_BASE}..${HEAD_SHA}"
+export REVIEW_MODE RANGE_BASE
+```
+
+3. Capture the **incremental** diff (commits pushed since the last review) in addition to the full PR diff — it is what you skim first in re-review mode and what populates the "changed since last review" line in the delta:
+
+```bash
+if [ "$REVIEW_MODE" = "rereview" ] && [ "$RANGE_BASE" != "$BASE_SHA" ]; then
+  git log --oneline ${RANGE_BASE}..${HEAD_SHA}
+  git diff ${RANGE_BASE}...${HEAD_SHA} > /tmp/pr_incremental_diff.patch
+  echo "Incremental diff: $(wc -l < /tmp/pr_incremental_diff.patch) lines since last review"
+fi
+```
+
+> **Why review the full PR diff, not just the increment?** The full diff (`/tmp/pr_full_diff.patch`) stays the authoritative input to the reviewers so the *current* finding set is always complete — an unresolved finding in a file the latest commits didn't touch must still be detected so it stays open. The incremental diff focuses your attention and drives the delta summary; it does not replace the full scan. Reconciliation (step 7 / posting) compares the current finding set to the prior one **by `fid`**.
 
 ## 4. Index the Codebase (skip on small PRs)
 
@@ -306,12 +393,12 @@ Then emit **both Agent calls in the same assistant turn** (so they run in parall
 
 Deeper coverage for high-risk diffs. Run `code-reviewer` **always**; gate the other three by the changed-file mix so you never spawn a reviewer with nothing to do:
 
-| `subagent_type` | Focus | Run when the diff contains… | Skip when… |
-|---|---|---|---|
-| `code-reviewer` | Code quality, readability, maintainability | **always** | never |
-| `security-reviewer` | Vulnerabilities, secrets, input validation | source code, auth/authz, input handling, dependencies/lockfiles, IaC, any externally-reachable surface | the diff is **only** docs/markdown/images |
-| `test-reviewer` | Test coverage and test quality | source code with behaviour (functions/methods/classes) | the diff is **only** docs, config, or pure formatting/rename |
-| `performance-reviewer` | Bottlenecks, inefficiencies, resource usage | DB queries/ORM, loops over collections, I/O, hot paths, large data structures, algorithm changes | the diff is **only** docs/config, or trivial code with no data/IO/loops |
+| `subagent_type` | Focus | Model tier | Run when the diff contains… | Skip when… |
+|---|---|---|---|---|
+| `code-reviewer` | Code quality, readability, maintainability | **quality** (cheap) | **always** | never |
+| `test-reviewer` | Test coverage and test quality | **quality** (cheap) | source code with behaviour (functions/methods/classes) | the diff is **only** docs, config, or pure formatting/rename |
+| `security-reviewer` | Vulnerabilities, secrets, input validation | **risk** (frontier) | source code, auth/authz, input handling, dependencies/lockfiles, IaC, any externally-reachable surface | the diff is **only** docs/markdown/images |
+| `performance-reviewer` | Bottlenecks, inefficiencies, resource usage | **risk** (frontier) | DB queries/ORM, loops over collections, I/O, hot paths, large data structures, algorithm changes | the diff is **only** docs/config, or trivial code with no data/IO/loops |
 
 `package.json`/`*.csproj`/lockfile changes are **not** docs — they keep `security-reviewer` in scope (dependency risk). When uncertain whether a reviewer applies, **run it**.
 
@@ -324,7 +411,23 @@ In **one assistant turn**, emit one parallel sub-agent invocation per selected r
 
 > **Pass-by-value vs path:** if `DIFF_LINES ≤ 300`, pass the diff **inline** in each prompt (cheaper than each sub-agent re-opening a shared file); if `DIFF_LINES > 300`, pass the path `/tmp/pr_full_diff.patch`.
 
-> **Model selection:** reviewer agents declare `model: inherit`. Respect `PR_REVIEWER_MODEL` when set (use it for every reviewer); otherwise — because this path was chosen for high-risk changes — use the lead's default/inherited model for accuracy. A single explicit model applies to all selected reviewers in the same turn.
+> **Model selection (mixed-model tiering).** The reviewers split into two model tiers so you don't pay frontier-model rates for the cheaper review dimensions. Set each sub-agent's `model` from its tier (per the table above), resolved with this precedence:
+>
+> 1. **`PR_REVIEWER_MODEL` (override).** If set, it pins **every** reviewer to that one model — backward-compatible escape hatch, ignores the tiers below.
+> 2. Otherwise, per tier:
+>    - **quality tier** (`code-reviewer`, `test-reviewer`) → `PR_REVIEWER_QUALITY_MODEL` if set, else `claude-haiku-4-5`. These are pattern/coverage tasks that a small model handles well.
+>    - **risk tier** (`security-reviewer`, `performance-reviewer`) → `PR_REVIEWER_RISK_MODEL` if set, else the lead's default/inherited model. Vulnerability and performance reasoning is where frontier accuracy actually pays off — this path was chosen *because* the diff is high-risk.
+>
+> ```bash
+> RISK_MODEL="${PR_REVIEWER_RISK_MODEL:-inherit}"          # frontier / lead's model by default
+> QUALITY_MODEL="${PR_REVIEWER_QUALITY_MODEL:-claude-haiku-4-5}"
+> if [ -n "${PR_REVIEWER_MODEL:-}" ]; then                 # override: one model for all
+>   RISK_MODEL="$PR_REVIEWER_MODEL"; QUALITY_MODEL="$PR_REVIEWER_MODEL"
+> fi
+> echo "Reviewer models — quality: $QUALITY_MODEL | risk: $RISK_MODEL"
+> ```
+>
+> Emit each reviewer in the same turn with its tier's model in the invocation (`"model": "<quality-or-risk>"`). When the resolved value is the sentinel `inherit`, **omit** the `model` field entirely so the agent's `model: inherit` frontmatter takes over (the lead's model) — do not pass the literal string `inherit` as a model slug. Reviewers in different tiers therefore run on different models within the same parallel turn — that is intended.
 
 Wait for all selected sub-agents to return, then go to step 7.
 
@@ -363,6 +466,39 @@ Aggregate all findings into the structured report format defined in `styles/repo
 - Consider the PR's stated intent when evaluating trade-offs
 - Group related issues together rather than repeating similar findings
 
+### Assign a `fid` to every current finding
+
+For each finding in the compiled report, compute its `fid` with the `compute_fid` helper (see *Comment markers and finding identity*) from its file path and issue summary sentence. This is required in **both** modes — the markers written this run are what the *next* run reconciles against.
+
+### Reconcile against the prior review (re-review mode only)
+
+When `REVIEW_MODE=rereview`, classify by comparing the current finding set to `/tmp/pr_prior_findings.jsonl` **by `fid`**:
+
+| Bucket | Condition | Posting action (see "Posting the Review") |
+|---|---|---|
+| **Carried-over** | prior `fid` is still in the current finding set | Leave the existing thread open. **Do not post a duplicate.** |
+| **Fixed** | prior `fid` (status `open`) is **absent** from the current finding set | Reply "resolved as of `<HEAD_SHA>`" on the existing thread and mark it resolved. |
+| **New** | current `fid` not present in the prior set | Post a new inline thread (with marker). |
+| **Already-resolved** | prior `fid` whose thread is already resolved | Ignore — no action. |
+
+Write the three actionable buckets to `/tmp/pr_reconcile.json` (`{"fixed":[...], "carried_over":[...], "new":[...]}`, each entry keyed by `fid` with its `thread_ref`/`comment_ref` from the prior file) so the posting step can act on them without recomputing.
+
+Then prepend a **Re-review delta** block to the report body (above the Summary), using the template's re-review section:
+
+```
+### Re-review delta
+Reviewed N new commit(s) since the last review (`<RANGE_BASE>`..`<HEAD_SHA>`).
+- ✅ Fixed: <count> previously-flagged issue(s) resolved
+- ⏳ Still open: <count> carried-over issue(s)
+- 🆕 New: <count> issue(s) introduced since the last review
+```
+
+In **initial mode** skip reconciliation entirely — every finding is "New" and there is no delta block.
+
+### Recompute the verdict from the *currently open* set
+
+The verdict reflects the finding set at `HEAD` after reconciliation — i.e. carried-over + new findings (fixed ones no longer count). A re-review where the author fixed the last blocker should now produce `APPROVE`.
+
 ---
 
 # Applying Fixes (Fix Mode Only)
@@ -400,15 +536,27 @@ Use the platform-appropriate method from the Posting the Review section below wi
 
 # Posting the Review
 
-After compiling the report (and applying fixes if in fix mode), post it to the platform detected in Step 1 immediately without waiting for user input. Posting has **three** sub-steps that are all mandatory when the platform supports them — the run is incomplete if any are skipped.
+After compiling the report (and applying fixes if in fix mode), post it to the platform detected in Step 1 immediately without waiting for user input. Posting has the sub-steps below; all are mandatory when the platform supports them and the run is incomplete if any are skipped. Sub-step **R** runs only in re-review mode.
 
 | # | Sub-step | GitHub | Azure DevOps | Generic |
 |---|---|---|---|---|
 | A | Cast the verdict / vote | `gh pr review` flag | `PUT .../reviewers/{id}` with vote | n/a |
-| B | Post the full report body as one PR-level comment | `gh pr review --body` | `POST .../threads` (no `threadContext`) | write to `pr-review-report.md` |
-| C | Post **one inline thread per finding** with a file path and line number | `gh api .../pulls/<n>/comments` per finding | `POST .../threads` with `threadContext` per finding | n/a (skip with note) |
+| B | Post the full report body (incl. delta) as one PR-level comment, **with the summary marker** | `gh pr review --body` | `POST .../threads` (no `threadContext`) | write to `pr-review-report.md` |
+| R | **Re-review only:** reconcile prior findings — resolve **Fixed** threads (with a reply), leave **Carried-over** threads open (no duplicate) | reply + `resolveReviewThread` (GraphQL) | reply + `PATCH .../threads/{id}` `status:fixed` | n/a |
+| C | Post **one inline thread per finding** (initial mode: every finding; re-review mode: **only the New bucket**), **each with a finding marker** | `gh api .../pulls/<n>/comments` per finding | `POST .../threads` with `threadContext` per finding | n/a (skip with note) |
 
-**C is not optional** when the report contains Critical Issues, Warnings, or Suggestions with `path/to/file.ext:NN` references. The whole point of the four specialized reviewers is to surface findings inline next to the offending code; collapsing them into the summary thread defeats the plugin's value. If you find yourself about to print "Review posted" without having posted inline comments, stop and go back to sub-step C.
+**C is not optional** when there are findings to post (initial mode: all findings with `path/to/file.ext:NN`; re-review mode: the New bucket). The whole point of the specialized reviewers is to surface findings inline next to the offending code; collapsing them into the summary thread defeats the plugin's value. If you find yourself about to print "Review posted" without having posted the due inline comments, stop and go back to sub-step C.
+
+**Every comment the plugin posts in B and C must carry its marker** (summary marker on B, finding marker with the finding's `fid` on C — see *Comment markers and finding identity*). A run that posts comments without markers breaks the next re-review (it will re-post everything as duplicates). The provider files show exactly where the marker goes for each call.
+
+### Sub-step R — reconcile prior findings (re-review mode only)
+
+Skip in initial mode and on the generic platform. Drive this from `/tmp/pr_reconcile.json` (built in step 7):
+
+- **Fixed** (`fixed[]`): for each, post a short reply on the existing thread — e.g. `✅ Resolved as of \`<HEAD_SHA>\`` — then mark the thread resolved/fixed. Use the platform mechanics in the provider file's *Reconciling prior findings* section.
+- **Carried-over** (`carried_over[]`): take **no** action. The thread is already open; do not reply on every run (avoid notification spam) and never re-post the finding as a new thread.
+
+Track a counter (`RESOLVED_OK` / `RESOLVED_FAIL`) the same way inline posting does, and include resolved-count in the final confirmation line.
 
 ### Resolve every finding to a post-change file line (do this before sub-step C)
 
@@ -432,15 +580,19 @@ Read and follow the instructions in the appropriate provider file:
 
 ### Post-posting self-check (do this before printing the confirmation line)
 
-Count the findings in the compiled report that have a `path/to/file.ext:NN` reference (sum across Critical Issues, Warnings, Suggestions) — call this `EXPECTED_INLINE`. Then compare against the inline-thread counter exported by the provider (`INLINE_OK` on Azure DevOps; the count of successful `gh api .../comments` POSTs on GitHub).
+Determine `EXPECTED_INLINE`: in **initial mode** it is the count of findings in the report with a `path/to/file.ext:NN` reference (sum across Critical Issues, Warnings, Suggestions); in **re-review mode** it is the size of the **New** bucket only (carried-over findings are intentionally not re-posted). Then compare against the inline-thread counter exported by the provider (`INLINE_OK` on Azure DevOps; the count of successful `gh api .../comments` POSTs on GitHub).
 
 - If `INLINE_OK` is `0` and `EXPECTED_INLINE` is `> 0`: posting failed silently. Surface the failure log (`/tmp/pr_inline_failures.log` on Azure DevOps) and treat the run as a partial failure.
 - If `INLINE_OK` is much smaller than `EXPECTED_INLINE`: read the failure log and either retry the failed ones or include them in the output diagnostic.
 
-After posting, output a single confirmation line that uses the **actual** inline count, not a hard-coded one:
+After posting, output a single confirmation line that uses the **actual** inline count, not a hard-coded one. In re-review mode also report the reconciliation outcome:
 
 ```
+# initial mode
 Review posted on PR #<number>: <verdict> — <INLINE_OK>/<EXPECTED_INLINE> inline comments — <URL>
+
+# re-review mode
+Re-review posted on PR #<number>: <verdict> — <INLINE_OK>/<EXPECTED_INLINE> new — <RESOLVED_OK> resolved — <carried_over count> still open — <URL>
 ```
 
 If `INLINE_OK < EXPECTED_INLINE`, append a second line:

@@ -236,6 +236,60 @@ Use `$PR_TARGET` as the **base branch** for diffs. Resolve it to a concrete SHA 
 
 ---
 
+## Detecting a prior review (re-review awareness)
+
+Called from Step 3 of `commands/pr-review.md` to decide initial vs. re-review mode. On Azure DevOps the plugin's identity metadata lives in thread **`properties`** (HTML comments are not reliably hidden in the web UI), so detection reads `properties["pr-reviewer.fid"]` rather than scanning comment text.
+
+```bash
+curl -sS -u ":${AZURE_DEVOPS_TOKEN}" \
+  "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads?api-version=7.1" \
+  > /tmp/pr_threads.json
+
+# Our marked finding threads → /tmp/pr_prior_findings.jsonl
+python3 - <<'PY' > /tmp/pr_prior_findings.jsonl
+import json
+data = json.load(open('/tmp/pr_threads.json'))
+def prop(props, key):
+    v = (props or {}).get(key)
+    if isinstance(v, dict):      # PropertiesCollection form: {"$type":..,"$value":..}
+        return v.get("$value")
+    return v
+for t in data.get("value", []):
+    props = t.get("properties") or {}
+    if prop(props, "pr-reviewer.kind") != "finding":
+        continue
+    fid = prop(props, "pr-reviewer.fid")
+    if not fid:
+        continue
+    # Azure status enum: active|fixed|wontFix|closed|byDesign|pending
+    status = t.get("status", "active")
+    print(json.dumps({
+        "fid": fid,
+        "status": "resolved" if status in ("fixed", "closed", "wontFix", "byDesign") else "open",
+        "thread_ref": t["id"],   # numeric thread id — used for PATCH + reply
+    }))
+PY
+
+# Most-recent summary marker sha (a thread with pr-reviewer.kind=summary)
+PRIOR_SUMMARY_SHA=$(python3 - <<'PY'
+import json
+data = json.load(open('/tmp/pr_threads.json'))
+def prop(props, key):
+    v = (props or {}).get(key)
+    return v.get("$value") if isinstance(v, dict) else v
+shas = [prop(t.get("properties") or {}, "pr-reviewer.sha")
+        for t in data.get("value", [])
+        if prop(t.get("properties") or {}, "pr-reviewer.kind") == "summary"]
+print([s for s in shas if s][-1] if any(shas) else "")
+PY
+)
+export PRIOR_SUMMARY_SHA
+```
+
+If `/tmp/pr_prior_findings.jsonl` is empty, the run is an **initial** review. Reconciliation matches on `fid` only, so `file`/`line` are not needed here.
+
+---
+
 ## Markdown in PR threads
 
 This plugin posts via the **Git** [Pull Request Threads](https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pull-request-threads/create?view=azure-devops-rest-7.1) API (`.../pullrequests/.../threads`). That is **not** the same as Work Item Tracking discussion comments.
@@ -376,13 +430,17 @@ cat > /tmp/pr_thread_body.md <<'REPORT'
 ${REPORT_BODY}
 REPORT
 
-python3 - <<'PY' > /tmp/pr_thread_payload.json
-import json
+HEAD_SHA=$(git rev-parse HEAD) python3 - <<'PY' > /tmp/pr_thread_payload.json
+import json, os
 body = open('/tmp/pr_thread_body.md').read()
 print(json.dumps({
     "comments": [{"content": body, "commentType": 1}],
     "status": "active",
-    "properties": {"Microsoft.TeamFoundation.Discussion.SupportsMarkdown": 1},
+    "properties": {
+        "Microsoft.TeamFoundation.Discussion.SupportsMarkdown": 1,
+        "pr-reviewer.kind": "summary",
+        "pr-reviewer.sha": os.environ["HEAD_SHA"],
+    },
 }))
 PY
 
@@ -393,6 +451,8 @@ curl -sS -w "\nHTTP_STATUS:%{http_code}\n" \
   "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads?api-version=7.1"
 ```
 
+> The `pr-reviewer.kind` / `pr-reviewer.sha` properties are the summary marker — they let the next run find this thread and read the head it was generated against. The re-review delta block is already in `${REPORT_BODY}` from step 7. Each re-review posts a fresh summary thread; the prior summary stays as history.
+
 ### 4. Post inline comments (one thread per finding) — MANDATORY
 
 This step is mandatory whenever the report contains at least one Critical Issue, Warning, or Suggestion with a file path and line number. **Skipping it is a P0 bug** — the whole point of running four specialized reviewers is to surface findings inline next to the offending code, not just bury them in a summary thread.
@@ -401,22 +461,23 @@ Use the loop below — do not try to "remember" the findings and post them with 
 
 #### a. Serialize findings to JSONL
 
-After compiling the report (step 7 of `commands/pr-review.md`), write **one JSON object per finding** to `/tmp/pr_inline_findings.jsonl`. Each object must have:
+After compiling the report (step 7 of `commands/pr-review.md`), write **one JSON object per finding** to `/tmp/pr_inline_findings.jsonl`. In **re-review mode** serialize only the **New** bucket (`/tmp/pr_reconcile.json` → `new[]`); carried-over findings are not re-posted. Each object must have:
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `file` | string | yes | Repo-relative path. The script prepends `/` automatically. |
 | `line` | int | yes | 1-indexed line number on the **right** (post-change) side of the diff. |
 | `body` | string | yes | Markdown body of the comment. Must include severity tag, e.g. `**[CRITICAL]** ...`. |
+| `fid` | string | yes | Stable finding id from step 7 (`compute_fid`). Stored as a thread property. |
 | `severity` | string | no | `critical` / `warning` / `suggestion` — used only for the summary log. |
 
 ```bash
 python3 - <<'PY' > /tmp/pr_inline_findings.jsonl
 import json
 findings = [
-    {"file": "Xians.Lib/Agents/Core/ActivityRegistrar.cs", "line": 62, "severity": "critical",
+    {"file": "Xians.Lib/Agents/Core/ActivityRegistrar.cs", "line": 62, "severity": "critical", "fid": "a1b2c3d4e5f6",
      "body": "**[CRITICAL] Sync-over-async deadlock risk**\n\n`.GetAwaiter().GetResult()` on `GetClientAsync()` in a sync context is a well-known deadlock pattern..."},
-    # ... one entry per Critical / Warning / Suggestion with a precise file:line ...
+    # ... one entry per finding to post (initial: all; re-review: New bucket only) ...
 ]
 for f in findings:
     print(json.dumps(f))
@@ -436,13 +497,18 @@ while IFS= read -r line; do
   INLINE_TOTAL=$((INLINE_TOTAL + 1))
 
   echo "$line" > /tmp/pr_inline_finding.json
-  python3 - <<'PY' > /tmp/pr_thread_payload.json
-import json
+  HEAD_SHA=$(git rev-parse HEAD) python3 - <<'PY' > /tmp/pr_thread_payload.json
+import json, os
 f = json.load(open('/tmp/pr_inline_finding.json'))
 print(json.dumps({
     "comments": [{"content": f["body"], "commentType": 1}],
     "status": "active",
-    "properties": {"Microsoft.TeamFoundation.Discussion.SupportsMarkdown": 1},
+    "properties": {
+        "Microsoft.TeamFoundation.Discussion.SupportsMarkdown": 1,
+        "pr-reviewer.kind": "finding",
+        "pr-reviewer.fid": f.get("fid", ""),
+        "pr-reviewer.sha": os.environ["HEAD_SHA"],
+    },
     "threadContext": {
         "filePath": "/" + f["file"].lstrip("/"),
         "rightFileStart": {"line": int(f["line"]), "offset": 1},
@@ -494,12 +560,66 @@ If `INLINE_OK` is `0` while `INLINE_TOTAL` is `> 0`, every POST failed. Read `/t
 
 ---
 
+## Reconciling prior findings (re-review mode only — sub-step R)
+
+Runs only when `REVIEW_MODE=rereview`. Acts on `/tmp/pr_reconcile.json` (built in step 7 of `commands/pr-review.md`). Carried-over findings need **no** action; only the **Fixed** bucket is processed — reply on the thread, then set its status to `fixed`.
+
+Azure DevOps thread status is updated with a `PATCH` on the thread; replies are a `POST` of a comment to the existing thread (no `threadContext`).
+
+```bash
+RESOLVED_OK=0
+RESOLVED_FAIL=0
+HEAD_SHA=$(git rev-parse HEAD)
+: > /tmp/pr_resolved.log
+
+python3 -c "import json,sys; [print(json.dumps(x)) for x in json.load(open('/tmp/pr_reconcile.json')).get('fixed',[])]" \
+| while IFS= read -r f; do
+  THREAD_ID=$(echo "$f" | python3 -c "import sys,json; print(json.load(sys.stdin)['thread_ref'])")
+
+  # 1. Reply on the existing thread
+  cat > /tmp/pr_resolve_body.md <<BODY
+✅ Resolved as of \`${HEAD_SHA}\`. This finding no longer reproduces against the current head.
+BODY
+  python3 - <<'PY' > /tmp/pr_resolve_payload.json
+import json
+print(json.dumps({"content": open('/tmp/pr_resolve_body.md').read(), "commentType": 1}))
+PY
+  curl -sS -o /dev/null \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Basic $(echo -n ":${AZURE_DEVOPS_TOKEN}" | base64 -w0)" \
+    -X POST --data @/tmp/pr_resolve_payload.json \
+    "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads/${THREAD_ID}/comments?api-version=7.1"
+
+  # 2. Set thread status to fixed
+  RESP=$(curl -sS -w "\nHTTP_STATUS:%{http_code}" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Basic $(echo -n ":${AZURE_DEVOPS_TOKEN}" | base64 -w0)" \
+    -X PATCH -d '{"status":"fixed"}' \
+    "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads/${THREAD_ID}?api-version=7.1")
+  STATUS=$(echo "$RESP" | sed -n 's/^HTTP_STATUS://p')
+  if echo "$STATUS" | grep -qE '^2'; then echo ok >> /tmp/pr_resolved.log; else echo "fail $THREAD_ID HTTP $STATUS" >> /tmp/pr_resolved.log; fi
+done
+
+RESOLVED_OK=$(grep -c '^ok' /tmp/pr_resolved.log 2>/dev/null || echo 0)
+RESOLVED_FAIL=$(grep -c '^fail' /tmp/pr_resolved.log 2>/dev/null || echo 0)
+export RESOLVED_OK RESOLVED_FAIL
+echo "Reconciled: ${RESOLVED_OK} prior finding(s) resolved (${RESOLVED_FAIL} failed)"
+```
+
+> **`status` values:** `active` (open), `fixed` (resolved by a change), `wontFix`, `closed`, `byDesign`, `pending`. Use `fixed` when the finding no longer reproduces. The counter is read back from `/tmp/pr_resolved.log` because the `while` loop runs in a pipeline subshell.
+
+---
+
 ## Output
 
 On completion, use the counters from the inline-comment loop in step 4 (`$INLINE_OK` / `$INLINE_TOTAL`) — do **not** print a hard-coded number.
 
 ```
+# initial mode
 Review posted on PR #<id>: <verdict> — ${INLINE_OK}/${INLINE_TOTAL} inline comments — ${API_BASE}/_git/${AZURE_REPO}/pullrequest/<id>
+
+# re-review mode (add reconciliation counters)
+Re-review posted on PR #<id>: <verdict> — ${INLINE_OK}/${INLINE_TOTAL} new — ${RESOLVED_OK} resolved — ${API_BASE}/_git/${AZURE_REPO}/pullrequest/<id>
 ```
 
 If `INLINE_OK == 0` but the report had findings with file:line references, treat the run as a partial failure and surface the first few lines of `/tmp/pr_inline_failures.log` in the output so the user knows the inline step did not actually deliver.

@@ -11,7 +11,7 @@ This skill is a thin alias for the `/pr-review` command. Run the full procedure 
 
 1. Detect the hosting platform from `git remote get-url origin`
 2. Post a "review in progress" comment
-3. Gather PR context using git (diffs, commits, changed files)
+3. Gather PR context using git (diffs, commits, changed files), and **detect whether the plugin already reviewed this PR**. If so, the run switches to re-review mode: it reconciles prior findings (resolving the ones now fixed, leaving carried-over ones open without duplicating them), focuses on commits pushed since the last review, and posts a re-review delta. Set `PR_REVIEWER_RECONCILE=false` to force a stateless full review.
 4. Index the codebase structure (skipped on small PRs)
 5. Launch the relevant specialized sub-agent reviews in parallel (spawned by you, the top-level agent). `code-reviewer` always runs; the other three are gated by the change type (docs-only / config-only PRs skip the reviewers that don't apply — see step 5 of `commands/pr-review.md`):
    - **code-reviewer** — Code quality, readability, naming, duplication, error handling

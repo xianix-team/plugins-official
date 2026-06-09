@@ -139,7 +139,12 @@ The verdict label, Critical Issues section, and inline comments are identical in
 | Variable | Default | Purpose |
 |---|---|---|
 | `PR_REVIEWER_BLOCK_ON_CRITICAL` | `false` | Advisory by default: CRITICAL findings post a non-blocking review (GitHub `--comment`, Azure DevOps vote `-5`). Set to `true` to post a blocking review (GitHub `--request-changes`, Azure DevOps vote `-10`). See above. |
-| `PR_REVIEWER_MODEL` | unset | Pins the model used by the four reviewer sub-agents (e.g. `claude-haiku-4-5`). When unset, the reviewers are tiered by diff size: small PRs (≤ 300 diff lines) use a fast low-cost model; larger or high-risk PRs use the lead's inherited model. See step 6 of `commands/pr-review.md`. |
+| `PR_REVIEWER_MODEL` | unset | **Override:** pins *every* reviewer sub-agent to one model (e.g. `claude-haiku-4-5`), ignoring the tiers below. Use it to force a single model for the whole review. |
+| `PR_REVIEWER_QUALITY_MODEL` | `claude-haiku-4-5` | Model for the **quality-tier** reviewers (`code-reviewer`, `test-reviewer`) on the escalated specialist path — pattern/coverage tasks a small model handles well. Ignored if `PR_REVIEWER_MODEL` is set. |
+| `PR_REVIEWER_RISK_MODEL` | lead's inherited model | Model for the **risk-tier** reviewers (`security-reviewer`, `performance-reviewer`) on the escalated specialist path — vulnerability/performance reasoning where frontier accuracy pays off. Ignored if `PR_REVIEWER_MODEL` is set. |
+
+> **How the review picks a model.** Ordinary PRs use the cheap default path (two `claude-haiku-4-5` finders) regardless of these variables. Only when the diff touches a **high-risk surface** (auth, crypto, payments, migrations, public APIs) does the plugin escalate to the four specialist reviewers, which then split across the quality/risk tiers above. The tier is chosen by *risk surface*, not diff size. See steps 5–6 of `commands/pr-review.md`.
+| `PR_REVIEWER_RECONCILE` | `true` | Re-review awareness. When the plugin has already reviewed a PR (detected via its own comment markers), a follow-up run reconciles prior findings — resolving the ones the author fixed, leaving unresolved ones open without re-posting duplicates, and reviewing only the commits pushed since the last review. Set to `false` to force a stateless full review every time. GitHub and Azure DevOps only (the generic provider just regenerates the report file). See *Comment markers and finding identity* in `commands/pr-review.md`. |
 
 ---
 

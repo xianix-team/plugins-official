@@ -53,11 +53,14 @@ Do not ask for confirmation at any point. Execute all steps autonomously and pro
    | `REQUEST CHANGES` | `COMMENT` (default) / `REQUEST_CHANGES` if `PR_REVIEWER_BLOCK_ON_CRITICAL=true` | `-5` (default) / `-10` if `PR_REVIEWER_BLOCK_ON_CRITICAL=true` |
    | `NEEDS DISCUSSION` | `COMMENT` | `-5` |
 
-4. **Post the review** (three sub-steps, all mandatory when supported by the platform)
+4. **Post the review** (sub-steps, all mandatory when supported by the platform)
+
+   First, unless `PR_REVIEWER_RECONCILE=false`, run the provider's **Detecting a prior review** step. If marked prior findings exist, this is a **re-review**: reconcile them (resolve the ones now fixed, leave carried-over ones open, post only genuinely new findings). See *Comment markers and finding identity* and *Reconciling prior findings* in `commands/pr-review.md` and the provider files.
 
    1. Cast the verdict / vote (GitHub review flag, Azure DevOps reviewer PUT — see provider).
-   2. Post the full report body as one PR-level comment.
-   3. **Post one inline thread per finding** that has a `path/to/file.ext:NN` reference. This is mandatory — skipping it collapses every finding into the summary thread and defeats the purpose of the review.
+   2. Post the full report body (with the re-review delta block when applicable) as one PR-level comment, **carrying the summary marker**.
+   3. **(Re-review only) Reconcile prior findings** — reply on + resolve the threads whose findings are now fixed; do not re-post carried-over findings.
+   4. **Post one inline thread per finding** that has a `path/to/file.ext:NN` reference (initial mode: every finding; re-review mode: only the New bucket), **each carrying its finding marker**. This is mandatory — skipping it collapses every finding into the summary thread and defeats the purpose of the review.
 
    Follow the instructions in the appropriate provider file:
 

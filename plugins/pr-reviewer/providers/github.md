@@ -46,6 +46,61 @@ REPO=$(echo "$REMOTE"  | sed 's|https://github.com/||;s|git@github.com:||' | cut
 
 ---
 
+## Detecting a prior review (re-review awareness)
+
+Called from Step 3 of `commands/pr-review.md` to decide initial vs. re-review mode. It reads the plugin's **own** previous comments (identified by the `<!-- pr-reviewer:v1 ... -->` marker) and writes a normalised prior-findings file the reconciliation step consumes.
+
+GitHub's REST review-comments endpoint returns comment bodies and ids but **not** the review-thread node id needed to resolve a thread. GraphQL returns both, so use it:
+
+```bash
+gh api graphql -f query='
+  query($owner:String!, $repo:String!, $pr:Int!) {
+    repository(owner:$owner, name:$repo) {
+      pullRequest(number:$pr) {
+        reviewThreads(first:100) {
+          nodes {
+            id
+            isResolved
+            comments(first:1) { nodes { databaseId body } }
+          }
+        }
+      }
+    }
+  }' -F owner="$OWNER" -F repo="$REPO" -F pr="$PR_NUMBER" > /tmp/pr_review_threads.json
+
+# Extract our marked finding threads → /tmp/pr_prior_findings.jsonl
+python3 - <<'PY' > /tmp/pr_prior_findings.jsonl
+import json, re
+data = json.load(open('/tmp/pr_review_threads.json'))
+threads = data['data']['repository']['pullRequest']['reviewThreads']['nodes']
+pat = re.compile(r'<!--\s*pr-reviewer:v1\s+kind=finding\s+fid=(\S+)\s+sha=(\S+)\s*-->')
+for t in threads:
+    c = (t['comments']['nodes'] or [None])[0]
+    if not c:
+        continue
+    m = pat.search(c['body'] or '')
+    if not m:
+        continue
+    print(json.dumps({
+        "fid": m.group(1),
+        "status": "resolved" if t['isResolved'] else "open",
+        "thread_ref": t['id'],            # GraphQL node id — used by resolveReviewThread
+        "comment_ref": c['databaseId'],   # REST comment id — used to post a reply
+    }))
+PY
+
+# Most-recent summary marker sha (PR-level review/issue comments carry kind=summary)
+PRIOR_SUMMARY_SHA=$(gh api "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/comments" --paginate \
+  --jq '.[].body' 2>/dev/null \
+  | grep -oE 'pr-reviewer:v1 kind=summary[^>]*sha=[0-9a-f]+' \
+  | tail -1 | grep -oE 'sha=[0-9a-f]+' | cut -d= -f2)
+export PRIOR_SUMMARY_SHA
+```
+
+If `/tmp/pr_prior_findings.jsonl` is empty, the run is an **initial** review. The `file`/`line` fields are intentionally omitted here — reconciliation matches on `fid` alone, so they are not needed.
+
+---
+
 ## Posting the “review in progress” comment
 
 ```bash
@@ -114,6 +169,12 @@ esac
 gh pr review <pr-number> $REVIEW_FLAG --body "$(cat /tmp/pr_review_body.md)"
 ```
 
+> **Stamp the summary marker.** Before posting, append the summary marker to `/tmp/pr_review_body.md` so the next run can find this review and read the head it was generated against:
+> ```bash
+> printf '\n\n<!-- pr-reviewer:v1 kind=summary sha=%s -->\n' "$(git rev-parse HEAD)" >> /tmp/pr_review_body.md
+> ```
+> Each re-review posts a *new* review event (idiomatic on GitHub — reviews are timestamped), with the re-review delta block already at the top of the body from step 7. There is no need to edit the previous review.
+
 ### Inline comments (one thread per finding) — MANDATORY
 
 This step is mandatory whenever the report contains at least one Critical Issue, Warning, or Suggestion with a `path/to/file.ext:NN` reference. Skipping it collapses every finding into the summary review and defeats the purpose of running the specialized reviewers.
@@ -124,27 +185,30 @@ Do **not** post inline comments with ad-hoc one-off `gh api` calls you "remember
 
 #### a. Serialize findings to JSONL
 
-After compiling the report, write **one JSON object per finding** to `/tmp/pr_inline_findings.jsonl`. Each object must have:
+After compiling the report, write **one JSON object per finding** to `/tmp/pr_inline_findings.jsonl`. In **re-review mode** serialize only the **New** bucket (`/tmp/pr_reconcile.json` → `new[]`); carried-over findings are not re-posted. Each object must have:
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `file` | string | yes | Repo-relative path (matches an entry in `/tmp/pr_changed_files.txt`). |
 | `line` | int | yes | Post-change (right-side) file line number. |
 | `body` | string | yes | Markdown body. Include the severity tag, e.g. `**[CRITICAL]** ...`. |
+| `fid` | string | yes | Stable finding id from step 7 (`compute_fid`). Goes into the marker. |
 | `severity` | string | no | `critical` / `warning` / `suggestion` — used only for the summary log. |
 
 ```bash
 python3 - <<'PY' > /tmp/pr_inline_findings.jsonl
 import json
 findings = [
-    {"file": "src/auth/login.ts", "line": 42, "severity": "critical",
+    {"file": "src/auth/login.ts", "line": 42, "severity": "critical", "fid": "a1b2c3d4e5f6",
      "body": "**[CRITICAL] SQL injection**\n\nUser input is concatenated into the query..."},
-    # ... one entry per Critical / Warning / Suggestion with a precise post-change file:line ...
+    # ... one entry per finding to post (initial: all; re-review: New bucket only) ...
 ]
 for f in findings:
     print(json.dumps(f))
 PY
 ```
+
+> **Stamp the finding marker.** The posting loop below appends `<!-- pr-reviewer:v1 kind=finding fid=<fid> sha=<HEAD_SHA> -->` to each comment body. This is what lets the *next* re-review recognise the comment and reconcile it — a comment posted without it is invisible to reconciliation and will be duplicated next run.
 
 #### b. Loop and POST, one comment per finding, with HTTP status checks
 
@@ -161,7 +225,10 @@ while IFS= read -r line; do
 
   F_PATH=$(echo "$line" | python3 -c "import sys,json; print(json.load(sys.stdin)['file'])")
   F_LINE=$(echo "$line" | python3 -c "import sys,json; print(json.load(sys.stdin)['line'])")
+  F_FID=$(echo "$line"  | python3 -c "import sys,json; print(json.load(sys.stdin).get('fid',''))")
   echo "$line" | python3 -c "import sys,json; print(json.load(sys.stdin)['body'])" > /tmp/pr_inline_body.md
+  # Append the hidden finding marker so the next re-review can reconcile this comment.
+  printf '\n\n<!-- pr-reviewer:v1 kind=finding fid=%s sha=%s -->\n' "$F_FID" "$COMMIT_ID" >> /tmp/pr_inline_body.md
 
   RESP=$(gh api "repos/${OWNER}/${REPO}/pulls/${PR_NUMBER}/comments" \
     --method POST \
@@ -210,12 +277,59 @@ If POSTs fail, read `/tmp/pr_inline_failures.log` and check the `gh api` error:
 
 ---
 
+## Reconciling prior findings (re-review mode only — sub-step R)
+
+Runs only when `REVIEW_MODE=rereview`. Acts on `/tmp/pr_reconcile.json` (built in step 7 of `commands/pr-review.md`). Carried-over findings need **no** action — only the **Fixed** bucket is processed here: reply on the thread, then resolve it.
+
+```bash
+HEAD_SHA=$(git rev-parse HEAD)
+: > /tmp/pr_resolved.log
+
+# fixed[] entries carry: fid, comment_ref (REST databaseId), thread_ref (GraphQL node id)
+python3 -c "import json,sys; [print(json.dumps(x)) for x in json.load(open('/tmp/pr_reconcile.json')).get('fixed',[])]" \
+| while IFS= read -r f; do
+  COMMENT_ID=$(echo "$f" | python3 -c "import sys,json; print(json.load(sys.stdin)['comment_ref'])")
+  THREAD_ID=$(echo  "$f" | python3 -c "import sys,json; print(json.load(sys.stdin)['thread_ref'])")
+
+  # 1. Reply on the existing review thread (in_reply_to the original comment)
+  gh api "repos/${OWNER}/${REPO}/pulls/${PR_NUMBER}/comments/${COMMENT_ID}/replies" \
+    --method POST \
+    --field body="✅ Resolved as of \`${HEAD_SHA}\`. This finding no longer reproduces against the current head.
+
+<!-- pr-reviewer:v1 kind=resolve sha=${HEAD_SHA} -->" \
+    >/dev/null 2>/tmp/pr_resolve_err.txt || true
+
+  # 2. Resolve the review thread (GraphQL — REST has no resolve endpoint)
+  if gh api graphql -f query='
+      mutation($id:ID!) { resolveReviewThread(input:{threadId:$id}) { thread { isResolved } } }' \
+      -F id="$THREAD_ID" >/dev/null 2>>/tmp/pr_resolve_err.txt; then
+    echo ok >> /tmp/pr_resolved.log
+  else
+    echo "fail $THREAD_ID" >> /tmp/pr_resolved.log
+  fi
+done
+
+# Counters are read from the log file because the while loop ran in a pipeline subshell.
+RESOLVED_OK=$(grep -c '^ok' /tmp/pr_resolved.log 2>/dev/null || echo 0)
+RESOLVED_FAIL=$(grep -c '^fail' /tmp/pr_resolved.log 2>/dev/null || echo 0)
+export RESOLVED_OK RESOLVED_FAIL
+echo "Reconciled: ${RESOLVED_OK} prior finding(s) resolved (${RESOLVED_FAIL} failed)"
+```
+
+If `resolveReviewThread` returns a permissions error, the token lacks write access to the PR or thread resolution is restricted — log it and continue; the reply still lands and the verdict still updates.
+
+---
+
 ## Output
 
 On completion, use the counters from the inline loop (`$INLINE_OK` / `$INLINE_TOTAL`) — do **not** print a hard-coded number:
 
 ```
+# initial mode
 Review posted on PR #<number>: <verdict> — ${INLINE_OK}/${INLINE_TOTAL} inline comments — https://github.com/<owner>/<repo>/pull/<number>
+
+# re-review mode (add reconciliation counters)
+Re-review posted on PR #<number>: <verdict> — ${INLINE_OK}/${INLINE_TOTAL} new — ${RESOLVED_OK} resolved — https://github.com/<owner>/<repo>/pull/<number>
 ```
 
 If `INLINE_OK == 0` but the report had findings with file:line references, treat the run as a partial failure and surface the first few lines of `/tmp/pr_inline_failures.log` so the user knows the inline step did not deliver.

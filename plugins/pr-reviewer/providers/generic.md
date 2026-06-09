@@ -18,6 +18,8 @@ pr-review-report.md
 
 The file must be written even if the review verdict is `APPROVE` — the file serves as the audit artifact.
 
+> **Re-review:** the generic provider has no PR API, so prior-finding detection and reconciliation are skipped. Each run simply regenerates `pr-review-report.md` (overwriting the previous one). The report file itself is the current-state snapshot, so there are no stale threads to resolve.
+
 **File format:**
 
 ```markdown

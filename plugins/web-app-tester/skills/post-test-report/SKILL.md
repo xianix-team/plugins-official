@@ -16,6 +16,7 @@ This skill is invoked by the **orchestrator** agent. It is not a standalone slas
 | `RUN_META` | run-playwright-session | Parsed from log: `{ timestamp, duration, browser }` |
 | `RUN_START_ISO` | orchestrator | Fallback timestamp if script exited before writing `RUN_META` |
 | `TEST_URL` | gather-test-context | URL that was tested |
+| `TEST_PLAN` | gather-test-context | Original test plan (used to write the Test Plan Summary) |
 | `IS_PRODUCTION` | orchestrator | Whether read-only mode was applied |
 | `ENTRY_TYPE` | orchestrator | `pr`, `issue`, or `wi` |
 | `ENTRY_ID` | orchestrator | PR number, issue number, or work item ID |
@@ -46,7 +47,7 @@ Store as `OVERALL_RESULT`, `PASSED` (count), `FAILED` (count), `BLOCKED` (count)
 
 ## Step 2: Compose the Report Body
 
-Build the comment body using the **exact** structure defined in `styles/report-template.md`. The report comment must contain **only** the sections defined in that template. Do not add suggested fixes, recommendations, next steps, root cause analysis, explanations, or any content not defined in the template.
+Build the comment body using the **exact** structure defined in `styles/report-template.md`. The report contains five sections: header block, Test Plan Summary, Test Case Results table, Failed / Blocked Detail (if any), Overall Result, and footer.
 
 ### 2a — Resolve metadata
 
@@ -62,48 +63,47 @@ Tested: {TIMESTAMP} · Browser: {BROWSER} · Duration: {DURATION}
 
 ```markdown
 🤖 web-app-tester (Webwright) — Test Execution Report
+Verdict: **{OVERALL_RESULT}**
 URL tested: {TEST_URL}
 {IS_PRODUCTION ? "⚠️ Running in production environment. Executed read-only steps only." : ""}
 Tested: {TIMESTAMP} · Browser: {BROWSER} · Duration: {DURATION}
 Total: {TOTAL} | ✅ Passed: {PASSED} | ❌ Failed: {FAILED} | 🔴 Blocked: {BLOCKED}
-Overall: **{OVERALL_RESULT}**
-
-| # | Test Case | Status |
-|---|-----------|--------|
-| 1 | {test case description} | ✅ PASSED |
-| 2 | {test case description} | ❌ FAILED |
-
-[For each FAILED or BLOCKED test case:]
-**Test Case N — {description}**
-Reason: {what went wrong after 3 retries}
-[Screenshot attached if available]
 ```
 
-### 2c — Build the Passed Steps section
+### 2c — Build the Test Plan Summary
 
-Only include if `PASSED > 0`.
-
-For each step with `status == PASSED`, add a table row using the step's `actual` field as "What was verified":
+Write 1–3 sentences in plain language describing what the test plan covers, derived from `TEST_PLAN`. Mention the user flows, features, and scenarios exercised. Do not copy steps verbatim.
 
 ```markdown
-<details open>
-<summary>✅ Passed Test Cases ({PASSED})</summary>
+## Test Plan Summary
 
-| # | Test Case | What was verified |
-| --- | --- | --- |
-| {n} | {desc} | {actual} |
-| {n} | {desc} | {actual} |
-
-</details>
+{summary}
 ```
 
-### 2d — Build the Failed / Blocked Steps section
+### 2d — Build the Test Case Results table
+
+Include **every** test case in a single table. Order by step number.
+
+- `Status` column: `✅ PASSED`, `❌ FAILED`, or `🔴 BLOCKED`
+- `Actual` column: what was observed (visible text, URL, error message, or block reason)
+- `Expected` column: what the test plan expected
+- `Duration` column: elapsed time (`Xms` or `X.Xs`); use `—` for no-retry BLOCKED cases
+
+```markdown
+## Test Case Results
+
+| # | Test Case | Status | Actual | Expected | Duration |
+| --- | --- | --- | --- | --- | --- |
+| {n} | {desc} | {status_emoji} {STATUS} | {actual} | {expected} | {duration} |
+```
+
+### 2e — Build the Failed / Blocked Detail section
 
 Only include if `FAILED + BLOCKED > 0`.
 
-For each step with `status == FAILED` or `status == BLOCKED`, add an entry block. Order: failed steps first, then blocked steps, preserving step number order within each group.
+For each step with `status == FAILED` or `status == BLOCKED`, add an entry. Order: failed steps first, then blocked, preserving step number order within each group.
 
-**FAILED test case entry:**
+**FAILED entry:**
 
 ```markdown
 **Test Case {n} — {desc}**
@@ -113,7 +113,7 @@ Actual: {actual}
 Duration: {duration}
 ```
 
-**BLOCKED test case entry (with retries):**
+**BLOCKED entry (with retries):**
 
 ```markdown
 **Test Case {n} — {desc}**
@@ -127,7 +127,7 @@ Duration: {duration}
 Screenshot: {screenshot == "captured" ? "captured at point of failure" : "not available"}
 ```
 
-**BLOCKED test case entry (no retries — auth gate, production skip, or pre-step crash):**
+**BLOCKED entry (no retries — auth gate, production skip, or pre-step crash):**
 
 ```markdown
 **Test Case {n} — {desc}**
@@ -135,22 +135,58 @@ Status: 🔴 BLOCKED
 Reason: {actual}
 ```
 
-Omit the `Attempts:` block when `retries == 0`. Omit the `Screenshot:` line for production-skip and auth-gate blocked steps (no screenshot is taken for those).
+Omit the `Attempts:` block when `retries == 0`. Omit the `Screenshot:` line for production-skip and auth-gate blocked steps.
 
 Wrap all entries in a `<details open>` block:
 
 ```markdown
 <details open>
-<summary>❌ Failed / 🔴 Blocked Test Cases ({FAILED + BLOCKED})</summary>
+<summary>❌ Failed / 🔴 Blocked — Detail</summary>
 
 {entries}
 
 </details>
 ```
 
-### 2e — Assemble REPORT_BODY
+### 2f — Build the Overall Result section
 
-Concatenate: header block + horizontal rule (`---`) + passed section (if any) + failed/blocked section (if any).
+Start with the count line, then write 1–5 factual bullet points summarising what was verified in business language. For PASSED runs: state what was confirmed working. For FAILED/BLOCKED runs: state what did not complete without recommendations. Add a `**Note:**` line if a constraint affected the run (production mode, auth gate, local stack).
+
+```markdown
+## Overall Result
+
+{PASSED} / {TOTAL} test cases PASSED — {FAILED} FAILED — {BLOCKED} BLOCKED
+
+- {factual bullet}
+- {factual bullet}
+
+{IF note warranted}
+**Note:** {one sentence}
+{END IF}
+```
+
+### 2g — Footer
+
+Always append as the final line:
+
+```markdown
+---
+
+*Generated by Web App Tester — Python/Playwright (headless Chromium)*
+```
+
+### 2h — Assemble REPORT_BODY
+
+Concatenate in order:
+1. Header block
+2. `---`
+3. Test Plan Summary
+4. `---`
+5. Test Case Results table
+6. Failed / Blocked Detail section (if any, preceded by a blank line)
+7. `---`
+8. Overall Result section
+9. Footer
 
 Store as `REPORT_BODY`.
 

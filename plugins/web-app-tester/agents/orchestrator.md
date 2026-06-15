@@ -143,7 +143,7 @@ The skill enforces the global execution rules (single browser session, retries, 
 
 ## Phase 3 — Post Test Execution Report
 
-Read and follow `skills/post-test-report/SKILL.md`, passing in the inline result list, `TEST_URL`, `IS_PRODUCTION`, `ENTRY_TYPE`, `ENTRY_ID`, `PLATFORM`, and (if applicable) `LINKED_PR_ID`.
+Read and follow `skills/post-test-report/SKILL.md`, passing in the inline result list, `TEST_URL`, `TEST_PLAN`, `IS_PRODUCTION`, `ENTRY_TYPE`, `ENTRY_ID`, `PLATFORM`, and (if applicable) `LINKED_PR_ID`.
 
 It computes the overall verdict (`PASSED` / `FAILED` / `BLOCKED`), composes the report body strictly per `styles/report-template.md`, and posts it via the correct provider:
 

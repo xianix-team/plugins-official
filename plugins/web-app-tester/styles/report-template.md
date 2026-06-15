@@ -32,11 +32,34 @@ Total: {N} | ✅ Passed: {X} | ❌ Failed: {Y} | 🔴 Blocked: {Z}
 
 ## Test Case Results
 
-| # | Test Case | Status | Actual | Expected | Duration |
-| --- | --- | --- | --- | --- | --- |
-| 1 | {test case description} | ✅ PASSED | {what was observed} | {what was expected} | {Xms} |
-| 2 | {test case description} | ❌ FAILED | {what was observed} | {what was expected} | {X.Xs} |
-| 3 | {test case description} | 🔴 BLOCKED | {reason} | {what was expected} | — |
+| # | Test Case | Status | Actual | Expected | Duration | Attempts |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | {test case description} | ✅ PASSED | {what was observed} | {what was expected} | {Xms} | 1 |
+| 2 | {test case description} | ❌ FAILED | {what was observed} | {what was expected} | {X.Xs} | 3 |
+| 3 | {test case description} | 🔴 BLOCKED | {reason} | {what was expected} | — | — |
+
+---
+
+## Detailed Step Log
+
+### Step 1 — {test case description}
+- **Action:** {plain-language description of what was attempted, e.g. "Navigate to the homepage"}
+- **Target:** {role + accessible name of the element, or the URL for navigate; omit line if not applicable}
+- **Input:** {value entered, or `[REDACTED]` for secrets; omit line if the step had no input}
+- **Expected:** {one sentence — the outcome the step was supposed to produce}
+- **Observed:** {one sentence — what actually happened}
+- **Status:** ✅ PASSED
+- **Attempts:** 1
+
+### Step 2 — {test case description}
+- **Action:** {plain-language description}
+- **Target:** {element label}
+- **Expected:** {one sentence}
+- **Observed:** {one sentence — what actually happened, including error text or wrong state}
+- **Status:** ❌ FAILED
+- **Attempts:** 3
+- **Screenshot:** captured at point of failure
+- **Reason:** {short cause}
 
 {IF Y + Z > 0}
 <details open>
@@ -109,7 +132,7 @@ Write 1–3 sentences describing what the test plan covers in plain language. Me
 
 ## Test Case Results Table
 
-Every test case appears in one table with six columns. Include all test cases regardless of status.
+Every test case appears in one table with seven columns. Include all test cases regardless of status.
 
 | Column | Content |
 | --- | --- |
@@ -119,6 +142,7 @@ Every test case appears in one table with six columns. Include all test cases re
 | `Actual` | What was actually observed — page title, visible text, URL, error message, or block reason |
 | `Expected` | What the test plan expected to happen |
 | `Duration` | Elapsed time for the test case (`Xms` or `X.Xs`). Use `—` for BLOCKED no-retry cases |
+| `Attempts` | Total attempts made (retries + 1). Use `—` for no-retry BLOCKED cases |
 
 **Actual column examples:**
 
@@ -131,9 +155,34 @@ Every test case appears in one table with six columns. Include all test cases re
 
 ---
 
+## Detailed Step Log
+
+Emit one sub-section for **every** step in the result list — including PASSED steps. This is the test execution record; completeness is mandatory.
+
+```markdown
+### Step {N} — {step description}
+- **Action:** {plain-language description of what was attempted}
+- **Target:** {role + accessible name of the element, or the URL for navigate; omit line if not applicable}
+- **Input:** {value entered, or `[REDACTED]` for secrets; omit line if the step had no input}
+- **Expected:** {one sentence — the outcome the step was supposed to produce}
+- **Observed:** {one sentence — what the post-action snapshot actually showed}
+- **Status:** ✅ PASSED | ❌ FAILED | 🔴 BLOCKED
+- **Attempts:** {retries + 1}
+- **Screenshot:** {captured at point of failure | not applicable — omit line for PASSED steps}
+- **Reason:** {only present when Status is FAILED or BLOCKED — short cause}
+```
+
+**Field rules:**
+
+- `Target`, `Input`, `Screenshot`, and `Reason` lines are **conditional** — omit them when not applicable rather than emitting empty values like `Target: —`.
+- `Action`, `Expected`, `Observed`, `Status`, and `Attempts` are **always** present, even for PASSED steps.
+- Plain business language only. Do not describe Playwright commands, `eN` refs, CSS selectors, or YAML snapshots.
+
+---
+
 ## Failed / Blocked Detail Section
 
-Only include when Y + Z > 0. Use a `<details open>` block. Each failed or blocked test case gets its own entry with full detail beyond what fits in the table.
+Only include when Y + Z > 0. Use a `<details open>` block. Each failed or blocked test case gets its own entry with full detail beyond what fits in the table. Order: failed steps first (by step number), then blocked steps (by step number).
 
 For FAILED test cases:
 
@@ -221,19 +270,6 @@ A step that was **skipped due to production environment read-only mode** is mark
 
 ---
 
-## Retry Log (optional)
-
-For BLOCKED steps, if retry attempts produced informative output (e.g. element selector, error message), include a brief retry summary:
-
-```markdown
-**Test Case 3 — Verify order confirmation message**
-Reason: Element `.order-confirmation` not found after 3 retries (5s between each)
-Attempts: 1 — timeout after 5s; 2 — timeout after 5s; 3 — timeout after 5s
-Screenshot: captured at point of failure
-```
-
----
-
 ## Production Notice
 
 If `IS_PRODUCTION=true`, the report must include this notice immediately after the URL line:
@@ -257,7 +293,7 @@ Test cases that were skipped due to this restriction are listed in the table as 
 
 ## Report Boundaries (strictly enforced)
 
-**The report contains exactly these sections:** header block, Test Plan Summary, Test Case Results table, Failed / Blocked Detail (if any), Overall Result, footer. No other sections may be added.
+**The report contains exactly these sections:** header block, Test Plan Summary, Test Case Results table, Detailed Step Log, Failed / Blocked Detail (if any), Overall Result, footer. No other sections may be added.
 
 Prohibited additions:
 

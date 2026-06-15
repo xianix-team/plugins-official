@@ -1,6 +1,6 @@
 ---
 name: run-playwright-session
-description: Phase 2 of web-app-tester. Follows the Webwright workflow — writes an instrumented Python/Playwright script tailored to the test plan, executes it, reads the structured log to extract per-step results, and self-verifies failures against screenshots. When IS_PRODUCTION=true, skips all data-modifying steps. Always cleans up temp files. Outputs an inline list of per-step results.
+description: Phase 2 of web-app-tester. Follows the Webwright workflow — writes an instrumented Python/Playwright script tailored to the test plan, executes it, reads the structured log to extract per-step results, and self-verifies failures against screenshots. When IS_PRODUCTION=true, skips all data-modifying steps. Always cleans up temp files. Outputs an inline list of fully-documented per-step results including action, actual/expected outcome, timing, and retry detail.
 disable-model-invocation: true
 ---
 
@@ -19,13 +19,29 @@ This skill is invoked by the **orchestrator** agent. It is not a standalone slas
 
 ## Outputs
 
-A list of result entries (held inline, not written to a file):
+A list of result entries (held inline, not written to a file). **Every step is documented in full** — including PASSED ones — so Phase 3 can render a complete test execution record:
 
 ```text
-{ n, desc, status: PASSED|FAILED|BLOCKED, actual, expected, duration, retry_1, retry_2, retry_3, screenshot }
+{
+  n,                                      # step number (1-based, matches TEST_PLAN order)
+  desc,                                   # plain-language description from the test plan
+  action: {
+    verb,                                 # navigate | click | fill | verify | wait | other
+    target,                               # human label of the target element or URL for navigate
+    ref,                                  # eN reference used (null for navigate)
+    input                                 # value entered; "[REDACTED]" for secrets; null otherwise
+  },
+  status: PASSED|FAILED|BLOCKED,
+  actual,                                 # what was actually observed (page title, text, error message, block reason)
+  expected,                               # what the step was supposed to produce
+  duration,                               # elapsed time for this step (e.g. "2.8s")
+  retries,                                # number of retry attempts made (0 if first-try success)
+  retry_1, retry_2, retry_3,             # outcome of each retry (omit if retries == 0)
+  screenshot                              # path to screenshot if captured, else null
+}
 ```
 
-Plus `RUN_META` (timestamp, total duration, browser) extracted from the log.
+Plus `RUN_META` (timestamp, total duration, browser) extracted from the final log line.
 
 ## Execution Rules (strictly enforced)
 
@@ -151,13 +167,17 @@ The script must follow this contract:
 
 4. **Per-step try/except** — wrap each step in its own `try/except` block so subsequent steps still run after a failure.
 
-5. **Production guard** — if `IS_PRODUCTION` is `true`, any step that submits a form or performs a data-modifying action must be skipped: log it as `BLOCKED` with reason `Skipped — production environment, read-only mode`.
+5. **Production guard** — if `IS_PRODUCTION` is `true`, any step that submits a form or performs a data-modifying action must be skipped: log it as `BLOCKED` with `actual=Skipped — production environment, read-only mode`.
 
 6. **Screenshot on failure** — on any exception, save `_wat_run/screenshots/step_<n>_fail.png` before logging `BLOCKED`.
 
 7. **Auth gate detection** — after the initial `page.goto()`, check if the page title or URL contains login/auth indicators. If detected and the test plan has no login steps, log all steps as `BLOCKED` with `actual=Auth gate detected — no credentials provided` and exit early. Write the `RUN_META` line before exiting.
 
 8. **Browser config** — always use `p.chromium.launch(headless=True)` with `viewport={"width": 1280, "height": 1800}`. Never use `full_page=True` in screenshots.
+
+9. **Credential redaction** — for `fill` steps targeting a password, secret, token, API key, or any credentials field (detected from the field's accessible name, role, or autocomplete attribute), set `actual` to `[REDACTED]` and record `action.input` as `[REDACTED]`. Never log credential values.
+
+After reading the log, derive each step's `action: { verb, target, ref, input }` from the script you authored — you know what each step does, so populate these fields from the script structure rather than re-parsing the log. Hold the complete result entries (including `action`) inline for Phase 3.
 
 **Example script structure** (adapt to the actual TEST_PLAN steps):
 
@@ -173,7 +193,7 @@ RUN_START = time.time()
 
 def log_step(n, status, desc, actual="", expected="", duration=0.0, retries=0, retry_details=None):
     parts = [
-        f"STEP_RESULT",
+        "STEP_RESULT",
         f"n={n}",
         f"status={status}",
         f"desc={desc}",
@@ -216,7 +236,6 @@ with sync_playwright() as p:
         title = page.title()
         url = page.url.lower()
         if any(ind in title.lower() or ind in url for ind in AUTH_INDICATORS):
-            # No login step in plan — block everything
             for n, desc, expected in STEPS:
                 log_step(n, "BLOCKED", desc,
                          actual="Auth gate detected — no credentials provided",
@@ -340,6 +359,8 @@ Parse each `STEP_RESULT|...` line to build the inline result list. Extract field
 
 Parse the `RUN_META` line to extract `timestamp`, `duration`, and `browser` for use in the report metadata line.
 
+After parsing, populate each result entry's `action: { verb, target, ref, input }` from the script you authored — you know what verb and target each step uses. Set `action.input` to `[REDACTED]` for any credential field.
+
 **Self-verify failures** — for any step logged as `FAILED` or `BLOCKED`, read the corresponding screenshot using the `Read` tool and confirm the failure is genuine (not a timing issue or transient overlay). If the screenshot shows a transient state (spinner, partial load), re-run that step in a short follow-up scratch script before finalising the result.
 
 ---
@@ -358,4 +379,4 @@ GitHub PR/issue comments do not support file attachments via `gh comment`, so th
 
 ## Completion
 
-When this skill finishes, hand off to `skills/post-test-report/SKILL.md` with the inline result list, `TEST_URL`, and `IS_PRODUCTION` in scope.
+When this skill finishes, hand off to `skills/post-test-report/SKILL.md` with the inline result list, `RUN_META`, `TEST_URL`, `TEST_PLAN`, and `IS_PRODUCTION` in scope. The result list must contain one entry per step in `TEST_PLAN`, in order, each with all fields populated as specified in the Outputs section above.

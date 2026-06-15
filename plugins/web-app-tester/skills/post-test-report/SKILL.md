@@ -1,6 +1,6 @@
 ---
 name: post-test-report
-description: Phase 3 of web-app-tester. Computes the overall verdict (PASSED / FAILED / BLOCKED) from the inline step results, composes a report that conforms exactly to the report template, and posts it via the correct provider (GitHub or Azure DevOps). For wi entry points on Azure DevOps, also posts a notification comment on the work item. The report is strictly bounded — no recommendations, no root-cause analysis, no commentary outside the defined sections.
+description: Phase 3 of web-app-tester. Computes the overall verdict (PASSED / FAILED / BLOCKED) from the inline step results, composes a fully detailed test execution report — header, Test Plan Summary, Test Case Results table, Detailed Step Log, Failed/Blocked detail, and Overall Result — then posts it via the correct provider (GitHub or Azure DevOps). For wi entry points on Azure DevOps, also posts a notification comment on the work item. The report is strictly bounded — factual execution record only, no recommendations or root-cause analysis.
 disable-model-invocation: true
 ---
 
@@ -12,7 +12,7 @@ This skill is invoked by the **orchestrator** agent. It is not a standalone slas
 
 | Variable | Source | Description |
 | --- | --- | --- |
-| Inline result list | run-playwright-session | One entry per step: `{ n, desc, status, actual, expected, duration, retries, retry_1, retry_2, retry_3, screenshot }` |
+| Inline result list | run-playwright-session | One entry per step: `{ n, desc, action: { verb, target, ref, input }, status, actual, expected, duration, retries, retry_1, retry_2, retry_3, screenshot }` |
 | `RUN_META` | run-playwright-session | Parsed from log: `{ timestamp, duration, browser }` |
 | `RUN_START_ISO` | orchestrator | Fallback timestamp if script exited before writing `RUN_META` |
 | `TEST_URL` | gather-test-context | URL that was tested |
@@ -47,7 +47,7 @@ Store as `OVERALL_RESULT`, `PASSED` (count), `FAILED` (count), `BLOCKED` (count)
 
 ## Step 2: Compose the Report Body
 
-Build the comment body using the **exact** structure defined in `styles/report-template.md`. The report contains five sections: header block, Test Plan Summary, Test Case Results table, Failed / Blocked Detail (if any), Overall Result, and footer.
+Build the comment body using the **exact** structure defined in `styles/report-template.md`. The report contains these sections in order: header block, Test Plan Summary, Test Case Results table, Detailed Step Log, Failed / Blocked Detail (if any), Overall Result, and footer.
 
 ### 2a — Resolve metadata
 
@@ -88,20 +88,43 @@ Include **every** test case in a single table. Order by step number.
 - `Actual` column: what was observed (visible text, URL, error message, or block reason)
 - `Expected` column: what the test plan expected
 - `Duration` column: elapsed time (`Xms` or `X.Xs`); use `—` for no-retry BLOCKED cases
+- `Attempts` column: total attempts made (retries + 1; use `—` for no-retry BLOCKED cases)
 
 ```markdown
 ## Test Case Results
 
-| # | Test Case | Status | Actual | Expected | Duration |
-| --- | --- | --- | --- | --- | --- |
-| {n} | {desc} | {status_emoji} {STATUS} | {actual} | {expected} | {duration} |
+| # | Test Case | Status | Actual | Expected | Duration | Attempts |
+| --- | --- | --- | --- | --- | --- | --- |
+| {n} | {desc} | {status_emoji} {STATUS} | {actual} | {expected} | {duration} | {retries + 1} |
 ```
 
-### 2e — Build the Failed / Blocked Detail section
+### 2e — Build the Detailed Step Log
 
-Only include if `FAILED + BLOCKED > 0`.
+Emit one sub-section per step in order — **including PASSED steps**. This is the test execution record; completeness is mandatory.
 
-For each step with `status == FAILED` or `status == BLOCKED`, add an entry. Order: failed steps first, then blocked, preserving step number order within each group.
+```markdown
+## Detailed Step Log
+
+### Step {n} — {desc}
+- **Action:** {plain-language description of action.verb on action.target}
+- **Target:** {action.target — omit line if not applicable}
+- **Input:** {action.input — omit line if null; show "[REDACTED]" for secrets}
+- **Expected:** {expected}
+- **Observed:** {actual}
+- **Status:** {✅ PASSED | ❌ FAILED | 🔴 BLOCKED}
+- **Attempts:** {retries + 1}
+- **Screenshot:** {captured at point of failure | not applicable — omit line for PASSED steps}
+- **Reason:** {short cause — omit line for PASSED steps}
+```
+
+Field rules:
+- `Target`, `Input`, `Screenshot`, and `Reason` lines are **conditional** — omit them when not applicable rather than emitting empty values.
+- `Action`, `Expected`, `Observed`, `Status`, and `Attempts` are **always** present, even for PASSED steps.
+- **Never include credential values.** If `action.input` is `[REDACTED]`, keep it `[REDACTED]`. If a credential-like value was not redacted upstream, redact it here before posting.
+
+### 2f — Build the Failed / Blocked Detail section
+
+Only include if `FAILED + BLOCKED > 0`. Wrap all entries in a `<details open>` block. Order: failed steps first (by step number), then blocked steps (by step number).
 
 **FAILED entry:**
 
@@ -124,7 +147,7 @@ Attempts:
 - Attempt 2: {retry_2}
 - Attempt 3: {retry_3}
 Duration: {duration}
-Screenshot: {screenshot == "captured" ? "captured at point of failure" : "not available"}
+Screenshot: {captured at point of failure | not available}
 ```
 
 **BLOCKED entry (no retries — auth gate, production skip, or pre-step crash):**
@@ -148,7 +171,7 @@ Wrap all entries in a `<details open>` block:
 </details>
 ```
 
-### 2f — Build the Overall Result section
+### 2g — Build the Overall Result section
 
 Start with the count line, then write 1–5 factual bullet points summarising what was verified in business language. For PASSED runs: state what was confirmed working. For FAILED/BLOCKED runs: state what did not complete without recommendations. Add a `**Note:**` line if a constraint affected the run (production mode, auth gate, local stack).
 
@@ -165,7 +188,7 @@ Start with the count line, then write 1–5 factual bullet points summarising wh
 {END IF}
 ```
 
-### 2g — Footer
+### 2h — Footer
 
 Always append as the final line:
 
@@ -175,7 +198,7 @@ Always append as the final line:
 *Generated by Web App Tester — Python/Playwright (headless Chromium)*
 ```
 
-### 2h — Assemble REPORT_BODY
+### 2i — Assemble REPORT_BODY
 
 Concatenate in order:
 1. Header block
@@ -183,10 +206,12 @@ Concatenate in order:
 3. Test Plan Summary
 4. `---`
 5. Test Case Results table
-6. Failed / Blocked Detail section (if any, preceded by a blank line)
-7. `---`
-8. Overall Result section
-9. Footer
+6. `---`
+7. Detailed Step Log
+8. Failed / Blocked Detail section (if any, preceded by a blank line)
+9. `---`
+10. Overall Result section
+11. Footer
 
 Store as `REPORT_BODY`.
 

@@ -129,13 +129,20 @@ echo "RUN_START_ISO: $RUN_START_ISO"
 
 Read and follow `skills/run-playwright-session/SKILL.md`, passing in `TEST_URL`, `IS_PRODUCTION`, `TEST_PLAN`, and `RUN_START_ISO`.
 
-It produces an inline list of per-step results with the shape:
+It produces an inline list of fully documented per-step results — one entry per step in `TEST_PLAN`, in order — with the shape:
 
 ```text
-{ n, desc, status: PASSED|FAILED|BLOCKED, actual, expected, duration, retries, retry_1, retry_2, retry_3, screenshot }
+{
+  n, desc,
+  action: { verb, target, ref, input },
+  status: PASSED|FAILED|BLOCKED,
+  actual, expected, duration,
+  retries, retry_1, retry_2, retry_3,
+  screenshot
+}
 ```
 
-It also produces `RUN_META` values (`timestamp`, `duration`, `browser`) parsed from the final log line.
+Every step (including PASSED ones) is recorded in full so Phase 3 can render a complete test execution log. Credential inputs are redacted as `[REDACTED]`. It also produces `RUN_META` values (`timestamp`, `duration`, `browser`) parsed from the final log line.
 
 The skill enforces the global execution rules (single browser session, retries, cleanup) and skips any data-modifying step when `IS_PRODUCTION=true`.
 

@@ -344,6 +344,7 @@ Run **exactly one** of the two paths below, chosen by `REVIEW_TIER` from step 5.
 
 - A reminder: *"Do not re-fetch git data; the diff at /tmp/pr_full_diff.patch is authoritative. Return findings only."*
 - A line-number constraint: *"Every `path/to/file.ext:NN` reference must use the POST-CHANGE file line number — the line as it appears in the new version of the file. Derive `NN` from the `@@ -old,+new @@` hunk header's `+new` start plus the offset of the flagged `+` line within that hunk. Never report the diff's own line position or an old-side line number. Findings on deleted (`-`) lines must reference the nearest surviving line."*
+- A suggestion constraint: *"For findings where the fix is a concrete, drop-in replacement (wrong identifier, missing null guard, insecure call swapped for safe equivalent, etc.), add a `**Suggestion**` annotation after the `**Fix:**` block: write `**Suggestion** (line NN):` for single-line or `**Suggestion** (lines NN–MM):` for multi-line, followed by a plain fenced code block containing the verbatim replacement lines with indentation preserved. Do not include this for architectural improvements or fixes requiring author judgment."*
 
 > **Diff size (used by both paths):**
 > ```bash

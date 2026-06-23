@@ -123,3 +123,14 @@ Use the language detected in the PR for all code snippets. Do not default to Typ
 ```
 
 If no security issues are found, explicitly state: "No security vulnerabilities identified in the changed code."
+```
+
+## GitHub Suggestion Blocks
+
+For findings where the fix is a concrete, drop-in replacement, add a `**Suggestion**` annotation immediately after the `**Fix:**` block. Write `**Suggestion** (line NN):` for a single-line fix or `**Suggestion** (lines NN–MM):` for a multi-line fix, followed by a plain fenced code block (no language tag) containing the verbatim replacement lines with indentation preserved.
+
+The review lead uses this annotation to append a native GitHub "Apply suggestion" / "Commit suggestion" button to the inline comment.
+
+**Include** when: hardcoded secret replaced by an env var lookup, insecure hash (MD5/SHA1) swapped for bcrypt/argon2, SQL string concatenation replaced by a parameterized query, missing input validation added, wildcard CORS replaced by an explicit allowlist, etc.
+
+**Do not include** when: the fix requires a new library/dependency, affects non-consecutive lines, involves an architectural change (e.g. "add a rate-limiter middleware"), or requires the author's judgment on acceptable risk.

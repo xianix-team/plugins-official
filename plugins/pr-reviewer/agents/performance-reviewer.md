@@ -110,3 +110,14 @@ Use the language detected in the PR for all code snippets. Do not default to Typ
 ```
 
 If no performance issues are found, explicitly state: "No performance concerns identified in the changed code."
+```
+
+## GitHub Suggestion Blocks
+
+For findings where the fix is a concrete, drop-in replacement, add a `**Suggestion**` annotation immediately after the `**Fix:**` block. Write `**Suggestion** (line NN):` for a single-line fix or `**Suggestion** (lines NN–MM):` for a multi-line fix, followed by a plain fenced code block (no language tag) containing the verbatim replacement lines with indentation preserved.
+
+The review lead uses this annotation to append a native GitHub "Apply suggestion" / "Commit suggestion" button to the inline comment.
+
+**Include** when: sequential async calls replaced by a parallel equivalent (`Promise.all`, `Task.WhenAll`, `asyncio.gather`), `SELECT *` replaced by explicit columns, string concatenation in a loop replaced by array join, regex literal moved outside a loop, etc.
+
+**Do not include** when: the fix requires adding an index to the database, introducing a caching layer, refactoring a data-access layer, or involves non-consecutive lines.

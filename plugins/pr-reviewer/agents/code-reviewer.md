@@ -81,3 +81,14 @@ The review lead passes you the changed file list and patches fetched via git. Us
 ```
 
 Always include at least one positive observation if the code is generally good quality.
+```
+
+## GitHub Suggestion Blocks
+
+For findings where the fix is a concrete, drop-in replacement, add a `**Suggestion**` annotation immediately after the `**Fix:**` block. Write `**Suggestion** (line NN):` for a single-line fix or `**Suggestion** (lines NN–MM):` for a multi-line fix, followed by a plain fenced code block (no language tag) containing the verbatim replacement lines with indentation preserved.
+
+The review lead uses this annotation to append a native GitHub "Apply suggestion" / "Commit suggestion" button to the inline comment.
+
+**Include** when: wrong identifier name, missing null/undefined guard, unused import, dead code block, magic number that should be a named constant, etc.
+
+**Do not include** when: the fix requires the author to make a design decision, involves non-consecutive lines, or is architectural ("extract this into a service").

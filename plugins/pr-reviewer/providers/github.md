@@ -194,13 +194,22 @@ After compiling the report, write **one JSON object per finding** to `/tmp/pr_in
 | `body` | string | yes | Markdown body. Include the severity tag, e.g. `**[CRITICAL]** ...`. |
 | `fid` | string | yes | Stable finding id from step 7 (`compute_fid`). Goes into the marker. |
 | `severity` | string | no | `critical` / `warning` / `suggestion` — used only for the summary log. |
+| `suggestion_start_line` | int | no | First line of the region to replace. Omit for single-line fixes. |
+| `suggestion_end_line` | int | no | Last line of the region to replace (same as `line` for single-line). |
+| `suggestion_code` | string | no | Verbatim replacement lines, indentation preserved. If present, a GitHub suggestion block is appended and a "Commit suggestion" button appears in the PR UI. |
 
 ```bash
 python3 - <<'PY' > /tmp/pr_inline_findings.jsonl
 import json
 findings = [
+    # Finding with a suggestion block — GitHub renders "Commit suggestion" button
     {"file": "src/auth/login.ts", "line": 42, "severity": "critical", "fid": "a1b2c3d4e5f6",
-     "body": "**[CRITICAL] SQL injection**\n\nUser input is concatenated into the query..."},
+     "body": "**[CRITICAL] SQL injection**\n\nUser input is concatenated into the query...",
+     "suggestion_start_line": 42, "suggestion_end_line": 42,
+     "suggestion_code": "  const result = await db.query('SELECT * FROM users WHERE id = ?', [userId]);"},
+    # Finding without a suggestion block (architectural issue — no drop-in fix)
+    {"file": "src/services/auth.ts", "line": 87, "severity": "warning", "fid": "b2c3d4e5f6a1",
+     "body": "**[WARNING] Missing rate limiting**\n\nLogin endpoint has no rate limit..."},
     # ... one entry per finding to post (initial: all; re-review: New bucket only) ...
 ]
 for f in findings:
@@ -227,8 +236,23 @@ while IFS= read -r line; do
   F_LINE=$(echo "$line" | python3 -c "import sys,json; print(json.load(sys.stdin)['line'])")
   F_FID=$(echo "$line"  | python3 -c "import sys,json; print(json.load(sys.stdin).get('fid',''))")
   echo "$line" | python3 -c "import sys,json; print(json.load(sys.stdin)['body'])" > /tmp/pr_inline_body.md
+
+  # Append GitHub suggestion block when the finding carries one (enables "Commit suggestion" button).
+  F_SUGGEST_START=$(echo "$line" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('suggestion_start_line',''))" 2>/dev/null || true)
+  F_SUGGEST_END=$(echo "$line"   | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('suggestion_end_line',''))"   2>/dev/null || true)
+  F_SUGGEST_CODE=$(echo "$line"  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('suggestion_code',''))"       2>/dev/null || true)
+  if [ -n "$F_SUGGEST_CODE" ]; then
+    printf '\n\n```suggestion\n%s\n```\n' "$F_SUGGEST_CODE" >> /tmp/pr_inline_body.md
+  fi
+
   # Append the hidden finding marker so the next re-review can reconcile this comment.
   printf '\n\n<!-- pr-reviewer:v1 kind=finding fid=%s sha=%s -->\n' "$F_FID" "$COMMIT_ID" >> /tmp/pr_inline_body.md
+
+  # For multi-line suggestions, pass start_line + start_side so GitHub anchors the suggestion correctly.
+  SUGGESTION_ARGS=""
+  if [ -n "$F_SUGGEST_START" ] && [ "$F_SUGGEST_START" != "$F_LINE" ]; then
+    SUGGESTION_ARGS="--field start_line=${F_SUGGEST_START} --field start_side=RIGHT"
+  fi
 
   RESP=$(gh api "repos/${OWNER}/${REPO}/pulls/${PR_NUMBER}/comments" \
     --method POST \
@@ -236,6 +260,7 @@ while IFS= read -r line; do
     --field line="$F_LINE" \
     --field side="RIGHT" \
     --field commit_id="$COMMIT_ID" \
+    $SUGGESTION_ARGS \
     --field body="$(cat /tmp/pr_inline_body.md)" \
     2>/tmp/pr_inline_err.txt) && STATUS=ok || STATUS=fail
 

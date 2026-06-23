@@ -49,6 +49,32 @@ Every finding must follow this structure:
 
 ---
 
+## GitHub Suggestion Blocks
+
+For findings with an exact, drop-in code fix, add a `**Suggestion**` annotation immediately after the `**Fix:**` block. The review lead carries this through to the GitHub PR inline comment as a native "Apply suggestion" / "Commit suggestion" button. Azure DevOps ignores these — there is no equivalent API mechanism.
+
+Format for a **single-line replacement** (replaces only the flagged line):
+
+    **Suggestion** (line NN):
+    ```
+    [exact replacement for line NN, indentation preserved verbatim]
+    ```
+
+Format for a **multi-line replacement** (replaces a consecutive block of lines):
+
+    **Suggestion** (lines NN–MM):
+    ```
+    [exact verbatim lines replacing NN through MM, indentation preserved]
+    ```
+
+**Include** when the fix is a concrete, unambiguous swap: wrong identifier, missing null guard, insecure function replaced by its safe equivalent, N+1 query replaced by a batched call, sequential async calls made parallel, etc.
+
+**Do not include** when: the fix is architectural or design-level, requires author judgment, involves non-consecutive lines, or spans more than ~10 lines.
+
+The suggestion code is applied **verbatim** by GitHub — indentation must exactly match the file (tabs or spaces, correct nesting level).
+
+---
+
 ## Verdict Labels
 
 The final PR verdict must be one of exactly **four** values, rendered as inline code, in uppercase with no decoration (no ✅, no parentheses, no variants like `APPROVED WITH SUGGESTIONS`). The provider files map each value to a platform vote — any other string causes the vote step to be skipped silently.
@@ -91,13 +117,11 @@ Do not reorder or omit sections. If a section has no findings, write:
 
 Example (language will vary per PR):
 
-```
-// Before
-[problematic code in the detected language]
+    // Before
+    [problematic code in the detected language]
 
-// After
-[corrected code in the detected language]
-```
+    // After
+    [corrected code in the detected language]
 
 ---
 

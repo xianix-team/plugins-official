@@ -125,3 +125,13 @@ Use the language detected in the PR for all code snippets. Do not default to Typ
 [ADEQUATE / NEEDS MORE TESTS / INSUFFICIENT]
 [1-2 sentence summary of test health for this PR]
 ```
+
+## GitHub Suggestion Blocks
+
+For findings where the fix is a concrete, drop-in replacement, add a `**Suggestion**` annotation immediately after the `**Fix:**` block. Write `**Suggestion** (line NN):` for a single-line fix or `**Suggestion** (lines NN–MM):` for a multi-line fix, followed by a plain fenced code block (no language tag) containing the verbatim replacement lines with indentation preserved.
+
+The review lead uses this annotation to append a native GitHub "Apply suggestion" / "Commit suggestion" button to the inline comment.
+
+**Include** when: a weak assertion replaced by a specific one, a floating promise fixed with `await`, a hardcoded brittle value replaced by a stable fixture, test cleanup added in an `afterEach`, etc.
+
+**Do not include** when: the fix is "write a new test for this function" (net-new lines, not a replacement), involves restructuring a test suite, or requires the author to decide the correct expected value.

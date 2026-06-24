@@ -104,12 +104,26 @@ If `/tmp/pr_prior_findings.jsonl` is empty, the run is an **initial** review. Th
 ## Posting the “review in progress” comment
 
 ```bash
-gh pr comment <pr-number> --body "$(cat <<'EOF'
-🔍 **PR review in progress**
+PLUGIN_VERSION=$(python3 -c “
+import json, os
+for p in [
+    os.path.expanduser('~/.claude/plugins/pr-reviewer/.claude-plugin/plugin.json'),
+    os.path.expanduser('~/Library/Application Support/Claude/plugins/pr-reviewer/.claude-plugin/plugin.json'),
+]:
+    try:
+        print(json.load(open(p))['version']); break
+    except: pass
+else: print('unknown')
+“ 2>/dev/null || echo “unknown”)
 
-I'm running a comprehensive review covering code quality, security, test coverage, and performance. The full results will be posted as a review comment when complete — this may take a few minutes.
+gh pr comment <pr-number> --body “$(cat <<EOF
+🔍 PR Review in Progress
+
+Claude Code is analyzing this pull request. The review will be posted here shortly.
+
+PR Reviewer (${PLUGIN_VERSION})
 EOF
-)"
+)”
 ```
 
 If posting fails, output one warning line and continue.

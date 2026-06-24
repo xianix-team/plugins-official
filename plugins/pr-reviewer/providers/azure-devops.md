@@ -309,10 +309,24 @@ The posting pattern above includes this on every call.
 Before running any analysis, post a plain PR comment thread to inform the author that a review is underway. This fires as the very first action on Azure DevOps, before sub-agents are launched.
 
 ```bash
-cat > /tmp/pr_thread_body.md <<'BODY'
-**PR review in progress**
+PLUGIN_VERSION=$(python3 -c "
+import json, os
+for p in [
+    os.path.expanduser('~/.claude/plugins/pr-reviewer/.claude-plugin/plugin.json'),
+    os.path.expanduser('~/Library/Application Support/Claude/plugins/pr-reviewer/.claude-plugin/plugin.json'),
+]:
+    try:
+        print(json.load(open(p))['version']); break
+    except: pass
+else: print('unknown')
+" 2>/dev/null || echo "unknown")
 
-I'm running a comprehensive review covering code quality, security, test coverage, and performance. The full results will be posted as a review comment when complete — this may take a few minutes.
+cat > /tmp/pr_thread_body.md <<BODY
+🔍 PR Review in Progress
+
+Claude Code is analyzing this pull request. The review will be posted here shortly.
+
+PR Reviewer (${PLUGIN_VERSION})
 BODY
 
 python3 - <<'PY' > /tmp/pr_thread_payload.json

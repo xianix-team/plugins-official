@@ -13,8 +13,7 @@
     "keywords": ["pr-review", "pull-request", "review", "code-quality", "security", "testing", "azure-devops", "github"],
     "commands": ["./commands/pr-review.md"],
     "skills": "./skills/",
-    "hooks": "./hooks/hooks.json",
     "outputStyles": "./styles/",
     "providers": "./providers/",
-    "lspServers": "./.lsp.json"
+    "lspServers": "./.claude-plugin/.lsp.json"
   }

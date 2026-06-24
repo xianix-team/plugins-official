@@ -372,7 +372,7 @@ Then emit **both Agent calls in the same assistant turn** (so they run in parall
 {
   "description": "Correctness & regression finder",
   "model": "claude-haiku-4-5",
-  "prompt": "Read /tmp/pr_full_diff.patch then /tmp/pr_context.txt.\n\nFind correctness bugs and behavioural regressions introduced by the diff. Focus on:\n- Logic errors in changed code paths\n- Changed conditions that now allow or block cases they shouldn't\n- Null / empty / zero edge cases on new code paths\n- Removed guards that previously protected against a bad state\n- Interface/contract mismatches between callers and the changed function\n\nFor each finding output exactly:\nFILE: <path>\nLINE: <post-change file line number from the @@ hunk header's +new start plus the offset of the flagged + line within that hunk; never the diff's own line position>\nSEVERITY: CRITICAL | WARNING\nISSUE: <one sentence>\n\nIf you find nothing, output: NONE\nDo not call any tools."
+  "prompt": "Read /tmp/pr_full_diff.patch then /tmp/pr_context.txt.\n\nFind correctness bugs and behavioural regressions introduced by the diff. Focus on:\n- Logic errors in changed code paths\n- Changed conditions that now allow or block cases they shouldn't\n- Null / empty / zero edge cases on new code paths\n- Removed guards that previously protected against a bad state\n- Interface/contract mismatches between callers and the changed function\n\nFor each finding output exactly:\nFILE: <path>\nLINE: <post-change file line number from the @@ hunk header's +new start plus the offset of the flagged + line within that hunk; never the diff's own line position>\nSEVERITY: CRITICAL | WARNING\nISSUE: <one sentence>\nSUGGESTION_START_LINE: <line number, only when the fix is a concrete drop-in single-line or consecutive-block replacement; omit otherwise>\nSUGGESTION_END_LINE: <last line of the replacement block; same as SUGGESTION_START_LINE for a single-line fix; omit if no suggestion>\nSUGGESTION_CODE: <verbatim replacement lines with indentation preserved exactly; omit if no suggestion>\n\nInclude SUGGESTION_* fields only when the fix is an unambiguous drop-in swap (wrong value, missing guard, insecure call replaced by its safe equivalent). Omit for architectural or design-level fixes.\n\nIf you find nothing, output: NONE\nDo not call any tools."
 }
 ```
 
@@ -382,11 +382,11 @@ Then emit **both Agent calls in the same assistant turn** (so they run in parall
 {
   "description": "Security & edge-case finder",
   "model": "claude-haiku-4-5",
-  "prompt": "Read /tmp/pr_full_diff.patch then /tmp/pr_context.txt.\n\nFind security issues and missing edge-case handling in the diff. Focus on:\n- Input not validated before use (injection, path traversal)\n- Authentication or authorisation checks removed or weakened\n- Sensitive data written to logs\n- Exception or error paths that swallow failures silently\n- Resource leaks (connections, file handles) on error paths\n- Off-by-one errors or boundary conditions in new loops/ranges\n\nFor each finding output exactly:\nFILE: <path>\nLINE: <post-change file line number from the @@ hunk header's +new start plus the offset of the flagged + line within that hunk; never the diff's own line position>\nSEVERITY: CRITICAL | WARNING | SUGGESTION\nISSUE: <one sentence>\n\nIf you find nothing, output: NONE\nDo not call any tools."
+  "prompt": "Read /tmp/pr_full_diff.patch then /tmp/pr_context.txt.\n\nFind security issues and missing edge-case handling in the diff. Focus on:\n- Input not validated before use (injection, path traversal)\n- Authentication or authorisation checks removed or weakened\n- Sensitive data written to logs\n- Exception or error paths that swallow failures silently\n- Resource leaks (connections, file handles) on error paths\n- Off-by-one errors or boundary conditions in new loops/ranges\n\nFor each finding output exactly:\nFILE: <path>\nLINE: <post-change file line number from the @@ hunk header's +new start plus the offset of the flagged + line within that hunk; never the diff's own line position>\nSEVERITY: CRITICAL | WARNING | SUGGESTION\nISSUE: <one sentence>\nSUGGESTION_START_LINE: <line number, only when the fix is a concrete drop-in single-line or consecutive-block replacement; omit otherwise>\nSUGGESTION_END_LINE: <last line of the replacement block; same as SUGGESTION_START_LINE for a single-line fix; omit if no suggestion>\nSUGGESTION_CODE: <verbatim replacement lines with indentation preserved exactly; omit if no suggestion>\n\nInclude SUGGESTION_* fields only when the fix is an unambiguous drop-in swap (wrong value, missing guard, insecure call replaced by its safe equivalent). Omit for architectural or design-level fixes.\n\nIf you find nothing, output: NONE\nDo not call any tools."
 }
 ```
 
-**Verify and compile (you are the verifier — no extra agents).** For each finding from both agents: (1) confirm the flagged line appears in `/tmp/pr_full_diff.patch` as a `+` line (new code, not pre-existing); (2) discard pre-existing issues, linter/compiler-caught problems, pedantic style, and obvious false positives; (3) merge duplicates and **cap at 8 findings**, ranked CRITICAL → WARNING → SUGGESTION. Then go to step 7.
+**Verify and compile (you are the verifier — no extra agents).** For each finding from both agents: (1) confirm the flagged line appears in `/tmp/pr_full_diff.patch` as a `+` line (new code, not pre-existing); (2) discard pre-existing issues, linter/compiler-caught problems, pedantic style, and obvious false positives; (3) merge duplicates and **cap at 8 findings**, ranked CRITICAL → WARNING → SUGGESTION; (4) **preserve the `SUGGESTION_START_LINE` / `SUGGESTION_END_LINE` / `SUGGESTION_CODE` fields verbatim** — they will be extracted in the "Extract suggestion annotations" step before posting and are what enables the GitHub "Commit suggestion" button. Then go to step 7.
 
 ---
 
@@ -569,6 +569,24 @@ For each finding before serializing it:
 2. The finding's file line = `<newStart>` + (count of context ` ` and added `+` lines that precede the flagged line within that hunk). Deleted (`-`) lines do **not** advance the new-side counter.
 3. If a finding sits on a deleted line (no surviving `+`/context line), anchor it to the nearest surviving line in the same hunk and note the relocation in the comment body.
 4. Confirm the resolved `path` is repo-relative (matches an entry in `/tmp/pr_changed_files.txt`) and the line is within the file's new length.
+
+### Extract suggestion annotations (enables "Apply suggestion" / "Commit suggestion" button on GitHub)
+
+Sub-agents emit `**Suggestion**` annotations per the suggestion constraint in step 6. You must extract these and map them to the `suggestion_code` / `suggestion_start_line` / `suggestion_end_line` JSONL fields — that is what triggers the native GitHub "Commit suggestion" button. If you skip this step, suggestions render as plain text and no button appears.
+
+For each finding:
+
+1. Scan the finding text for the pattern `**Suggestion** (line NN):` (single-line) or `**Suggestion** (lines NN–MM):` (multi-line).
+2. Extract the code from the immediately-following fenced code block — the content between the ` ``` ` fences, indentation preserved verbatim (the agent writes a plain block with no language tag as required by `styles/review.md`).
+3. Set in the JSONL entry:
+   - `suggestion_start_line` = NN (first line of the replacement region)
+   - `suggestion_end_line` = MM (last line; same as NN for single-line)
+   - `suggestion_code` = the extracted code, indentation preserved exactly
+4. Remove the `**Suggestion**` block and its fenced code from the comment body before writing to JSONL — the posting loop in the provider file re-emits it as a native ` ```suggestion ` block automatically when `suggestion_code` is present.
+
+If no `**Suggestion**` annotation is present in a finding, omit all three fields. The posting loop only appends the suggestion block when `suggestion_code` is non-empty.
+
+> **Critical:** this extraction is what gates the button. A comment with `**Suggestion** (line 94):` and a plain fenced block in its body will render as formatted text — GitHub does not auto-detect it. Only a ` ```suggestion ` block (appended by the provider's posting loop from `suggestion_code`) produces the button. The extraction step here is the bridge between the agent annotation and the platform API.
 
 The reviewers were already instructed (step 6) to return post-change line numbers, but verify here — a wrong line number is the single most common cause of silently dropped inline comments.
 

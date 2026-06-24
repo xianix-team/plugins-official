@@ -344,7 +344,7 @@ Run **exactly one** of the two paths below, chosen by `REVIEW_TIER` from step 5.
 
 - A reminder: *"Do not re-fetch git data; the diff at /tmp/pr_full_diff.patch is authoritative. Return findings only."*
 - A line-number constraint: *"Every `path/to/file.ext:NN` reference must use the POST-CHANGE file line number — the line as it appears in the new version of the file. Derive `NN` from the `@@ -old,+new @@` hunk header's `+new` start plus the offset of the flagged `+` line within that hunk. Never report the diff's own line position or an old-side line number. Findings on deleted (`-`) lines must reference the nearest surviving line."*
-- A suggestion constraint: *"For findings where the fix is a concrete, drop-in replacement (wrong identifier, missing null guard, insecure call swapped for safe equivalent, etc.), add a `**Suggestion**` annotation after the `**Fix:**` block: write `**Suggestion** (line NN):` for single-line or `**Suggestion** (lines NN–MM):` for multi-line, followed by a plain fenced code block containing the verbatim replacement lines with indentation preserved. Do not include this for architectural improvements or fixes requiring author judgment."*
+- A suggestion constraint: *"For findings where the fix is a concrete, drop-in replacement (wrong identifier, missing null guard, insecure call swapped for safe equivalent, etc.), add a native GitHub suggestion block immediately after the `**Fix:**` block. Prefix it with an HTML comment that carries the line range, then a ` ```suggestion ` fenced block containing the verbatim replacement lines with indentation preserved. Example for a single-line fix: `<!-- suggestion: line NN -->` on its own line, then ` ```suggestion `, then the replacement line, then ` ``` `. For multi-line: `<!-- suggestion: lines NN-MM -->`. Do not include this for architectural improvements or fixes requiring author judgment."*
 
 > **Diff size (used by both paths):**
 > ```bash
@@ -570,23 +570,19 @@ For each finding before serializing it:
 3. If a finding sits on a deleted line (no surviving `+`/context line), anchor it to the nearest surviving line in the same hunk and note the relocation in the comment body.
 4. Confirm the resolved `path` is repo-relative (matches an entry in `/tmp/pr_changed_files.txt`) and the line is within the file's new length.
 
-### Extract suggestion annotations (enables "Apply suggestion" / "Commit suggestion" button on GitHub)
+### Handle suggestion blocks (enables "Apply suggestion" / "Commit suggestion" button on GitHub)
 
-Sub-agents emit `**Suggestion**` annotations per the suggestion constraint in step 6. You must extract these and map them to the `suggestion_code` / `suggestion_start_line` / `suggestion_end_line` JSONL fields — that is what triggers the native GitHub "Commit suggestion" button. If you skip this step, suggestions render as plain text and no button appears.
+Sub-agents emit ` ```suggestion ` blocks directly in their finding output (prefixed with an `<!-- suggestion: line NN -->` or `<!-- suggestion: lines NN-MM -->` HTML comment). Include the finding body **verbatim** in the JSONL — the ` ```suggestion ` block is already in the right format for GitHub and no text transformation is needed.
 
-For each finding:
+For each finding that contains a suggestion block:
 
-1. Scan the finding text for the pattern `**Suggestion** (line NN):` (single-line) or `**Suggestion** (lines NN–MM):` (multi-line).
-2. Extract the code from the immediately-following fenced code block — the content between the ` ``` ` fences, indentation preserved verbatim (the agent writes a plain block with no language tag as required by `styles/review.md`).
-3. Set in the JSONL entry:
-   - `suggestion_start_line` = NN (first line of the replacement region)
-   - `suggestion_end_line` = MM (last line; same as NN for single-line)
-   - `suggestion_code` = the extracted code, indentation preserved exactly
-4. Remove the `**Suggestion**` block and its fenced code from the comment body before writing to JSONL — the posting loop in the provider file re-emits it as a native ` ```suggestion ` block automatically when `suggestion_code` is present.
+1. Parse the line range from the HTML comment immediately before the ` ```suggestion ` fence:
+   - `<!-- suggestion: line NN -->` → single-line: `suggestion_start_line = NN`, `suggestion_end_line = NN`
+   - `<!-- suggestion: lines NN-MM -->` → multi-line: `suggestion_start_line = NN`, `suggestion_end_line = MM`
+2. Include those values as `suggestion_start_line` / `suggestion_end_line` in the JSONL entry — the posting loop uses them to set `start_line` in the GitHub API call for multi-line suggestions.
+3. Copy the **entire finding body verbatim** (including the HTML comment and the ` ```suggestion ` block) into the JSONL `body` field. **Do not strip or transform it.** GitHub renders the ` ```suggestion ` block as the "Commit suggestion" button automatically.
 
-If no `**Suggestion**` annotation is present in a finding, omit all three fields. The posting loop only appends the suggestion block when `suggestion_code` is non-empty.
-
-> **Critical:** this extraction is what gates the button. A comment with `**Suggestion** (line 94):` and a plain fenced block in its body will render as formatted text — GitHub does not auto-detect it. Only a ` ```suggestion ` block (appended by the provider's posting loop from `suggestion_code`) produces the button. The extraction step here is the bridge between the agent annotation and the platform API.
+If a finding has no ` ```suggestion ` block, omit `suggestion_start_line` and `suggestion_end_line`. The body is still copied verbatim.
 
 The reviewers were already instructed (step 6) to return post-change line numbers, but verify here — a wrong line number is the single most common cause of silently dropped inline comments.
 

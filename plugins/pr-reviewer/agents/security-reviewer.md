@@ -127,9 +127,23 @@ If no security issues are found, explicitly state: "No security vulnerabilities 
 
 ## GitHub Suggestion Blocks
 
-For findings where the fix is a concrete, drop-in replacement, add a `**Suggestion**` annotation immediately after the `**Fix:**` block. Write `**Suggestion** (line NN):` for a single-line fix or `**Suggestion** (lines NN–MM):` for a multi-line fix, followed by a plain fenced code block (no language tag) containing the verbatim replacement lines with indentation preserved.
+For findings where the fix is a concrete, drop-in replacement, add a ` ```suggestion ` block immediately after the `**Fix:**` block. This is a GitHub-native code block that renders an "Apply suggestion" / "Commit suggestion" button directly in the PR.
 
-The review lead uses this annotation to append a native GitHub "Apply suggestion" / "Commit suggestion" button to the inline comment.
+**Single-line replacement** (line NN is the post-change file line number of the flagged line):
+
+    <!-- suggestion: line NN -->
+    ```suggestion
+    [exact verbatim replacement for line NN, indentation preserved]
+    ```
+
+**Multi-line replacement** (lines NN–MM are post-change file line numbers):
+
+    <!-- suggestion: lines NN-MM -->
+    ```suggestion
+    [exact verbatim lines replacing NN through MM, indentation preserved]
+    ```
+
+The HTML comment carries the line range so the review lead can set `start_line`/`line` in the GitHub API call. It is invisible to GitHub when rendered.
 
 **Include** when: hardcoded secret replaced by an env var lookup, insecure hash (MD5/SHA1) swapped for bcrypt/argon2, SQL string concatenation replaced by a parameterized query, missing input validation added, wildcard CORS replaced by an explicit allowlist, etc.
 

@@ -1,7 +1,7 @@
 ---
 name: pr-review
 description: Run a full PR review. Analyzes code quality, security, tests, and performance. Works with GitHub, Azure DevOps, Bitbucket, and any git repository.
-argument-hint: [pr-number | branch-name]
+argument-hint: [pr-number | pr-url | branch-name]
 ---
 
 Run a comprehensive pull request review for $ARGUMENTS.
@@ -18,7 +18,16 @@ Execute every step below autonomously and in order. Do not ask for confirmation,
 
 **Fix mode vs report mode:** if the invocation includes a `--fix` flag or the instruction explicitly says to fix issues, apply fixes and push (see *Applying Fixes*). Otherwise, compile and post the review report only.
 
-**Re-review awareness (first review vs. follow-up review).** `gather-context.sh` (step 1 below) detects whether *this plugin* has already reviewed the PR (via its own comment markers — see *Comment markers* below) and returns `review_mode: "rereview" | "initial"` in the state file. In re-review mode: prior findings are reconciled (resolving the ones the author fixed, leaving unresolved ones open without re-posting duplicates), the review focuses on commits pushed since the last review, and a re-review delta is posted instead of a brand-new wall of comments. This is automatic. Set `PR_REVIEWER_RECONCILE=false` to force a full, stateless review that ignores prior findings.
+**Re-review awareness (first review vs. follow-up review).** `gather-context.sh` (step 1 below) detects whether *this plugin* has already reviewed the PR (via its own comment markers — see *Comment markers* below) and returns `review_mode: "rereview" | "initial"` in the state file — driven entirely by whether a prior summary marker was found (`prior_summary_sha`), never by how this run was triggered. In re-review mode: prior findings are reconciled (resolving the ones the author fixed, leaving unresolved ones open without re-posting duplicates), the review focuses on commits pushed since the last review, and a re-review delta is posted instead of a brand-new wall of comments. This is automatic. Set `PR_REVIEWER_RECONCILE=false` to force a full, stateless review that ignores prior findings.
+
+**This only works if the correct PR is identified in the first place.** `gather-context.sh` resolves the target PR from `$ARGUMENTS` before it ever looks at prior-review markers, so getting the *wrong* PR silently produces the wrong mode too (a fresh PR with no markers of its own looks like `initial` even if you meant to re-review something else). It accepts, in order:
+
+1. **A PR URL** — e.g. `https://github.com/acme/widgets/pull/123` or `https://dev.azure.com/org/project/_git/repo/pullrequest/456`. This is the shape pasted when triggering a re-review from an Agent Studio chat message — the PR number is extracted from the URL itself; the owner/repo/org/project always come from this workspace's own git remote, never from the pasted URL, so a URL for a different fork can't redirect the review elsewhere.
+2. **A bare PR number.**
+3. **A branch name** — looked up as the head/source branch of its open PR.
+4. **Nothing** — a PR-comment-triggered run, where the executor should already have the right ref checked out; resolved from the currently checked-out branch.
+
+Whichever of these resolved it is recorded as `trigger_source` in the state file (`chat-url` | `chat-number` | `explicit-branch` | `current-branch`) and printed in the digest — useful for confirming *why* a given PR was picked when debugging a report that landed somewhere unexpected. On both GitHub and Azure DevOps, once the PR is resolved the script also makes sure the workspace is actually checked out to that PR's head branch (not whatever branch a reused workspace happened to have last) before computing any diff — a workspace pinned to a stale branch was the historical cause of "reviewed the wrong PR" reports even when the PR number itself was resolved correctly. It also refreshes the local copy of the PR's target/base branch (e.g. `main`) from `origin` before resolving the base SHA, so a long-lived/reused workspace can't silently diff against a stale base.
 
 ## What This Does
 
@@ -66,9 +75,14 @@ Re-review depends on the plugin being able to recognise its **own** previous com
 
 ### 2. The finding id `fid` (matches a finding across revisions)
 
-`fid` must be **deterministic** and **independent of line number**. It's computed by `scripts/compute-fid.py <file> "<issue summary sentence>"` — always call the script, never hand-compute it. This is a compatibility requirement, not a style preference: PRs already in production have fids computed by this exact algorithm, and re-review matching depends on byte-identical reproduction.
+`fid` must be **deterministic** and **independent of line number** — and, critically, independent of anything an LLM has to reproduce identically across separate runs. It is computed from three inputs, none of which is free text you write: the file path, a fixed-enum `CATEGORY` (see the sub-agent output format below — the sub-agent picks one of `correctness | security | performance | test-coverage | maintainability`, a closed vocabulary, not prose), and the literal source line the finding is anchored to, read directly off disk (never typed by you or the sub-agent).
 
-Use the **issue summary sentence** (not the code snippet, not the line) as the issue text — the same wording each run keeps the id stable.
+To compute it:
+1. Resolve the finding's file/line with `resolve-line.py` (see step 6) — you already do this.
+2. `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/extract-snippet.py" "<file>" "<post-change line>"` — prints the exact flagged line's literal text from the file on disk.
+3. `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/compute-fid.py" "<file>" "<category>" "<snippet from step 2>"` — always call the script, never hand-compute it.
+
+Why not the free-text issue sentence: an earlier design hashed `file + issue summary sentence`, but that sentence is regenerated by an LLM sub-agent on every run — if a re-review's finder phrased the same bug even slightly differently, the fid changed and the finding was reposted as a duplicate instead of recognized as carried-over. Anchoring to the literal on-disk line instead means the fid is stable as long as the flagged line itself doesn't change, regardless of how any sub-agent describes it in prose.
 
 ---
 
@@ -152,7 +166,7 @@ Then emit **both Agent calls in the same assistant turn** (so they run in parall
 {
   "description": "Correctness & regression finder",
   "model": "haiku",
-  "prompt": "Read $REVIEW_DIFF_FILE then /tmp/pr_context.txt.\n\n[If push_update_mode=true, prepend: 'This is a focused push review — only review the commits pushed since the last review. Do not flag issues from earlier commits in the PR.']\n\nFind correctness bugs and behavioural regressions introduced by the diff. Focus on:\n- Logic errors in changed code paths\n- Changed conditions that now allow or block cases they shouldn't\n- Null / empty / zero edge cases on new code paths\n- Removed guards that previously protected against a bad state\n- Interface/contract mismatches between callers and the changed function\n\nFor each finding output exactly:\nFILE: <path>\nLINE: <the line number within $REVIEW_DIFF_FILE itself that you are flagging — count from line 1 of that file, do not compute a file line number>\nSEVERITY: CRITICAL | WARNING\nISSUE: <one sentence>\n\nIf you find nothing, output: NONE\nDo not call any tools."
+  "prompt": "Read $REVIEW_DIFF_FILE then /tmp/pr_context.txt.\n\n[If push_update_mode=true, prepend: 'This is a focused push review — only review the commits pushed since the last review. Do not flag issues from earlier commits in the PR.']\n\nFind correctness bugs and behavioural regressions introduced by the diff. Focus on:\n- Logic errors in changed code paths\n- Changed conditions that now allow or block cases they shouldn't\n- Null / empty / zero edge cases on new code paths\n- Removed guards that previously protected against a bad state\n- Interface/contract mismatches between callers and the changed function\n\nFor each finding output exactly:\nFILE: <path>\nLINE: <the line number within $REVIEW_DIFF_FILE itself that you are flagging — count from line 1 of that file, do not compute a file line number>\nSEVERITY: CRITICAL | WARNING\nCATEGORY: correctness | security | performance | test-coverage | maintainability — pick whichever actually describes the issue (most of your findings will be 'correctness')\nISSUE: <one sentence>\n\nIf you find nothing, output: NONE\nDo not call any tools."
 }
 ```
 
@@ -162,7 +176,7 @@ Then emit **both Agent calls in the same assistant turn** (so they run in parall
 {
   "description": "Security & edge-case finder",
   "model": "haiku",
-  "prompt": "Read $REVIEW_DIFF_FILE then /tmp/pr_context.txt.\n\n[If push_update_mode=true, prepend: 'This is a focused push review — only review the commits pushed since the last review. Do not flag issues from earlier commits in the PR.']\n\nFind security issues and missing edge-case handling in the diff. Focus on:\n- Input not validated before use (injection, path traversal)\n- Authentication or authorisation checks removed or weakened\n- Sensitive data written to logs\n- Exception or error paths that swallow failures silently\n- Resource leaks (connections, file handles) on error paths\n- Off-by-one errors or boundary conditions in new loops/ranges\n\nFor each finding output exactly:\nFILE: <path>\nLINE: <the line number within $REVIEW_DIFF_FILE itself that you are flagging — count from line 1 of that file, do not compute a file line number>\nSEVERITY: CRITICAL | WARNING | SUGGESTION\nISSUE: <one sentence>\n\nIf you find nothing, output: NONE\nDo not call any tools."
+  "prompt": "Read $REVIEW_DIFF_FILE then /tmp/pr_context.txt.\n\n[If push_update_mode=true, prepend: 'This is a focused push review — only review the commits pushed since the last review. Do not flag issues from earlier commits in the PR.']\n\nFind security issues and missing edge-case handling in the diff. Focus on:\n- Input not validated before use (injection, path traversal)\n- Authentication or authorisation checks removed or weakened\n- Sensitive data written to logs\n- Exception or error paths that swallow failures silently\n- Resource leaks (connections, file handles) on error paths\n- Off-by-one errors or boundary conditions in new loops/ranges\n\nFor each finding output exactly:\nFILE: <path>\nLINE: <the line number within $REVIEW_DIFF_FILE itself that you are flagging — count from line 1 of that file, do not compute a file line number>\nSEVERITY: CRITICAL | WARNING | SUGGESTION\nCATEGORY: correctness | security | performance | test-coverage | maintainability — pick whichever actually describes the issue (this agent covers both 'security' issues and general 'correctness' edge cases, e.g. an off-by-one is correctness even though this agent found it)\nISSUE: <one sentence>\n\nIf you find nothing, output: NONE\nDo not call any tools."
 }
 ```
 
@@ -225,10 +239,13 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-line.py" "$REVIEW_DIFF_FILE" <dif
 **Compute each finding's `fid` — deterministically, not by hand:**
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/compute-fid.py" "<file>" "<issue summary sentence>"
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/extract-snippet.py" "<file>" "<post-change line from resolve-line.py>"
+# prints: <the literal flagged line's source text>
+
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/compute-fid.py" "<file>" "<category from the sub-agent's CATEGORY field>" "<snippet from extract-snippet.py>"
 ```
 
-Write the compiled, verified findings (post-`resolve-line.py` file/line, post-`compute-fid.py` fid) to `/tmp/pr_findings.json` as a JSON list, each entry: `{"file": ..., "line": ..., "severity": "critical"|"warning"|"suggestion", "fid": ..., "body": "<markdown body, e.g. '**[CRITICAL]** ...'>"}`.
+Write the compiled, verified findings (post-`resolve-line.py` file/line, post-`compute-fid.py` fid) to `/tmp/pr_findings.json` as a JSON list, each entry: `{"file": ..., "line": ..., "severity": "critical"|"warning"|"suggestion", "category": "<the same CATEGORY value passed to compute-fid.py>", "fid": ..., "body": "<markdown body, e.g. '**[CRITICAL]** ...'>"}`. `category` is persisted on the posted comment's marker (`post-review.sh` does this) so a *later* re-review's reconciliation can recompute this exact finding's fid against HEAD without needing an LLM to reproduce it — see reconcile.py's fixed/carried-over verification below.
 
 **Reconcile against the prior review and compute the verdict — deterministically:**
 
@@ -237,6 +254,8 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/reconcile.py"
 ```
 
 Reads `/tmp/pr_findings.json`, `/tmp/pr_review_state.json`, and `/tmp/pr_prior_findings.jsonl`; writes `/tmp/pr_reconcile.json` with `fixed`/`carried_over`/`unreviewed_carried_over`/`new` buckets and a `verdict` (`APPROVE` | `APPROVE WITH SUGGESTIONS` | `REQUEST CHANGES` | `NEEDS DISCUSSION`) computed from the open-finding severities. **Use this verdict as-is — do not invent your own verdict string or override it.** In initial mode every finding lands in `new` and the other buckets are empty; this script still runs unconditionally.
+
+**`fixed` requires verified evidence, not just absence.** A prior finding whose `fid` doesn't reappear in this run's `current_findings` is **not** automatically `fixed` — the finder sub-agents are stochastic and re-scan from scratch on every non-push-triggered run, so a re-review of the exact same commit can (and did, in a reported production case) surface a different subset of findings each pass. `reconcile.py` only buckets a disappeared finding as `fixed` when **both** hold: (1) `head_sha` in the state file has actually advanced past `prior_summary_sha` — nothing can be fixed if HEAD hasn't moved since the finding was raised — and (2) the finding's exact flagged line, recomputed as a fid directly from the file on disk (`compute-fid.py`'s `fids_for_file`, not reported by an LLM), is no longer reproducible at HEAD. Anything that fails either check stays `carried_over`, and its severity still feeds the verdict even though it has no matching current finding this pass.
 
 **Write the report body** (`/tmp/pr_report_body.md`) following `styles/report-template.md`'s structure exactly:
 

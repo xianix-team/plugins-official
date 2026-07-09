@@ -53,8 +53,10 @@ post_inline_loop_ado() {
       F_PATH=$(python3 -c "import json; print(json.load(open('/tmp/pr_inline_finding.json'))['file'])")
       F_LINE=$(python3 -c "import json; print(json.load(open('/tmp/pr_inline_finding.json'))['line'])")
       F_FID=$(python3 -c "import json; print(json.load(open('/tmp/pr_inline_finding.json'))['fid'])")
+      F_SEVERITY=$(python3 -c "import json; print(json.load(open('/tmp/pr_inline_finding.json')).get('severity',''))")
+      F_CATEGORY=$(python3 -c "import json; print(json.load(open('/tmp/pr_inline_finding.json')).get('category',''))")
       python3 -c "import json; print(json.load(open('/tmp/pr_inline_finding.json'))['body'])" > /tmp/pr_inline_body.md
-      if err=$(ado_post_inline_finding /tmp/pr_inline_body.md "$F_FID" "$F_PATH" "$F_LINE" 2>&1); then
+      if err=$(ado_post_inline_finding /tmp/pr_inline_body.md "$F_FID" "$F_PATH" "$F_LINE" "$F_SEVERITY" "$F_CATEGORY" 2>&1); then
         echo ok
       else
         { echo "---"; echo "finding: $line"; echo "$err"; } >> /tmp/pr_inline_failures.log
@@ -71,8 +73,10 @@ post_inline_loop_gh() {
       F_PATH=$(python3 -c "import json; print(json.load(open('/tmp/pr_inline_finding.json'))['file'])")
       F_LINE=$(python3 -c "import json; print(json.load(open('/tmp/pr_inline_finding.json'))['line'])")
       F_FID=$(python3 -c "import json; print(json.load(open('/tmp/pr_inline_finding.json'))['fid'])")
+      F_SEVERITY=$(python3 -c "import json; print(json.load(open('/tmp/pr_inline_finding.json')).get('severity',''))")
+      F_CATEGORY=$(python3 -c "import json; print(json.load(open('/tmp/pr_inline_finding.json')).get('category',''))")
       python3 -c "import json; print(json.load(open('/tmp/pr_inline_finding.json'))['body'])" > /tmp/pr_inline_body.md
-      if err=$(gh_post_inline_finding /tmp/pr_inline_body.md "$F_FID" "$F_PATH" "$F_LINE" "$HEAD_SHA" 2>&1); then
+      if err=$(gh_post_inline_finding /tmp/pr_inline_body.md "$F_FID" "$F_PATH" "$F_LINE" "$HEAD_SHA" "$F_SEVERITY" "$F_CATEGORY" 2>&1); then
         echo ok
       else
         { echo "---"; echo "finding: $line"; echo "$err"; } >> /tmp/pr_inline_failures.log

@@ -94,13 +94,15 @@ Use the language detected in the PR for all code snippets. Do not default to Typ
 
 **Line-number convention:** the number after the colon is **the line within the diff file you were given** (count from line 1 of that file — e.g. `/tmp/pr_full_diff.patch` or the incremental diff), **not** the post-change file line. A separate deterministic script (`resolve-line.py`) converts diff-line to file-line afterward — computing that yourself from the `@@` hunk header is exactly what this convention exists to avoid, and it was the single most common cause of dropped/misplaced inline comments.
 
+**Category tag:** every finding must carry a `[CATEGORY: ...]` tag chosen from exactly one of `correctness | security | performance | test-coverage | maintainability` — pick whichever actually describes the issue (most of your findings will be `security`, but e.g. a business-logic abuse case might be `correctness`). This feeds a deterministic finding-id computation downstream — do not invent other category names or leave it blank.
+
 ```
 ## Security Review
 
 **Language / Framework:** [detected language and framework]
 
 ### CRITICAL (Immediate fix required — do not merge)
-- `path/to/file.<ext>:42` — SQL Injection vulnerability [line 42 = line 42 of the diff file, not the file itself]
+- `path/to/file.<ext>:42` [CATEGORY: security] — SQL Injection vulnerability [line 42 = line 42 of the diff file, not the file itself]
   **Risk:** Attacker can read/modify/delete any database record
   **Current:**
   ```[language]
@@ -112,10 +114,10 @@ Use the language detected in the PR for all code snippets. Do not default to Typ
   ```
 
 ### HIGH (Fix before or immediately after merge)
-- `path/to/file.<ext>:87` — [Finding]
+- `path/to/file.<ext>:87` [CATEGORY: security] — [Finding]
 
 ### MEDIUM (Address in next sprint)
-- `path/to/file.<ext>:103` — [Finding]
+- `path/to/file.<ext>:103` [CATEGORY: security] — [Finding]
 
 ### LOW / INFO (Best practice recommendations)
 - [Finding]

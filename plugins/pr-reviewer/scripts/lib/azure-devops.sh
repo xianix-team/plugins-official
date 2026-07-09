@@ -106,22 +106,56 @@ _ado_parse_remote_url() {
   export AZURE_HOST AZURE_ORG AZURE_COLLECTION AZURE_PROJECT AZURE_REPO API_BASE
 }
 
-# ado_resolve_pr_number [explicit-pr-number] — sets PR_ID.
-# Falls back to resolving the active PR for the current branch when no number is given.
+# _ado_extract_pr_number_from_arg <arg> — pure function, no git/curl dependency, directly
+# testable. Prints a PR number if `arg` is an Azure DevOps PR URL, prints nothing otherwise.
+# ADO PR URLs use the singular, differently-spelled segment `pullrequest` (not `pullrequests`),
+# e.g. https://dev.azure.com/org/project/_git/repo/pullrequest/123[?_a=files].
+_ado_extract_pr_number_from_arg() {
+  echo "$1" | grep -oiE '/pullrequest/[0-9]+' | grep -oE '[0-9]+' | head -1
+}
+
+# ado_resolve_pr_number [explicit-pr-number|pr-url|branch-name] — sets PR_ID and
+# TRIGGER_SOURCE (one of: chat-url | chat-number | explicit-branch | current-branch — recorded
+# so the state file can show *how* the PR was identified, not just which one).
+#
+# Precedence mirrors gh_resolve_pr_number:
+#   1. A PR URL (Agent Studio chat re-review trigger).
+#   2. A bare PR number.
+#   3. A branch name, explicitly passed — looked up via the same sourceRefName search the
+#      current-branch fallback below uses. Previously any non-numeric explicit argument was
+#      silently ignored and this function fell through to the *current* branch instead,
+#      meaning an explicit branch name was never actually honored.
+#   4. Nothing — comment-triggered runs, resolved from the currently checked-out branch.
 ado_resolve_pr_number() {
   local explicit="${1:-}"
+  local from_url
+
+  from_url=$(_ado_extract_pr_number_from_arg "$explicit")
+  if [ -n "$from_url" ]; then
+    PR_ID="$from_url"
+    TRIGGER_SOURCE="chat-url"
+    export PR_ID TRIGGER_SOURCE
+    return 0
+  fi
+
   if [ -n "$explicit" ] && echo "$explicit" | grep -qE '^[0-9]+$'; then
     PR_ID="$explicit"
-    export PR_ID
+    TRIGGER_SOURCE="chat-number"
+    export PR_ID TRIGGER_SOURCE
     return 0
   fi
 
   local branch auth
-  if [ "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" = "HEAD" ]; then
+  if [ -n "$explicit" ]; then
+    branch="$explicit"
+    TRIGGER_SOURCE="explicit-branch"
+  elif [ "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" = "HEAD" ]; then
     branch=$(git branch --contains "$(git rev-parse HEAD)" 2>/dev/null \
       | sed 's|^[* ] *||' | grep -v '^(' | head -1)
+    TRIGGER_SOURCE="current-branch"
   else
     branch=$(git rev-parse --abbrev-ref HEAD)
+    TRIGGER_SOURCE="current-branch"
   fi
 
   if [ -z "$branch" ]; then
@@ -143,7 +177,7 @@ except Exception:
     echo "ERROR: no active PR found for branch '${branch}'." >&2
     return 1
   fi
-  export PR_ID
+  export PR_ID TRIGGER_SOURCE
 }
 
 # ado_fetch_pr_metadata — sets PR_TITLE, PR_DESC, PR_SOURCE, PR_TARGET, PR_AUTHOR, PR_AUTHOR_EMAIL.
@@ -244,6 +278,8 @@ for t in data.get("value", []):
         "status": "resolved" if status in ("fixed", "closed", "wontFix", "byDesign") else "open",
         "thread_ref": t["id"],
         "file": file_path.lstrip("/"),
+        "severity": prop(props, "pr-reviewer.severity") or "",
+        "category": prop(props, "pr-reviewer.category") or "",
     }))
 PY
 
@@ -300,24 +336,33 @@ PY
   fi
 }
 
-# ado_post_inline_finding <body-file> <fid> <repo-relative-file> <line> — posts one inline
-# finding thread with threadContext + the pr-reviewer.kind=finding / fid / sha properties.
+# ado_post_inline_finding <body-file> <fid> <repo-relative-file> <line> [severity] [category] —
+# posts one inline finding thread with threadContext + the pr-reviewer.kind=finding / fid / sha
+# properties. severity/category are persisted too (when given) so a future re-review can
+# recompute the verdict correctly for a carried-over finding the finder fails to re-surface,
+# and can narrow which category to try when re-verifying the finding's fid against HEAD.
 ado_post_inline_finding() {
-  local body_file="$1" fid="$2" file_path="$3" line="$4" auth payload
+  local body_file="$1" fid="$2" file_path="$3" line="$4" severity="${5:-}" category="${6:-}" auth payload
   auth=$(ado_auth_header) || return 1
 
-  payload=$(FID="$fid" FILE_PATH="$file_path" LINE_NUMBER="$line" SHA="$HEAD_SHA" python3 - "$body_file" <<'PY'
+  payload=$(FID="$fid" FILE_PATH="$file_path" LINE_NUMBER="$line" SHA="$HEAD_SHA" \
+            SEVERITY="$severity" CATEGORY="$category" python3 - "$body_file" <<'PY'
 import json, os, sys
 body = open(sys.argv[1]).read()
+properties = {
+    "Microsoft.TeamFoundation.Discussion.SupportsMarkdown": 1,
+    "pr-reviewer.kind": "finding",
+    "pr-reviewer.fid": os.environ["FID"],
+    "pr-reviewer.sha": os.environ["SHA"],
+}
+if os.environ.get("SEVERITY"):
+    properties["pr-reviewer.severity"] = os.environ["SEVERITY"]
+if os.environ.get("CATEGORY"):
+    properties["pr-reviewer.category"] = os.environ["CATEGORY"]
 print(json.dumps({
     "comments": [{"content": body, "commentType": 1}],
     "status": "active",
-    "properties": {
-        "Microsoft.TeamFoundation.Discussion.SupportsMarkdown": 1,
-        "pr-reviewer.kind": "finding",
-        "pr-reviewer.fid": os.environ["FID"],
-        "pr-reviewer.sha": os.environ["SHA"],
-    },
+    "properties": properties,
     "threadContext": {
         "filePath": "/" + os.environ["FILE_PATH"].lstrip("/"),
         "rightFileStart": {"line": int(os.environ["LINE_NUMBER"]), "offset": 1},

@@ -2,3 +2,5 @@
 .claude/
 .ado-cache/
 .playwright-cli/
+__pycache__/
+*.pyc

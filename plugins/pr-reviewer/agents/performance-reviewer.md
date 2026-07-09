@@ -81,13 +81,15 @@ Use the language detected in the PR for all code snippets. Do not default to Typ
 
 **Line-number convention:** the number after the colon is **the line within the diff file you were given** (count from line 1 of that file), **not** the post-change file line. A separate deterministic script (`resolve-line.py`) converts diff-line to file-line afterward — do not attempt the `@@` hunk-header arithmetic yourself.
 
+**Category tag:** every finding must carry a `[CATEGORY: ...]` tag chosen from exactly one of `correctness | security | performance | test-coverage | maintainability` — most of your findings will be `performance`. This feeds a deterministic finding-id computation downstream — do not invent other category names or leave it blank.
+
 ```
 ## Performance Review
 
 **Language / Framework:** [detected language and framework]
 
 ### CRITICAL (Will cause production issues)
-- `src/api/users.<ext>:67` — N+1 query: fetching related record for each item in a loop [line 67 = line 67 of the diff file, not the file itself]
+- `src/api/users.<ext>:67` [CATEGORY: performance] — N+1 query: fetching related record for each item in a loop [line 67 = line 67 of the diff file, not the file itself]
   **Impact:** 100 items = 101 database queries. Will cause timeouts under load.
   **Current:**
   ```[language]
@@ -99,11 +101,11 @@ Use the language detected in the PR for all code snippets. Do not default to Typ
   ```
 
 ### WARNING (Degradation under load)
-- `src/utils/search.<ext>:34` — O(n²) nested iteration
+- `src/utils/search.<ext>:34` [CATEGORY: performance] — O(n²) nested iteration
   **Fix:** Use a hash map / dictionary for O(n) lookup
 
 ### SUGGESTION (Optimization opportunity)
-- `src/api/dashboard.<ext>:89` — Three sequential remote calls could run concurrently
+- `src/api/dashboard.<ext>:89` [CATEGORY: performance] — Three sequential remote calls could run concurrently
   **Fix:** [concurrent equivalent in detected language]
 
 ### Verdict

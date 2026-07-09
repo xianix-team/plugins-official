@@ -30,12 +30,55 @@ _gh_parse_remote_url() {
   export OWNER REPO
 }
 
-# gh_resolve_pr_number [explicit-pr-number] — sets PR_NUMBER.
+# _gh_extract_pr_number_from_arg <arg> — pure function, no git/gh dependency, directly
+# testable. Prints a PR number if `arg` is a GitHub PR URL, prints nothing otherwise.
+# Handles both `.../pull/123` and `.../pull/123/files` (or any trailing path/query/fragment).
+_gh_extract_pr_number_from_arg() {
+  echo "$1" | grep -oE '/pull/[0-9]+' | grep -oE '[0-9]+' | head -1
+}
+
+# gh_resolve_pr_number [explicit-pr-number|pr-url|branch-name] — sets PR_NUMBER and
+# TRIGGER_SOURCE (one of: chat-url | chat-number | explicit-branch | current-branch — recorded
+# so the state file can show *how* the PR was identified, not just which one).
+#
+# Precedence:
+#   1. A PR URL (Agent Studio chat re-review trigger) — extract the number regardless of
+#      which owner/repo the URL names; OWNER/REPO for API calls always come from this
+#      workspace's own `origin` remote, never from the pasted URL.
+#   2. A bare PR number (Agent Studio chat, or explicit invocation).
+#   3. A branch name — per this command's own `argument-hint: [pr-number | branch-name]`.
+#      Looked up via `gh pr list --head`. This used to be silently ignored and fall through
+#      to the current-checked-out-branch lookup below, which meant an explicit branch-name
+#      argument was never actually honored.
+#   4. Nothing — comment-triggered runs, where the executor has already checked out the
+#      right branch and we just need to find its PR.
 gh_resolve_pr_number() {
   local explicit="${1:-}"
+  local from_url
+
+  from_url=$(_gh_extract_pr_number_from_arg "$explicit")
+  if [ -n "$from_url" ]; then
+    PR_NUMBER="$from_url"
+    TRIGGER_SOURCE="chat-url"
+    export PR_NUMBER TRIGGER_SOURCE
+    return 0
+  fi
+
   if [ -n "$explicit" ] && echo "$explicit" | grep -qE '^[0-9]+$'; then
     PR_NUMBER="$explicit"
-    export PR_NUMBER
+    TRIGGER_SOURCE="chat-number"
+    export PR_NUMBER TRIGGER_SOURCE
+    return 0
+  fi
+
+  if [ -n "$explicit" ]; then
+    PR_NUMBER=$(gh pr list --head "$explicit" --json number --jq '.[0].number' 2>/dev/null)
+    if [ -z "$PR_NUMBER" ]; then
+      echo "ERROR: could not resolve a PR number from argument '$explicit' (not a PR URL, PR number, or a branch name with an open PR)." >&2
+      return 1
+    fi
+    TRIGGER_SOURCE="explicit-branch"
+    export PR_NUMBER TRIGGER_SOURCE
     return 0
   fi
 
@@ -47,7 +90,37 @@ gh_resolve_pr_number() {
     echo "ERROR: could not resolve a PR number for the current branch." >&2
     return 1
   fi
-  export PR_NUMBER
+  TRIGGER_SOURCE="current-branch"
+  export PR_NUMBER TRIGGER_SOURCE
+}
+
+# gh_ensure_correct_branch — comment-triggered runs (and Agent Studio chat runs that only
+# pass a PR URL/number, no ref) may execute in a workspace still checked out to whatever
+# branch a previous run left it on, not the PR's actual head branch. Detect and fix before
+# diffing — mirrors ado_ensure_correct_branch, needed here for the exact same reason: without
+# it, a review can silently run against the wrong branch's diff even though PR_NUMBER itself
+# was resolved correctly. Only acts when GIT_REF is unset (initial/push-update runs already
+# have the right ref checked out by the executor).
+gh_ensure_correct_branch() {
+  if [ -n "${GIT_REF:-}" ]; then
+    return 0
+  fi
+  if [ -z "${PR_SOURCE:-}" ]; then
+    echo "WARN: no PR source branch resolved — continuing on current branch." >&2
+    return 0
+  fi
+
+  local current_branch
+  current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
+  if [ "$current_branch" = "$PR_SOURCE" ]; then
+    return 0
+  fi
+
+  echo "Comment/chat-triggered run: checking out PR head branch '${PR_SOURCE}' (was on '${current_branch}')" >&2
+  git fetch origin "refs/heads/${PR_SOURCE}:${PR_SOURCE}" 2>/dev/null \
+    || git fetch origin "refs/heads/${PR_SOURCE}" 2>/dev/null
+  git checkout "$PR_SOURCE" 2>/dev/null || git checkout -b "$PR_SOURCE" FETCH_HEAD 2>/dev/null \
+    || echo "WARN: could not check out '${PR_SOURCE}' — diff will be computed against current HEAD." >&2
 }
 
 # gh_fetch_pr_metadata — sets PR_TITLE, PR_DESC, PR_SOURCE, PR_TARGET, PR_AUTHOR.
@@ -110,7 +183,10 @@ assert d.get('data', {}).get('repository', {}).get('pullRequest') is not None
 import json, re
 data = json.load(open('/tmp/pr_review_threads.json'))
 threads = data['data']['repository']['pullRequest']['reviewThreads']['nodes']
-pat = re.compile(r'<!--\s*pr-reviewer:v1\s+kind=finding\s+fid=(\S+)\s+sha=(\S+)\s*-->')
+pat = re.compile(
+    r'<!--\s*pr-reviewer:v1\s+kind=finding\s+fid=(\S+)\s+sha=(\S+)'
+    r'(?:\s+sev=(\S+))?(?:\s+cat=(\S+))?\s*-->'
+)
 for t in threads:
     c = (t['comments']['nodes'] or [None])[0]
     if not c:
@@ -124,6 +200,8 @@ for t in threads:
         "thread_ref": t['id'],
         "comment_ref": c['databaseId'],
         "file": t.get('path') or '',
+        "severity": m.group(3) or "",
+        "category": m.group(4) or "",
     }))
 PY
 
@@ -154,10 +232,17 @@ gh_post_review() {
   gh pr review "$PR_NUMBER" "$flag" --body "$(cat "$body_file")"
 }
 
-# gh_post_inline_finding <body-file> <fid> <repo-relative-file> <line> <head-sha>
+# gh_post_inline_finding <body-file> <fid> <repo-relative-file> <line> <head-sha> [severity] [category]
+# severity/category are persisted in the marker (when given) so a future re-review can
+# recompute the verdict correctly for a carried-over finding the finder fails to re-surface,
+# and can narrow which category to try when re-verifying the finding's fid against HEAD.
 gh_post_inline_finding() {
-  local body_file="$1" fid="$2" file_path="$3" line="$4" head_sha="$5"
-  printf '\n\n<!-- pr-reviewer:v1 kind=finding fid=%s sha=%s -->\n' "$fid" "$head_sha" >> "$body_file"
+  local body_file="$1" fid="$2" file_path="$3" line="$4" head_sha="$5" severity="${6:-}" category="${7:-}"
+  local marker="<!-- pr-reviewer:v1 kind=finding fid=${fid} sha=${head_sha}"
+  [ -n "$severity" ] && marker="${marker} sev=${severity}"
+  [ -n "$category" ] && marker="${marker} cat=${category}"
+  marker="${marker} -->"
+  printf '\n\n%s\n' "$marker" >> "$body_file"
   gh api "repos/${OWNER}/${REPO}/pulls/${PR_NUMBER}/comments" \
     --method POST \
     --field path="$file_path" \

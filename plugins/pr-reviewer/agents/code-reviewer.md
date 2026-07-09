@@ -60,11 +60,13 @@ The review lead passes you the changed file list and patches fetched via git. Us
 
 **Line-number convention:** the number after the colon is **the line within the diff file you were given** (count from line 1 of that file), **not** the post-change file line. A separate deterministic script (`resolve-line.py`) converts diff-line to file-line afterward — do not attempt the `@@` hunk-header arithmetic yourself.
 
+**Category tag:** every finding must carry a `[CATEGORY: ...]` tag chosen from exactly one of `correctness | security | performance | test-coverage | maintainability` — pick whichever actually describes the issue, not just "whatever this agent's usual focus is" (e.g. a finding under Error Handling might be `correctness`, one under Security Basics might be `security`). This feeds a deterministic finding-id computation downstream — do not invent other category names or leave it blank.
+
 ```
 ## Code Review
 
 ### Critical Issues
-- `path/to/file.<ext>:42` — [Issue] [line 42 = line 42 of the diff file, not the file itself]
+- `path/to/file.<ext>:42` [CATEGORY: correctness] — [Issue] [line 42 = line 42 of the diff file, not the file itself]
   **Why:** [Explanation]
   **Fix:**
   ```[language]
@@ -72,11 +74,11 @@ The review lead passes you the changed file list and patches fetched via git. Us
   ```
 
 ### Warnings
-- `path/to/file.<ext>:87` — [Issue]
+- `path/to/file.<ext>:87` [CATEGORY: maintainability] — [Issue]
   **Fix:** [Suggestion]
 
 ### Suggestions
-- `path/to/file.<ext>:120` — [Suggestion]
+- `path/to/file.<ext>:120` [CATEGORY: maintainability] — [Suggestion]
 
 ### Positive Observations
 [What was done well — be specific]

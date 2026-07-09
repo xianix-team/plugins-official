@@ -55,7 +55,7 @@ echo "Platform: $PLATFORM"
 
 PR_TITLE=""; PR_DESC=""; PR_SOURCE=""; PR_TARGET=""; PR_AUTHOR=""
 AZURE_ORG=""; AZURE_PROJECT=""; AZURE_REPO=""; API_BASE=""; PR_ID=""
-OWNER=""; REPO=""; PR_NUMBER=""
+OWNER=""; REPO=""; PR_NUMBER=""; TRIGGER_SOURCE="current-branch"
 
 case "$PLATFORM" in
   azuredevops)
@@ -72,12 +72,29 @@ case "$PLATFORM" in
     gh_parse_remote || exit 1
     gh_resolve_pr_number "$PR_ARG" || exit 1
     gh_fetch_pr_metadata
+    gh_ensure_correct_branch
     PR_ID="$PR_NUMBER"
     ;;
   bitbucket|generic)
     PR_ID="$PR_ARG"
     ;;
 esac
+
+echo "PR: $PR_ID  (identified via: $TRIGGER_SOURCE)"
+
+# --- Keep the base branch fresh before diffing against it ---
+# Comment-triggered and Agent Studio chat-triggered runs (PR URL or PR number, no explicit
+# ref) may execute in a workspace reused from an earlier run, whose local
+# refs/remotes/origin/<base> can lag the real remote. Nothing upstream of this point
+# refreshes it, so without this fetch the diff — and any "against latest main" claim in the
+# posted review — can silently be computed against a stale base. Best-effort: a fetch
+# failure (offline, auth) must not abort the review, it only means we fall back to whatever
+# ref state is already present locally, same as before this fix.
+if [ -n "$PR_TARGET" ]; then
+  git fetch origin "$PR_TARGET" 2>/dev/null || true
+else
+  git fetch origin 2>/dev/null || true
+fi
 
 # --- Resolve base/head SHA (robust to detached HEAD, missing remote-tracking refs) ---
 # Prefer the PR's real target branch (PR_TARGET) as the base when known; fall back to the
@@ -172,7 +189,11 @@ else
   RANGE_BASE="$BASE_SHA"
 fi
 
-echo "Review mode: $REVIEW_MODE  |  push-update: $PUSH_UPDATE_MODE  |  detection: $DETECTION_STATUS  |  range: ${RANGE_BASE}..${HEAD_SHA}"
+if [ "$REVIEW_MODE" = "rereview" ]; then
+  echo "Review mode: RE-REVIEW (focused on changes since prior review)  |  trigger: $TRIGGER_SOURCE  |  push-update: $PUSH_UPDATE_MODE  |  detection: $DETECTION_STATUS  |  range: ${RANGE_BASE}..${HEAD_SHA}"
+else
+  echo "Review mode: INITIAL (comprehensive)  |  trigger: $TRIGGER_SOURCE  |  push-update: $PUSH_UPDATE_MODE  |  detection: $DETECTION_STATUS  |  range: ${RANGE_BASE}..${HEAD_SHA}"
+fi
 
 INCREMENTAL_DIFF_FILE=""
 INCREMENTAL_CHANGED_FILES=""
@@ -208,7 +229,7 @@ echo "Tier: $REVIEW_TIER"
 PLATFORM="$PLATFORM" REMOTE_URL="${REMOTE_URL:-}" \
 AZURE_ORG="$AZURE_ORG" AZURE_PROJECT="$AZURE_PROJECT" AZURE_REPO="$AZURE_REPO" API_BASE="$API_BASE" \
 OWNER="$OWNER" REPO="$REPO" \
-PR_ID="$PR_ID" PR_NUMBER="$PR_NUMBER" \
+PR_ID="$PR_ID" PR_NUMBER="$PR_NUMBER" TRIGGER_SOURCE="$TRIGGER_SOURCE" \
 PR_TITLE="$PR_TITLE" PR_DESC="$PR_DESC" PR_SOURCE="$PR_SOURCE" PR_TARGET="$PR_TARGET" PR_AUTHOR="$PR_AUTHOR" \
 BASE="$BASE" BASE_SHA="$BASE_SHA" HEAD_SHA="$HEAD_SHA" CURRENT_BRANCH="$CURRENT_BRANCH" \
 CHANGED_COUNT="$CHANGED_COUNT" DIFF_LINES="$DIFF_LINES" \
@@ -237,6 +258,7 @@ state = {
     },
     "pr_id": env("PR_ID"),
     "pr_number": env("PR_NUMBER"),
+    "trigger_source": env("TRIGGER_SOURCE"),
     "pr_title": env("PR_TITLE"),
     "pr_description": env("PR_DESC"),
     "pr_source_branch": env("PR_SOURCE"),

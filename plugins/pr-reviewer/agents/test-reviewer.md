@@ -94,6 +94,8 @@ Use the language detected in the PR for all code snippets. Do not default to Typ
 
 **Line-number convention:** where you cite a line (e.g. under "Test Quality Issues"), the number is **the line within the diff file you were given**, **not** the post-change file line. A separate deterministic script (`resolve-line.py`) converts diff-line to file-line afterward — do not attempt the `@@` hunk-header arithmetic yourself.
 
+**Category tag:** every line-anchored finding (e.g. under "Test Quality Issues") must carry a `[CATEGORY: ...]` tag chosen from exactly one of `correctness | security | performance | test-coverage | maintainability` — most of your findings will be `test-coverage`, but a genuine logic bug found while reading a test might be `correctness`. This feeds a deterministic finding-id computation downstream — do not invent other category names or leave it blank. "Missing Tests" items aren't line-anchored (they're a gap, not a diff line) so they don't need this tag.
+
 ```
 ## Test Review
 
@@ -117,7 +119,7 @@ Use the language detected in the PR for all code snippets. Do not default to Typ
   **Suggested test:** [write a test in the detected language/framework]
 
 ### Test Quality Issues
-- `tests/auth/login_test.<ext>:34` — [issue description]
+- `tests/auth/login_test.<ext>:34` [CATEGORY: test-coverage] — [issue description]
   **Fix:** [fix in detected language]
 
 ### Suggestions

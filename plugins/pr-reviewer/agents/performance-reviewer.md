@@ -49,18 +49,6 @@ A linear search inside a loop produces O(n²) — replace with a hash map / dict
 - [ ] Large buffers/arrays not copied unnecessarily
 - [ ] Caches have eviction policies — not unbounded growth
 
-**Unbounded in-memory collection check (apply to every changed file, not just the ones that
-look cache-related):** for every new or modified module-level/class-level `dict`/`map`/`list`/`set`
-that entries get added to over the process lifetime (a cache, a session store, a registry, an
-in-memory index, a "seen" set for dedup) — check explicitly whether anything ever removes
-entries: a TTL/expiry check, an LRU/size cap, an explicit `del`/`delete`/`remove` call, or a
-process restart boundary that makes it acceptable. If you can find where entries are
-**added** but not where any of these ever run, that's an unbounded-growth memory leak —
-flag it under `performance`, citing the exact line that creates the collection and the exact
-line(s) that insert into it. Do this per collection: catching one unbounded cache in a diff
-does not mean you can skip checking a second, structurally identical one elsewhere in the
-same diff — each is a separate finding.
-
 ### Async & Concurrency
 - [ ] Independent I/O operations run concurrently where possible (e.g. `Promise.all` in JS, `Task.WhenAll` in C#, goroutines in Go, `asyncio.gather` in Python)
 - [ ] No unnecessary synchronous blocking in async/concurrent contexts

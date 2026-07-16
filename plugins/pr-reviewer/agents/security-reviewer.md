@@ -53,18 +53,6 @@ Search for injection vulnerabilities using `Grep` with patterns suited to the la
 
 Examples vary by language — look for the equivalent patterns in Go, C#, Python, Java, etc.
 
-**Before flagging dynamic SQL as injection, check what's actually being interpolated.**
-String-building near a query call is not itself the vulnerability — the question is whether
-*attacker-controlled values* end up inside the query string, or only *placeholder syntax*
-(`?`, `%s`, `$1`, named params) with the real values passed separately through the
-driver/ORM's parameter-binding mechanism (e.g. `cursor.execute(query, params)`,
-`db.Query(query, args...)`). The latter is the standard safe pattern for building a
-variable-length `IN (...)` clause and must **not** be flagged — an f-string/concatenation
-that only assembles `?,?,?` placeholders, with the actual values bound afterward, is safe.
-Before writing a CRITICAL injection finding, name the specific variable that is embedded
-**raw** into the query string (not merely "this uses string interpolation near SQL") — if you
-can't point to a raw value crossing into the query text, it isn't injection.
-
 ### A04: Insecure Design
 - [ ] Security controls are not bypassable through design flaws
 - [ ] Rate limiting applied to sensitive operations (login, password reset)

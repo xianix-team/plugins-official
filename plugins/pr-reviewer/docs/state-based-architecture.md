@@ -128,7 +128,7 @@ Only includes findings posted by **this plugin** (identified by marker). Used to
 
 4. Command reconciliation (step 7):
    → All findings are NEW (no prior findings to compare)
-   → Write /tmp/pr_review_reconcile_state.json
+   → Write /tmp/pr_reconcile.json
       - "new": [all findings]
       - "carried_over_fids": []
       - "fixed": []
@@ -171,7 +171,7 @@ Only includes findings posted by **this plugin** (identified by marker). Used to
       - NEW: fids not in prior set
       - CARRIED_OVER: fids in both sets
       - FIXED: fids in prior set but not current (with verification)
-   → Write /tmp/pr_review_reconcile_state.json
+   → Write /tmp/pr_reconcile.json
 
 6. Command calls provider:
    → bash ado-post-review.sh
@@ -180,7 +180,7 @@ Only includes findings posted by **this plugin** (identified by marker). Used to
 7. Provider (ado-post-review.sh):
    → Read /tmp/pr_review_state.json
    → Confirm mode="rereview"
-   → Read /tmp/pr_review_reconcile_state.json
+   → Read /tmp/pr_reconcile.json
    → SKIP summary post (already exists for prior SHA)
    → Resolve FIXED findings (reply + mark resolved)
    → POST only NEW findings (skip carried-over)
@@ -261,6 +261,14 @@ Some Azure DevOps API responses strip custom properties. We:
 
 Each provider implements the same logic but calls appropriate APIs.
 
+### 5. Why the marker version is `v1.2`, not `v1`
+
+The fid formula changed (see *Fabricated fid* in Known Failure Modes below): `v1` hashed `file + issue sentence`, the current formula hashes `file + on-disk snippet + occurrence_index`. These are different hash spaces — a `v1` fid and a current fid for the exact same finding will not match.
+
+If the marker string hadn't changed, `v1`-marked threads from a prior plugin version would still be recognized as plugin-owned by the detect-prior regex, their old-formula fids would load into `/tmp/pr_prior_findings.jsonl`, and reconciliation would compare them against new-formula fids for the same current findings — which can never match. Gate B (recompute the fid from the current on-disk line, compare to the prior fid) would then read "doesn't reproduce" for findings whose underlying bug is completely untouched, and they'd get silently marked `Fixed` and resolved. That is worse than a duplicate comment: a real, still-open finding disappears from view.
+
+Bumping the marker to `v1.2` makes `v1`-marked threads fail the detect-prior regex entirely, so they fall through to external-thread (reply-only, never auto-resolved) handling instead — a safe path for any PR that was reviewed by a version of the plugin that predates this fid formula. The one-time cost: such a PR's next review runs as a full initial-mode pass (everything re-scanned, `v1` threads left alone as external) rather than a normal incremental re-review; every review after that behaves normally under `v1.2`.
+
 ## Provider Implementation Checklist
 
 ### At Startup (All Providers)
@@ -280,7 +288,7 @@ Each provider implements the same logic but calls appropriate APIs.
 
 - [ ] **Initial mode:** POST all findings
 - [ ] **Re-review mode:** 
-  - [ ] Read `/tmp/pr_review_reconcile_state.json`
+  - [ ] Read `/tmp/pr_reconcile.json`
   - [ ] Extract `carried_over_fids`
   - [ ] For each finding: SKIP if fid in carried-over set, ELSE POST
 
@@ -349,7 +357,7 @@ jq .mode /tmp/pr_review_state.json
 
 # What findings are in each bucket?
 jq '.new | length, .carried_over_fids | length, .fixed | length' \
-  /tmp/pr_review_reconcile_state.json
+  /tmp/pr_reconcile.json
 
 # What was the prior review?
 source /tmp/pr_prior.env

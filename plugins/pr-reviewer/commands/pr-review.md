@@ -83,8 +83,6 @@ Stamp every comment the plugin posts with a hidden marker string:
 
 On **GitHub** the marker is an HTML comment appended to the comment body — it renders invisibly. On **Azure DevOps**, HTML comments are *not* reliably hidden, so the same fields are stored as thread **`properties`** (`pr-reviewer.kind`, `pr-reviewer.fid`, `pr-reviewer.sha`) instead of in the body. The provider files show the exact mechanics.
 
-**Version history:** `v1` markers (from prior plugin runs) will no longer be recognized as plugin-owned findings after this upgrade. PRs with open `v1`-marked threads will run one full initial-mode pass on their next review, fully re-scanning and re-posting all findings. This is a one-time cost; subsequent re-reviews on those PRs will behave normally with `v2` markers. This version bump is necessary to fix a flaw in the `v1` formula (see below).
-
 **Plugin-owned threads** (carrying this marker) are the only ones the plugin may **resolve**. On re-review, fixed plugin findings get a reply and the thread is marked resolved — same as before.
 
 **External threads** (humans, other bots, unmarked comments) are never resolved by this plugin. When an open external thread looks addressed at `HEAD`, the plugin may **reply** that it appears fixed and leave the thread open for the original author. Still-open external threads are left untouched (no reply every run — avoid notification spam). All open inline threads — plugin and external — are used for awareness and dedup so the plugin does not re-post the same finding.
@@ -570,20 +568,18 @@ echo "Review mode: $REVIEW_MODE  |  incremental range: ${RANGE_BASE}..${HEAD_SHA
 export REVIEW_MODE RANGE_BASE
 
 # --- Write canonical review state (read by all providers) ---
-# This ensures providers don't have to guess or make independent decisions
-python3 - "$REVIEW_MODE" "${PRIOR_SUMMARY_SHA:-}" "$HEAD_SHA" "$RANGE_BASE" \
-  "$([ "$PR_REVIEWER_RECONCILE" = "false" ] && echo false || echo true)" <<'PYTHON'
-import json, sys, pathlib
-mode, prior_sha, head_sha, range_base, reconcile = sys.argv[1:6]
-state = {
-    "mode": mode,
-    "prior_sha": prior_sha or None,
-    "head_sha": head_sha,
-    "range_base": range_base,
-    "reconcile_enabled": reconcile.lower() in ("true", "1", "yes"),
-}
-pathlib.Path("/tmp/pr_review_state.json").write_text(json.dumps(state, indent=2))
-PYTHON
+# This ensures providers don't have to guess or make independent decisions.
+# Uses the same shared lib/state.sh that providers read back with read_review_state()
+# (scripts/ado-post-review.sh) — one implementation of the state-file shape, not two.
+STATE_LIB="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/scripts/lib/state.sh}"
+if [ -z "${STATE_LIB:-}" ] || [ ! -f "$STATE_LIB" ]; then
+  STATE_LIB=$(find "${CLAUDE_PLUGIN_ROOT:-.}" ~/.claude/plugins -path '*/pr-reviewer/scripts/lib/state.sh' 2>/dev/null | head -1)
+fi
+[ -n "$STATE_LIB" ] && [ -f "$STATE_LIB" ] || { echo "ERROR: scripts/lib/state.sh not found — plugin install is broken" >&2; exit 1; }
+# shellcheck disable=SC1090
+source "$STATE_LIB"
+write_review_state "$REVIEW_MODE" "${PRIOR_SUMMARY_SHA:-}" "$HEAD_SHA" "$RANGE_BASE" \
+  "$([ "$PR_REVIEWER_RECONCILE" = "false" ] && echo false || echo true)"
 ```
 
 3. Capture the **incremental** diff (commits pushed since the last review) in addition to the full PR diff — it is what you skim first in re-review mode and what populates the "changed since last review" line in the delta:
@@ -960,50 +956,6 @@ For each finding in the compiled report, compute its `fid` with the `compute_fid
 
 ### Reconcile against the prior review (re-review mode only)
 
-## 8. Execute the Posting Step (Immediately after compiling the report)
-
-**Mandatory:** Post the review to the platform immediately. Do not wait for user input or confirmations. All findings are lost if posting is skipped.
-
-### Load review state and execute platform-appropriate posting
-
-```bash
-# Load state written in step 3
-source /tmp/pr_state.env 2>/dev/null || { echo "ERROR: /tmp/pr_state.env missing"; exit 1; }
-source /tmp/pr_review_state.json >/dev/null 2>&1 || true  # optional: for inspection
-export VERDICT  # Must be set before posting (from step 7)
-
-# Verify prerequisites
-[ -f /tmp/pr_thread_body.md ] || { echo "ERROR: /tmp/pr_thread_body.md missing"; exit 1; }
-[ -f /tmp/pr_inline_findings.jsonl ] || { echo "ERROR: /tmp/pr_inline_findings.jsonl missing"; exit 1; }
-
-# Execute platform-specific posting script
-case "$PLATFORM" in
-  azure)
-    # Azure DevOps: source pr_azure.env for API endpoints, then run posting script
-    source /tmp/pr_azure.env 2>/dev/null || { echo "ERROR: /tmp/pr_azure.env missing (did you run Step 2?)"; exit 1; }
-    bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/ado-post-review.sh"
-    ;;
-  github)
-    # GitHub: use provider script from providers/github.md
-    bash "${CLAUDE_PLUGIN_ROOT:-.}/providers/github.md"
-    ;;
-  *)
-    echo "Platform '$PLATFORM' not yet supported for automated posting" >&2
-    exit 1
-    ;;
-esac
-```
-
-If posting fails:
-- Check `/tmp/pr_inline_failures.log` for which findings failed to post
-- Verify `VERDICT` was exported from Step 7
-- Confirm Azure token (`AZURE_DEVOPS_TOKEN`) or GitHub token is valid
-- Re-run the posting script once auth/env is corrected
-
----
-
-### Reconcile against the prior review (re-review mode only)
-
 **Precedence rule:** First check whether each prior finding's `fid` is present in the current finding set, **before** checking resolved-status. This ensures a bug that was manually marked resolved but still reproduces gets surfaced as `reopened`, not silently skipped.
 
 When `REVIEW_MODE=rereview`, classify by comparing the current finding set to `/tmp/pr_prior_findings.jsonl` **by `fid`**:
@@ -1018,14 +970,14 @@ When `REVIEW_MODE=rereview`, classify by comparing the current finding set to `/
 
 **`fixed` requires verified evidence, not just absence.** A prior finding whose `fid` doesn't reappear in this run's current finding set is **not** automatically `fixed` — the finder sub-agents are stochastic and re-scan from scratch on every non-push-triggered run, so a re-review of the exact same commit can (and did, in a reported production case) surface a different subset of findings each pass. Only bucket a disappeared finding as `fixed` when **both** gates hold:
 
-- **Gate A — HEAD actually advanced.** `HEAD_SHA` must have moved past the sha the prior finding's marker was posted against. Nothing can be fixed if HEAD hasn't changed since the finding was raised. **MANDATORY MECHANICAL CHECK (before writing `/tmp/pr_reconcile.json`):** If `RANGE_BASE == PRIOR_SUMMARY_SHA` (same-commit re-run), the `fixed` bucket MUST be empty — move any fid that appears to have disappeared into `carried_over` instead. Do not rely on LLM judgment here; this is stochastic scan variance, not a real fix.
+- **Gate A — HEAD actually advanced.** `HEAD_SHA` must have moved past the sha the prior finding's marker was posted against. Nothing can be fixed if HEAD hasn't changed since the finding was raised. **MANDATORY MECHANICAL CHECK (before writing `/tmp/pr_reconcile.json`):** If `RANGE_BASE == PRIOR_SUMMARY_SHA` (same-commit re-run), the `fixed` bucket MUST be empty — move any fid that appears to have disappeared into `carried_over_fids` instead. Do not rely on LLM judgment here; this is stochastic scan variance, not a real fix.
 - **Gate B — the flagged line is genuinely gone.** Recompute the fid directly from the file on disk at `HEAD_SHA` for the prior finding's `(file, snippet)` — read the current line(s) around where it was last anchored and recompute `compute_fid` against each — and confirm none of them reproduce the prior fid.
 
-Anything that fails either gate stays `carried_over`, and its severity still feeds the verdict even though it has no matching current finding this pass.
+Anything that fails either gate stays in `carried_over_fids`, and its severity still feeds the verdict even though it has no matching current finding this pass.
 
-**Spot-check the `fixed` bucket before trusting it — you, not a mechanical check.** Gate B above proves only that one exact literal line is gone from the file; it cannot distinguish "genuinely fixed" from "same bug, line text shifted" (an unrelated rename, a reformat, a line split elsewhere in the same commit). Since `fixed` is normally small (a handful of entries at most), for **each** entry you are about to bucket as `fixed`: re-read the current version of that finding's `file` (you likely already have it open from this pass) and confirm the underlying bug pattern the original finding described is actually gone — not just reworded, renamed, or moved a few lines. If the pattern is still present, move that entry to `carried_over` instead and keep its severity in the open set. Only entries that survive this check may be reported as fixed or trigger a reply-and-resolve in the posting step.
+**Spot-check the `fixed` bucket before trusting it — you, not a mechanical check.** Gate B above proves only that one exact literal line is gone from the file; it cannot distinguish "genuinely fixed" from "same bug, line text shifted" (an unrelated rename, a reformat, a line split elsewhere in the same commit). Since `fixed` is normally small (a handful of entries at most), for **each** entry you are about to bucket as `fixed`: re-read the current version of that finding's `file` (you likely already have it open from this pass) and confirm the underlying bug pattern the original finding described is actually gone — not just reworded, renamed, or moved a few lines. If the pattern is still present, move that entry to `carried_over_fids` instead and keep its severity in the open set. Only entries that survive this check may be reported as fixed or trigger a reply-and-resolve in the posting step.
 
-Write the four actionable buckets to `/tmp/pr_reconcile.json` (`{"fixed":[...], "carried_over":[...], "reopened":[...], "new":[...]}`, each entry keyed by `fid` with its `thread_ref`/`comment_ref` from the prior file) so the posting step can act on them without recomputing.
+Write the four actionable buckets to `/tmp/pr_reconcile.json`: `{"fixed":[...], "carried_over_fids":[...], "reopened":[...], "new":[...]}`. **`carried_over_fids` is a flat array of fid strings only** — no `thread_ref`/`comment_ref`, because no action is taken on these (the thread is already open and correct); the posting scripts (`scripts/ado-post-review.sh`, `providers/github.md`) read exactly this key name to decide which findings to skip re-posting, so it must match verbatim. `fixed`, `reopened`, and `new` are arrays of objects keyed by `fid` with their `thread_ref`/`comment_ref` from the prior file, so the posting step can act on them without recomputing.
 
 Then prepend a **Re-review delta** block to the report body (above the Summary), using the template's re-review section:
 
@@ -1033,6 +985,7 @@ Then prepend a **Re-review delta** block to the report body (above the Summary),
 ### Re-review delta
 Reviewed N new commit(s) since the last review (`<RANGE_BASE>`..`<HEAD_SHA>`).
 - ✅ Fixed: <count> previously-flagged issue(s) resolved
+- 🔴 Reopened: <count> previously-fixed issue(s) still reproduce — regression (omit this line entirely when the `reopened[]` bucket is empty)
 - ⏳ Still open: <count> carried-over issue(s)
 - 🆕 New: <count> issue(s) introduced since the last review
 ```
@@ -1131,7 +1084,7 @@ After compiling the report (and applying fixes if in fix mode), post it to the p
 |---|---|---|---|---|
 | A | Cast the verdict / vote | `gh pr review` flag | `PUT .../reviewers/{id}` with vote | n/a |
 | B | Post the full report body (incl. delta) as one PR-level comment, **with the summary marker** | `gh pr review --body` | `POST .../threads` (no `threadContext`) | write to `pr-review-report.md` |
-| R | **Re-review only:** reconcile prior **plugin** findings — resolve **Fixed** threads (with a reply), leave **Carried-over** threads open (no duplicate) | reply + `resolveReviewThread` (GraphQL) | reply + `PATCH .../threads/{id}` `status:fixed` | n/a |
+| R | **Re-review only:** reconcile prior **plugin** findings — resolve **Fixed** threads (with a reply), reactivate **Reopened** threads (with a reply), leave **Carried-over** threads open (no duplicate) | reply + `resolveReviewThread` / `unresolveReviewThread` (GraphQL) | reply + `PATCH .../threads/{id}` `status:fixed` / `status:active` | n/a |
 | E | Reply on **addressed external** open threads (reply only — **never resolve**) | reply via `.../comments/{id}/replies` | reply via `POST .../threads/{id}/comments` | n/a |
 | C | Post **one inline thread per finding** (initial mode: every surviving finding; re-review mode: **only the New bucket** after dedup), **each with a finding marker** | `gh api .../pulls/<n>/comments` per finding | `POST .../threads` with `threadContext` per finding | n/a (skip with note) |
 
@@ -1144,9 +1097,10 @@ After compiling the report (and applying fixes if in fix mode), post it to the p
 Skip in initial mode and on the generic platform. Drive this from `/tmp/pr_reconcile.json` (built in step 7):
 
 - **Fixed** (`fixed[]`): for each, post a short reply on the existing thread — e.g. `✅ Resolved as of \`<HEAD_SHA>\`` — then mark the thread resolved/fixed. Use the platform mechanics in the provider file's *Reconciling prior findings* section.
-- **Carried-over** (`carried_over[]`): take **no** action. The thread is already open; do not reply on every run (avoid notification spam) and never re-post the finding as a new thread.
+- **Reopened** (`reopened[]`): for each, post a short reply on the existing thread — e.g. `⚠️ This finding still reproduces as of \`<HEAD_SHA>\` despite being marked resolved` — then reactivate the thread (unresolve on GitHub, `status:active` on Azure DevOps). This is what surfaces a regression: a finding a human or a prior run marked fixed, but that the current diff shows is back.
+- **Carried-over** (`carried_over_fids[]`): take **no** action. The thread is already open; do not reply on every run (avoid notification spam) and never re-post the finding as a new thread.
 
-Track a counter (`RESOLVED_OK` / `RESOLVED_FAIL`) the same way inline posting does, and include resolved-count in the final confirmation line.
+Track counters (`RESOLVED_OK` / `RESOLVED_FAIL` and `REOPENED_OK` / `REOPENED_FAIL`) the same way inline posting does, and include both in the final confirmation line — a reopened finding is a regression and must not be reported the same as an ordinary re-review.
 
 ### Sub-step E — reply on addressed external threads
 
@@ -1198,17 +1152,17 @@ Determine `EXPECTED_INLINE`: in **initial mode** it is the count of findings in 
 - If `INLINE_OK` is `0` and `EXPECTED_INLINE` is `> 0`: posting failed silently. Surface the failure log (`/tmp/pr_inline_failures.log` on Azure DevOps) and treat the run as a partial failure.
 - If `INLINE_OK` is much smaller than `EXPECTED_INLINE`: read the failure log and either retry the failed ones or include them in the output diagnostic.
 
-After posting, output a single confirmation line that uses the **actual** inline count, not a hard-coded one. In re-review mode also report the reconciliation outcome. When external replies ran, include that count too:
+After posting, output a single confirmation line that uses the **actual** inline count, not a hard-coded one. In re-review mode also report the reconciliation outcome — `<carried_over count>` is `jq '.carried_over_fids | length' /tmp/pr_reconcile.json` (or the python equivalent), not a value any provider script exports. When external replies ran, include that count too:
 
 ```
 # initial mode
 Review posted on PR #<number>: <verdict> — <INLINE_OK>/<EXPECTED_INLINE> inline comments — <EXTERNAL_REPLY_OK> external replies — <URL>
 
 # re-review mode
-Re-review posted on PR #<number>: <verdict> — <INLINE_OK>/<EXPECTED_INLINE> new — <RESOLVED_OK> resolved — <carried_over count> still open — <EXTERNAL_REPLY_OK> external replies — <URL>
+Re-review posted on PR #<number>: <verdict> — <INLINE_OK>/<EXPECTED_INLINE> new — <RESOLVED_OK> resolved — <carried_over count> still open — <REOPENED_OK> reopened — <EXTERNAL_REPLY_OK> external replies — <URL>
 ```
 
-Omit the `external replies` segment when `EXTERNAL_REPLY_OK` is unset or 0 and there was nothing to address.
+Omit the `external replies` segment when `EXTERNAL_REPLY_OK` is unset or 0 and there was nothing to address. Omit the `reopened` segment when `REOPENED_OK` is unset or 0 — a reopened finding is a regression signal and expected to be rare, so it should stand out by its presence rather than clutter every ordinary re-review as `0 reopened`. **Never omit it when `REOPENED_OK > 0`** — that count is the one place a returning bug becomes visible to the person reading this line.
 
 If `INLINE_OK < EXPECTED_INLINE`, append a second line:
 

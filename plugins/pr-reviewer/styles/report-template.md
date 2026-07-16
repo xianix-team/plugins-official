@@ -26,6 +26,7 @@ This template defines the structure for the compiled PR review report. The `/pr-
 
 Reviewed [N] new commit(s) since the last review (`[prior sha]`..`[current sha]`).
 - ✅ Fixed: [count] previously-flagged issue(s) resolved
+- 🔴 Reopened: [count] previously-fixed issue(s) still reproduce — regression (omit this line when there are none)
 - ⏳ Still open: [count] carried-over issue(s)
 - 🆕 New: [count] issue(s) introduced since the last review
 

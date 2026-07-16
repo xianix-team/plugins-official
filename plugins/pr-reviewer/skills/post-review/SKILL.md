@@ -59,11 +59,11 @@ Do not ask for confirmation at any point. Execute all steps autonomously and pro
 
 4. **Post the review** (sub-steps, all mandatory when supported by the platform)
 
-   First, unless `PR_REVIEWER_RECONCILE=false`, run the provider **detect-prior script** as one Bash call (`scripts/gh-detect-prior.sh` or `scripts/ado-detect-prior.sh` — see provider *Detecting a prior review*). Do **not** invent a shortened `curl`/`THREADS_JSON` dump. That writes `/tmp/pr_prior_findings.jsonl`, `/tmp/pr_open_threads.jsonl`, and `/tmp/pr_prior.env`. If marked prior findings exist, this is a **re-review**: reconcile them (resolve the ones now fixed, leave carried-over ones open, post only genuinely new findings). Also validate open **external** threads against `HEAD`, write `/tmp/pr_external_reconcile.json`, and **dedup** findings that overlap existing open threads before posting. See *Comment markers and finding identity*, *Reconcile against existing open review threads*, and *Reconciling prior findings* in `commands/pr-review.md` and the provider files.
+   First, unless `PR_REVIEWER_RECONCILE=false`, run the provider **detect-prior script** as one Bash call (`scripts/gh-detect-prior.sh` or `scripts/ado-detect-prior.sh` — see provider *Detecting a prior review*). Do **not** invent a shortened `curl`/`THREADS_JSON` dump. That writes `/tmp/pr_prior_findings.jsonl`, `/tmp/pr_open_threads.jsonl`, and `/tmp/pr_prior.env`. If marked prior findings exist, this is a **re-review**: reconcile them into four buckets — resolve the ones now fixed, reactivate any marked-resolved finding whose fid reappeared (a regression — see *Reopened* below), leave carried-over ones open, post only genuinely new findings. Also validate open **external** threads against `HEAD`, write `/tmp/pr_external_reconcile.json`, and **dedup** findings that overlap existing open threads before posting. See *Comment markers and finding identity*, *Reconcile against existing open review threads*, and *Reconciling prior findings* in `commands/pr-review.md` and the provider files.
 
    1. Cast the verdict / vote (GitHub review flag, Azure DevOps reviewer PUT — see provider).
    2. Post the full report body (with the re-review delta / existing-threads blocks when applicable) as one PR-level comment, **carrying the summary marker**.
-   3. **(Re-review only) Reconcile prior plugin findings** — reply on + resolve the threads whose findings are now fixed; do not re-post carried-over findings.
+   3. **(Re-review only) Reconcile prior plugin findings** — reply on + resolve the threads whose findings are now fixed; reply on + reactivate the threads whose findings are **reopened** (previously marked resolved, but the fid reappeared in this run — the regression must be visible, not silently absorbed back into "carried-over"); do not re-post carried-over findings.
    4. **Reply on addressed external threads** (sub-step E) — for each entry in `/tmp/pr_external_reconcile.json` → `addressed[]`, post a reply only; **never resolve** those threads.
    5. **Post one inline thread per finding** that has a `path/to/file.ext:NN` reference (initial mode: every surviving finding after dedup; re-review mode: only the New bucket after dedup), **each carrying its finding marker**. This is mandatory — skipping it collapses every finding into the summary thread and defeats the purpose of the review.
 
@@ -75,22 +75,7 @@ Do not ask for confirmation at any point. Execute all steps autonomously and pro
 
 5. **Output result**
 
-   On completion, output a single summary line:
-
-   **GitHub:**
-   ```
-   Posted review on PR #<number>: <verdict> — <N> inline comments — <EXTERNAL_REPLY_OK> external replies — <review URL>
-   ```
-
-   **Azure DevOps:**
-   ```
-   Posted review on PR #<number>: <verdict> — <N> inline comments — <EXTERNAL_REPLY_OK> external replies — ${API_BASE}/_git/<repo>/pullrequest/<number>
-   ```
-
-   **Generic:**
-   ```
-   Review complete: <verdict> — report written to pr-review-report.md
-   ```
+   On completion, output a single summary line in the exact format from the provider's own `## Output` section (`providers/github.md`, `providers/azure-devops.md`, or `providers/generic.md`) — do not hand-compose a shorter version here. In re-review mode that format includes the resolved / still-open / **reopened** (regression signal — never silently drop it when non-zero) / external-reply counters; initial mode omits the reconciliation segments entirely. Keeping one template per provider, referenced rather than copied, is what keeps this skill from drifting out of sync with `/pr-review` as the reconciliation model evolves.
 
    If any step fails, output the error and stop — do not retry or ask for input.
 

@@ -69,27 +69,36 @@ echo "=== compute_fid (commands/pr-review.md) — pinned known-good hash ==="
 # compute_fid is documented as a bash function in commands/pr-review.md rather than a
 # standalone script (see *Comment markers and finding identity*), so this test
 # re-implements its exact algorithm to catch any accidental drift from the documented
-# hash inputs (path|category|normalised on-disk snippet).
+# hash inputs (path|normalised on-disk snippet|occurrence_index). This must stay in sync
+# with the self-heal implementations in scripts/ado-post-review.sh and providers/github.md,
+# which recompute fids with this exact formula when an agent posts a malformed one.
 compute_fid() {
   python3 - "$1" "$2" "$3" <<'PY'
 import sys, re, hashlib
 path = sys.argv[1].strip().lower()
-category = sys.argv[2].strip().lower()
-snippet = re.sub(r'[^a-z0-9 ]', ' ', sys.argv[3].lower())
+snippet = re.sub(r'[^a-z0-9 ]', ' ', sys.argv[2].lower())
 snippet = re.sub(r'\s+', ' ', snippet).strip()
-print(hashlib.sha1(f"{path}|{category}|{snippet}".encode()).hexdigest()[:12])
+occurrence = sys.argv[3].strip()
+print(hashlib.sha1(f"{path}|{snippet}|{occurrence}".encode()).hexdigest()[:12])
 PY
 }
 
-FID_A=$(compute_fid "a.py" "correctness" "if user is None:")
-FID_B=$(compute_fid "a.py" "CORRECTNESS" "  IF   user IS None:!!")
+FID_A=$(compute_fid "a.py" "if user is None:" "1")
+FID_B=$(compute_fid "a.py" "  IF   user IS None:!!" "1")
 assert_eq "fid is stable under case/punctuation/whitespace normalization" "$FID_A" "$FID_B"
 
-FID_DIFF_CATEGORY=$(compute_fid "a.py" "performance" "if user is None:")
-if [ "$FID_A" != "$FID_DIFF_CATEGORY" ]; then
-  PASS=$((PASS + 1)); echo "ok   - same file+snippet but different category produces a different fid"
+FID_DIFF_OCCURRENCE=$(compute_fid "a.py" "if user is None:" "2")
+if [ "$FID_A" != "$FID_DIFF_OCCURRENCE" ]; then
+  PASS=$((PASS + 1)); echo "ok   - same file+snippet but different occurrence_index produces a different fid"
 else
-  FAIL=$((FAIL + 1)); echo "FAIL - same file+snippet but different category produces a different fid"
+  FAIL=$((FAIL + 1)); echo "FAIL - same file+snippet but different occurrence_index produces a different fid"
+fi
+
+FID_DIFF_PATH=$(compute_fid "b.py" "if user is None:" "1")
+if [ "$FID_A" != "$FID_DIFF_PATH" ]; then
+  PASS=$((PASS + 1)); echo "ok   - same snippet+occurrence but different path produces a different fid"
+else
+  FAIL=$((FAIL + 1)); echo "FAIL - same snippet+occurrence but different path produces a different fid"
 fi
 
 echo

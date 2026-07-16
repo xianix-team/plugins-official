@@ -438,7 +438,8 @@ fi
 # Set VERDICT to exactly one of: APPROVE | APPROVE WITH SUGGESTIONS | REQUEST CHANGES | NEEDS DISCUSSION
 # (REQUEST_CHANGES / waitForAuthor aliases are normalized inside the script)
 export VERDICT="REQUEST CHANGES"   # <- replace with the actual verdict from step 7
-export REVIEW_MODE="${REVIEW_MODE:-initial}"
+# Do NOT export REVIEW_MODE here — the script reads it from /tmp/pr_review_state.json
+# (written by the command in step 3, via scripts/lib/state.sh) and ignores the env var.
 bash "$ADO_POST"
 ```
 
@@ -450,7 +451,7 @@ That script loads `/tmp/pr_azure.env`, casts the vote, posts the **summary** thr
 
 **If `scripts/ado-post-review.sh` is missing from the plugin install**, stop and report the installation as broken. Do not attempt a manual fallback — a hand-copied script cannot be kept in sync with the dedup/reconciliation logic in the real script and will silently reintroduce duplicate comments. This is the one place where using the shared script is not optional: the stakes are too high for ad-hoc curl.
 
-The subsections below explain each step. **Prefer `scripts/ado-post-review.sh`** — do not reimplement them as separate one-off `curl` calls.
+**The subsections below (1–4) are read-only reference material, not a second implementation to run.** `scripts/ado-post-review.sh` is the single source of truth for posting mechanics — it is the only place the carried-over-fid skip check, fid format validation/self-heal, the pre-post existing-summary dedup check, and the post-post marker-verification audit are implemented, and those checks are exactly what stand between a normal re-review and the duplicate/malformed comments described in `docs/state-based-architecture.md`'s incident history. The bash shown below illustrates *what the script does* for debugging a 400/401 or understanding a payload shape — it is deliberately not a complete, safety-checked copy, and it will drift from the real script over time. If you find yourself about to run one of these snippets directly against the Azure DevOps API instead of `bash "$ADO_POST"`, stop: that is the exact "reinvent the posting flow" failure this file's *Posting the Review* script exists to prevent.
 
 ### 1. Map verdict to Azure DevOps vote
 
@@ -508,86 +509,34 @@ esac
 
 ### 2. Resolve the reviewer ID and post the vote (mandatory)
 
-> **Important:** do **not** use the `reviewers/me` alias with PAT authentication — it returns an HTML error page. Prefer **`/_apis/connectionData`** on the org host (works with PATs). Fall back to `app.vssps.visualstudio.com/.../profiles/me` only if connectionData fails. Always wrap JSON parsing in try/except so a non-JSON body never aborts the rest of posting.
+> **Important:** do **not** use the `reviewers/me` alias with PAT authentication — it returns an HTML error page.
 
-```bash
-REVIEWER_ID=""
-if [ -n "${AZURE_ORG:-}" ]; then
-  REVIEWER_ID=$(curl -sS -u ":${AZURE_DEVOPS_TOKEN}" \
-    "https://dev.azure.com/${AZURE_ORG}/_apis/connectionData?api-version=7.1-preview.1" \
-    | python3 -c "import sys,json
-try:
-  d=json.load(sys.stdin)
-  print((d.get('authenticatedUser') or d.get('authorizedUser') or {}).get('id',''))
-except Exception:
-  print('')" 2>/dev/null || true)
-fi
-if [ -z "$REVIEWER_ID" ]; then
-  REVIEWER_ID=$(curl -sS -u ":${AZURE_DEVOPS_TOKEN}" \
-    "https://app.vssps.visualstudio.com/_apis/profile/profiles/me?api-version=7.1" \
-    | python3 -c "import sys,json
-try:
-  print(json.load(sys.stdin).get('id',''))
-except Exception:
-  print('')" 2>/dev/null || true)
-fi
-
-if [ -z "$REVIEWER_ID" ]; then
-  echo "WARN: could not resolve reviewer ID — vote will not be cast" >&2
-else
-  VOTE_RESP=$(curl -sS -w "\nHTTP_STATUS:%{http_code}" \
-    -H "Content-Type: application/json" \
-    -u ":${AZURE_DEVOPS_TOKEN}" \
-    -X PUT \
-    "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/reviewers/${REVIEWER_ID}?api-version=7.1" \
-    -d "{\"vote\": ${VOTE}, \"id\": \"${REVIEWER_ID}\"}")
-
-  STATUS=$(echo "$VOTE_RESP" | sed -n 's/^HTTP_STATUS://p')
-  if echo "$STATUS" | grep -qE '^2'; then
-    echo "Vote ${VOTE} cast (HTTP $STATUS)"
-  else
-    echo "WARN: vote PUT returned HTTP $STATUS — body: $(echo "$VOTE_RESP" | sed '$d')" >&2
-    # If the reviewer isn't on the PR yet, POST .../reviewers (no /id suffix) with the same body.
-    # Some org policies require the reviewer to be added explicitly first.
-  fi
-fi
-```
+`scripts/ado-post-review.sh` resolves the caller's identity via **`/_apis/connectionData`** on the org host (works with PATs), falling back to `app.vssps.visualstudio.com/.../profiles/me` only if that fails; JSON parsing is wrapped in try/except so a non-JSON body never aborts the rest of posting. It then `PUT`s `{"vote": <n>, "id": "<reviewer-id>"}` to `.../reviewers/{id}`. If the `PUT` fails — most often because the reviewer isn't on the PR yet, which some org policies require to happen explicitly — it falls back to `POST .../reviewers` (no `/id` suffix) with the **same body wrapped in a JSON array**, `[{"vote": ..., "id": ...}]`, which both adds the reviewer and casts the vote in one call. If both the `PUT` and the fallback `POST` fail, or the reviewer ID could not be resolved at all, it logs a `WARN` and continues: a vote failure never aborts the summary or inline posting that follows.
 
 ### 3. Post the full report as a PR thread
 
 Write the **compiled report text itself** into `/tmp/pr_thread_body.md` **using the `Write` tool**. Do **not** use a Bash heredoc — a heredoc requires the model to reproduce ~4000 characters of multi-line markdown as a literal tool-call string argument, which risks losing line breaks in complex interactions. The `Write` tool takes the content as structured data and avoids this pitfall. Never write a `${REPORT_BODY}` placeholder inside a quoted (`<<'EOF'`) heredoc — quoting suppresses expansion and the literal string `${REPORT_BODY}` gets posted to the PR.
 
-**Do not hand-roll this step** — `scripts/ado-post-review.sh` posts the summary with the correct PropertiesCollection format, a body marker, and retries. The payload shape it uses:
+**Do not hand-roll this step** — `scripts/ado-post-review.sh` posts the summary. Beyond the payload shape below, it also: checks whether a summary for this `HEAD_SHA` already exists (via `/tmp/pr_threads.json`) before posting, so a retried or re-triggered run never double-posts the summary; applies a best-effort newline-repair as a last-resort safety net if the body looks like it collapsed into one paragraph; retries `full → markdown-only → bare` PropertiesCollection payloads on failure; and verifies the marker actually landed in the response body afterward. None of that is optional, and none of it is reproduced below.
 
-```bash
-# /tmp/pr_thread_body.md now contains the full compiled report markdown
-# Properties MUST use {$type,$value} — bare "pr-reviewer.kind":"summary" often 400s the create.
+<details>
+<summary>Reference: payload shape (for debugging a 400/401, not for copy-running)</summary>
 
-HEAD_SHA=$(git rev-parse HEAD) python3 - <<'PY' > /tmp/pr_thread_payload.json
-import json, os, pathlib
-sha = os.environ["HEAD_SHA"]
-body = pathlib.Path("/tmp/pr_thread_body.md").read_text()
-if "pr-reviewer:v1.2 kind=summary" not in body:
-    body = body.rstrip() + f"\n\n<!-- pr-reviewer:v1.2 kind=summary sha={sha} -->\n"
-print(json.dumps({
-    "comments": [{"content": body, "commentType": 1}],
-    "status": "active",
-    "properties": {
-        "Microsoft.TeamFoundation.Discussion.SupportsMarkdown": {"$type": "System.Int32", "$value": 1},
-        "pr-reviewer.kind": {"$type": "System.String", "$value": "summary"},
-        "pr-reviewer.sha": {"$type": "System.String", "$value": sha},
-    },
-}))
-PY
-
-curl -sS -w "\nHTTP_STATUS:%{http_code}\n" \
-  -H "Content-Type: application/json" \
-  -u ":${AZURE_DEVOPS_TOKEN}" \
-  -X POST --data @/tmp/pr_thread_payload.json \
-  "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads?api-version=7.1"
+```json
+{
+  "comments": [{"content": "<report body, with a trailing \"\\n\\n<!-- pr-reviewer:v1.2 kind=summary sha=<HEAD_SHA> -->\\n\" appended if not already present>", "commentType": 1}],
+  "status": "active",
+  "properties": {
+    "Microsoft.TeamFoundation.Discussion.SupportsMarkdown": {"$type": "System.Int32", "$value": 1},
+    "pr-reviewer.kind": {"$type": "System.String", "$value": "summary"},
+    "pr-reviewer.sha": {"$type": "System.String", "$value": "<HEAD_SHA>"}
+  }
+}
 ```
 
-> The `pr-reviewer.kind` / `pr-reviewer.sha` properties (and the body HTML marker) are the summary marker — they let the next run find this thread and read the head it was generated against. The re-review delta block is already in the compiled report body from step 7. Each re-review posts a fresh summary thread; the prior summary stays as history.
+`POST` to `${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads?api-version=7.1`. Properties MUST use `{$type,$value}` — a bare `"pr-reviewer.kind":"summary"` often 400s the create. The `pr-reviewer.kind` / `pr-reviewer.sha` properties (and the body HTML marker) are the summary marker — they let the next run find this thread and read the head it was generated against. The re-review delta block is already in the compiled report body from step 7. Each re-review posts a fresh summary thread (once the dedup check above confirms one doesn't already exist for this `HEAD_SHA`); the prior summary stays as history.
+
+</details>
 
 ### 4. Post inline comments (one thread per finding) — MANDATORY
 
@@ -605,6 +554,8 @@ After compiling the report (step 7 of `commands/pr-review.md`), write **one JSON
 | `line` | int | yes | 1-indexed line number on the **right** (post-change) side of the diff. |
 | `body` | string | yes | Markdown body of the comment. Must include severity tag, e.g. `**[CRITICAL]** ...`. |
 | `fid` | string | yes | Stable finding id from step 7 (`compute_fid`). Stored as a thread property. |
+| `snippet` | string | yes | The literal on-disk line text the fid was computed from (see *Comment markers and finding identity* in `commands/pr-review.md`). Required for the script's fid self-heal — without it a malformed `fid` cannot be recomputed and the finding is posted with a broken fid, invisible to the next re-review's reconciliation. |
+| `occurrence_index` | int | yes | 1-based rank among findings sharing `(file, normalized snippet)`. Also required for fid self-heal, same reason as `snippet`. |
 | `severity` | string | no | `critical` / `warning` / `suggestion` — used only for the summary log. |
 
 ```bash
@@ -612,6 +563,7 @@ python3 - <<'PY' > /tmp/pr_inline_findings.jsonl
 import json
 findings = [
     {"file": "Xians.Lib/Agents/Core/ActivityRegistrar.cs", "line": 62, "severity": "critical", "fid": "a1b2c3d4e5f6",
+     "snippet": "var client = _factory.GetClientAsync().GetAwaiter().GetResult();", "occurrence_index": 1,
      "body": "**[CRITICAL] Sync-over-async deadlock risk**\n\n`.GetAwaiter().GetResult()` on `GetClientAsync()` in a sync context is a well-known deadlock pattern..."},
     # ... one entry per finding to post (initial: all; re-review: New bucket only) ...
 ]
@@ -620,72 +572,9 @@ for f in findings:
 PY
 ```
 
-#### b. Loop and POST, one thread per finding, with HTTP status checks
+#### b. What `scripts/ado-post-review.sh` does with this file
 
-```bash
-INLINE_TOTAL=0
-INLINE_OK=0
-INLINE_FAIL=0
-: > /tmp/pr_inline_failures.log
-
-while IFS= read -r line; do
-  [ -z "$line" ] && continue
-  INLINE_TOTAL=$((INLINE_TOTAL + 1))
-
-  echo "$line" > /tmp/pr_inline_finding.json
-  HEAD_SHA=$(git rev-parse HEAD) python3 - <<'PY' > /tmp/pr_thread_payload.json
-import json, os
-f = json.load(open('/tmp/pr_inline_finding.json'))
-sha = os.environ["HEAD_SHA"]
-body = f["body"]
-fid = f.get("fid", "")
-if fid and "pr-reviewer:v1.2 kind=finding" not in body:
-    body = body.rstrip() + f"\n\n<!-- pr-reviewer:v1.2 kind=finding fid={fid} sha={sha} -->\n"
-print(json.dumps({
-    "comments": [{"content": body, "commentType": 1}],
-    "status": "active",
-    "properties": {
-        "Microsoft.TeamFoundation.Discussion.SupportsMarkdown": {"$type": "System.Int32", "$value": 1},
-        "pr-reviewer.kind": {"$type": "System.String", "$value": "finding"},
-        "pr-reviewer.fid": {"$type": "System.String", "$value": fid},
-        "pr-reviewer.sha": {"$type": "System.String", "$value": sha},
-    },
-    "threadContext": {
-        "filePath": "/" + f["file"].lstrip("/"),
-        "rightFileStart": {"line": int(f["line"]), "offset": 1},
-        "rightFileEnd":   {"line": int(f["line"]), "offset": 1},
-    },
-}))
-PY
-
-  RESP=$(curl -sS -w "\nHTTP_STATUS:%{http_code}" \
-    -H "Content-Type: application/json" \
-    -u ":${AZURE_DEVOPS_TOKEN}" \
-    -X POST --data @/tmp/pr_thread_payload.json \
-    "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads?api-version=7.1")
-
-  STATUS=$(echo "$RESP" | sed -n 's/^HTTP_STATUS://p')
-  if echo "$STATUS" | grep -qE '^2'; then
-    INLINE_OK=$((INLINE_OK + 1))
-  else
-    INLINE_FAIL=$((INLINE_FAIL + 1))
-    {
-      echo "---"
-      echo "finding: $line"
-      echo "HTTP $STATUS:"
-      echo "$RESP" | sed '$d'
-    } >> /tmp/pr_inline_failures.log
-  fi
-done < /tmp/pr_inline_findings.jsonl
-
-echo "Inline comments: ${INLINE_OK}/${INLINE_TOTAL} posted (${INLINE_FAIL} failed)"
-if [ "$INLINE_FAIL" -gt 0 ]; then
-  echo "WARN: see /tmp/pr_inline_failures.log for failure details" >&2
-  head -40 /tmp/pr_inline_failures.log >&2
-fi
-
-export INLINE_OK INLINE_FAIL INLINE_TOTAL
-```
+The script reads `/tmp/pr_inline_findings.jsonl` line by line and, for each finding: skips it if its `fid` is already in `/tmp/pr_reconcile.json` → `carried_over_fids` (a defensive second check — do not rely solely on (a)'s New-bucket filtering to prevent duplicates); validates the `fid` against `^[0-9a-f]{12}$` and, if malformed, recomputes it from `snippet` + `occurrence_index` with a loud `WARN` (this is why both fields are mandatory in (a)); appends the finding marker to the body; `POST`s a thread with `threadContext` anchoring it to the post-change line (`{"$type":"...", "$value":...}` PropertiesCollection, same as the summary payload); and on a `2xx` response checks that the marker actually landed in the response body (Azure can silently strip properties/body content on some create paths — this audit catches that). Failures are logged to `/tmp/pr_inline_failures.log` and counted in `INLINE_FAIL`, exported as `INLINE_OK` / `INLINE_FAIL` / `INLINE_TOTAL`. Do not hand-write this loop — a hand-written version reproduces none of the checks above and will duplicate, drop, or silently mis-mark findings on the next re-review.
 
 #### c. Diagnosing zero inline comments
 
@@ -704,6 +593,8 @@ If `INLINE_OK` is `0` while `INLINE_TOTAL` is `> 0`, every POST failed. Read `/t
 ## Reconciling prior findings (re-review mode only — sub-step R)
 
 Runs only when `REVIEW_MODE=rereview`. Acts on `/tmp/pr_reconcile.json` (built in step 7 of `commands/pr-review.md`). Carried-over findings need **no** action. The **Fixed** and **Reopened** buckets are processed — reply on each thread, then set its status (`fixed` for resolved, `active` for reopened).
+
+**This is the standalone reference for what `scripts/ado-post-review.sh` already does as part of its single invocation (step 7 of the script) — it is not a separate step to run by hand.** Run `bash "$ADO_POST"` per *Posting the Review* above; the loops below exist so this behavior is documented somewhere a human can read without opening the script.
 
 Azure DevOps thread status is updated with a `PATCH` on the thread; replies are a `POST` of a comment to the existing thread (no `threadContext`).
 
@@ -788,7 +679,9 @@ echo "Reconciled: ${RESOLVED_OK} prior finding(s) resolved (${RESOLVED_FAIL} fai
 
 ## Replying on addressed external threads (sub-step E)
 
-Runs when `/tmp/pr_external_reconcile.json` exists and `addressed` is non-empty (initial **or** re-review). Reply only — **never** PATCH the thread status. Resolution stays with the original author. (The self-contained *Posting the Review* script already includes this as step 5c; the block below is the standalone reference.)
+Runs when `/tmp/pr_external_reconcile.json` exists and `addressed` is non-empty (initial **or** re-review). Reply only — **never** PATCH the thread status. Resolution stays with the original author.
+
+**This is the standalone reference for what `scripts/ado-post-review.sh` already does as part of its single invocation (step 8 of the script) — it is not a separate step to run by hand.** Run `bash "$ADO_POST"` per *Posting the Review* above; the block below exists so this behavior is documented somewhere a human can read without opening the script.
 
 ```bash
 EXTERNAL_REPLY_OK=0
@@ -828,14 +721,16 @@ echo "External replies: ${EXTERNAL_REPLY_OK} addressed thread(s) acknowledged ($
 
 ## Output
 
-On completion, use the counters from the inline-comment loop in step 4 (`$INLINE_OK` / `$INLINE_TOTAL`) — do **not** print a hard-coded number.
+`scripts/ado-post-review.sh` prints this line itself (step 10 of the script) from the counters accumulated during the run (`$INLINE_OK` / `$INLINE_TOTAL`, `$RESOLVED_OK`, `$REOPENED_OK`, `$EXTERNAL_REPLY_OK`) — do **not** print a second, hand-composed confirmation line after the script returns.
 
 ```
 # initial mode
 Review posted on PR #<id>: <verdict> — ${INLINE_OK}/${INLINE_TOTAL} inline comments — ${EXTERNAL_REPLY_OK} external replies — ${API_BASE}/_git/${AZURE_REPO}/pullrequest/<id>
 
 # re-review mode (add reconciliation counters)
-Re-review posted on PR #<id>: <verdict> — ${INLINE_OK}/${INLINE_TOTAL} new — ${RESOLVED_OK} resolved — ${EXTERNAL_REPLY_OK} external replies — ${API_BASE}/_git/${AZURE_REPO}/pullrequest/<id>
+Re-review posted on PR #<id>: <verdict> — ${INLINE_OK}/${INLINE_TOTAL} new — ${RESOLVED_OK} resolved — <carried-over count> still open — ${REOPENED_OK} reopened — ${EXTERNAL_REPLY_OK} external replies — ${API_BASE}/_git/${AZURE_REPO}/pullrequest/<id>
 ```
+
+`<carried-over count>` is `len(/tmp/pr_reconcile.json → carried_over_fids)`, computed fresh (no earlier step exports it as a scalar). The `reopened` segment is a regression signal — the script omits it entirely when `REOPENED_OK` is `0` so it doesn't read `0 reopened` on every ordinary re-review, and never omits it when `REOPENED_OK > 0`.
 
 If `INLINE_OK == 0` but the report had findings with file:line references, treat the run as a partial failure and surface the first few lines of `/tmp/pr_inline_failures.log` in the output so the user knows the inline step did not actually deliver.

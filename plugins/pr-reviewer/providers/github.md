@@ -201,6 +201,8 @@ After compiling the report, write **one JSON object per finding** to `/tmp/pr_in
 | `line` | int | yes | Post-change (right-side) file line number. |
 | `body` | string | yes | Markdown body. Include the severity tag, e.g. `**[CRITICAL]** ...`. |
 | `fid` | string | yes | Stable finding id from step 7 (`compute_fid`). Goes into the marker. |
+| `snippet` | string | yes | The literal on-disk line text the fid was computed from (see *Comment markers and finding identity* in `commands/pr-review.md`). Required for the posting loop's fid self-heal below — without it a malformed `fid` cannot be recomputed and the finding is posted with a broken fid, invisible to the next re-review's reconciliation. |
+| `occurrence_index` | int | yes | 1-based rank among findings sharing `(file, normalized snippet)`. Also required for fid self-heal, same reason as `snippet`. |
 | `severity` | string | no | `critical` / `warning` / `suggestion` — used only for the summary log. |
 | `suggestion_start_line` | int | no | First line of the multi-line suggestion region. Omit for single-line fixes. Parsed from the `<!-- suggestion: lines NN-MM -->` comment in the body. |
 | `suggestion_end_line` | int | no | Last line of the multi-line suggestion region. Omit for single-line fixes. |
@@ -272,7 +274,10 @@ print('F_SUGGEST_START=' + shlex.quote(str(d.get('suggestion_start_line', ''))))
   # Validate and self-heal fid format before posting
   SNIPPET=$(printf '%s' "$line" | python3 -c "import sys,json; print(json.load(sys.stdin).get('snippet',''))")
   OCCURRENCE=$(printf '%s' "$line" | python3 -c "import sys,json; print(json.load(sys.stdin).get('occurrence_index',1))")
-  VALIDATE=$(python3 - <<'VALIDATE_FID'
+  # Must match compute_fid exactly (commands/pr-review.md, *Comment markers and finding
+  # identity*): sha1 of lowercased path + normalized snippet + occurrence index, passed as
+  # real argv (not left for an empty sys.argv to silently no-op this whole self-heal).
+  VALIDATE=$(python3 - "$F_FID" "$F_PATH" "$SNIPPET" "$OCCURRENCE" <<'VALIDATE_FID'
 import re, hashlib, sys
 fid = sys.argv[1] if len(sys.argv) > 1 else ""
 file_path = sys.argv[2] if len(sys.argv) > 2 else ""
@@ -281,8 +286,11 @@ occurrence = int(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4] else 1
 valid = re.match(r'^[0-9a-f]{12}$', fid) is not None
 if not valid and snippet and file_path:
   try:
-    hash_input = f"{file_path}|{snippet}|{occurrence}"
-    new_fid = hashlib.md5(hash_input.encode()).hexdigest()[:12]
+    norm_path = file_path.strip().lower()
+    norm_snippet = re.sub(r'[^a-z0-9 ]', ' ', snippet.lower())
+    norm_snippet = re.sub(r'\s+', ' ', norm_snippet).strip()
+    hash_input = f"{norm_path}|{norm_snippet}|{occurrence}"
+    new_fid = hashlib.sha1(hash_input.encode()).hexdigest()[:12]
     print(f"{new_fid}")
     sys.exit(0)
   except:
@@ -466,14 +474,18 @@ echo "External replies: ${EXTERNAL_REPLY_OK} addressed thread(s) acknowledged ($
 
 ## Output
 
-On completion, use the counters from the inline loop (`$INLINE_OK` / `$INLINE_TOTAL`) — do **not** print a hard-coded number:
+On completion, use the counters from the inline loop (`$INLINE_OK` / `$INLINE_TOTAL`) and the reconciliation loop (`$RESOLVED_OK`, `$REOPENED_OK`) — do **not** print a hard-coded number:
 
 ```
 # initial mode
 Review posted on PR #<number>: <verdict> — ${INLINE_OK}/${INLINE_TOTAL} inline comments — ${EXTERNAL_REPLY_OK} external replies — https://github.com/<owner>/<repo>/pull/<number>
 
 # re-review mode (add reconciliation counters)
-Re-review posted on PR #<number>: <verdict> — ${INLINE_OK}/${INLINE_TOTAL} new — ${RESOLVED_OK} resolved — ${EXTERNAL_REPLY_OK} external replies — https://github.com/<owner>/<repo>/pull/<number>
+Re-review posted on PR #<number>: <verdict> — ${INLINE_OK}/${INLINE_TOTAL} new — ${RESOLVED_OK} resolved — ${CARRIED_OVER_COUNT} still open — ${REOPENED_OK} reopened — ${EXTERNAL_REPLY_OK} external replies — https://github.com/<owner>/<repo>/pull/<number>
 ```
+
+`CARRIED_OVER_COUNT` is not exported by any earlier step — compute it once before printing: `CARRIED_OVER_COUNT=$(python3 -c "import json; print(len(json.load(open('/tmp/pr_reconcile.json')).get('carried_over_fids',[])))" 2>/dev/null || echo 0)`.
+
+Omit the `${REOPENED_OK} reopened` segment (and its leading ` — `) when `REOPENED_OK` is unset or `0` — it is a regression signal (a finding the plugin or a human previously marked fixed has come back) and is expected to be rare, so it should stand out by its presence rather than read `0 reopened` on every ordinary re-review. **Never omit it when `REOPENED_OK > 0`.**
 
 If `INLINE_OK == 0` but the report had findings with file:line references, treat the run as a partial failure and surface the first few lines of `/tmp/pr_inline_failures.log` so the user knows the inline step did not deliver.

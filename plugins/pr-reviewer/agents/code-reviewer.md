@@ -56,11 +56,6 @@ The review lead passes you the changed file list and patches fetched via git. **
 - [ ] No hardcoded secrets, tokens, passwords, or API keys
 - [ ] No sensitive data in log statements
 - [ ] Input from external sources is validated before use
-- [ ] Before flagging query-string-building code as SQL injection: confirm an
-      attacker-controlled *value* — not just placeholder syntax (`?`, `%s`) — is embedded
-      raw in the query text. Building an `IN (...)` clause by interpolating only `?,?,?`
-      placeholders and passing the real values through `execute(query, params)` separately
-      is the standard safe parameterized pattern, not a vulnerability — don't flag it.
 
 ## Output Format
 

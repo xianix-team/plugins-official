@@ -14,7 +14,7 @@
 #   /tmp/pr_azure.env                  — from starting-comment / parse step (API_BASE, AZURE_REPO, PR_ID, …)
 #   /tmp/pr_thread_body.md             — compiled report (fallback: /tmp/pr_review_summary.md)
 #   /tmp/pr_inline_findings.jsonl      — one JSON object per finding (fallback: /tmp/pr_findings.jsonl)
-#   /tmp/pr_review_reconcile_state.json — (in re-review mode) finding buckets from step 7
+#   /tmp/pr_reconcile.json             — (in re-review mode) finding buckets from step 7
 #   VERDICT                            — env var ("REQUEST CHANGES" etc.)
 #   AZURE_DEVOPS_TOKEN                 — required
 
@@ -273,7 +273,7 @@ print(json.dumps({
         "Microsoft.TeamFoundation.Discussion.SupportsMarkdown": {"$type": "System.Int32", "$value": 1},
         "pr-reviewer.kind": {"$type": "System.String", "$value": "summary"},
         "pr-reviewer.sha": {"$type": "System.String", "$value": sha},
-        "pr-reviewer.version": {"$type": "System.String", "$value": "v2"},
+        "pr-reviewer.version": {"$type": "System.String", "$value": "v1.2"},
     },
 }))
 PY
@@ -463,9 +463,16 @@ result = {"valid": valid_fid, "fid": fid, "recomputed": False}
 
 if not valid_fid and snippet:
     try:
+        # Must match compute_fid exactly (commands/pr-review.md, *Comment markers and finding
+        # identity*): sha1 of lowercased path + normalized snippet + occurrence index. Using a
+        # different hash or skipping normalization here would produce a fid that never matches
+        # what compute_fid generates on the next run, defeating self-healing's own purpose.
         occurrence_str = str(int(occurrence_index)) if occurrence_index else "1"
-        hash_input = f"{file_path}|{snippet}|{occurrence_str}"
-        new_fid = hashlib.md5(hash_input.encode()).hexdigest()[:12]
+        norm_path = file_path.strip().lower()
+        norm_snippet = re.sub(r'[^a-z0-9 ]', ' ', snippet.lower())
+        norm_snippet = re.sub(r'\s+', ' ', norm_snippet).strip()
+        hash_input = f"{norm_path}|{norm_snippet}|{occurrence_str}"
+        new_fid = hashlib.sha1(hash_input.encode()).hexdigest()[:12]
         result["fid"] = new_fid
         result["recomputed"] = True
     except Exception as e:
@@ -598,20 +605,23 @@ export INLINE_OK INLINE_FAIL INLINE_TOTAL
 EXTERNAL_REPLY_OK="${EXTERNAL_REPLY_OK:-0}"
 
 # --- 10. Final status ---
+# Single-line format — matches the canonical template in commands/pr-review.md
+# ("Post-posting self-check") and providers/github.md's Output section exactly,
+# so the confirmation line reads the same regardless of which provider posted it.
 echo ""
-echo "========================================"
 if [ "$REVIEW_MODE" = "rereview" ]; then
-  echo "Re-review posted on PR #${PR_ID}: ${VERDICT}"
-  echo "  — ${INLINE_OK}/${INLINE_TOTAL} new inline comments"
-  echo "  — ${RESOLVED_OK:-0} prior finding(s) resolved"
-  echo "  — ${EXTERNAL_REPLY_OK} external thread(s) replied"
+  CARRIED_OVER_COUNT=$(python3 -c "import json; print(len(json.load(open('/tmp/pr_reconcile.json')).get('carried_over_fids',[])))" 2>/dev/null || echo 0)
+  # Reopened is a regression signal (a finding previously marked fixed came back) and
+  # should be rare — omit the segment entirely when zero so it isn't noise on every
+  # ordinary re-review, but never omit it when non-zero.
+  REOPENED_SEGMENT=""
+  if [ "${REOPENED_OK:-0}" -gt 0 ]; then
+    REOPENED_SEGMENT=" — ${REOPENED_OK} reopened"
+  fi
+  echo "Re-review posted on PR #${PR_ID}: ${VERDICT} — ${INLINE_OK}/${INLINE_TOTAL} new — ${RESOLVED_OK:-0} resolved — ${CARRIED_OVER_COUNT} still open${REOPENED_SEGMENT} — ${EXTERNAL_REPLY_OK} external replies — ${API_BASE}/_git/${AZURE_REPO}/pullrequest/${PR_ID}"
 else
-  echo "Review posted on PR #${PR_ID}: ${VERDICT}"
-  echo "  — ${INLINE_OK}/${INLINE_TOTAL} inline comments"
-  echo "  — ${EXTERNAL_REPLY_OK} external thread(s) replied"
+  echo "Review posted on PR #${PR_ID}: ${VERDICT} — ${INLINE_OK}/${INLINE_TOTAL} inline comments — ${EXTERNAL_REPLY_OK} external replies — ${API_BASE}/_git/${AZURE_REPO}/pullrequest/${PR_ID}"
 fi
-echo "  → ${API_BASE}/_git/${AZURE_REPO}/pullrequest/${PR_ID}"
-echo "========================================"
 
 if [ "$INLINE_FAIL" -gt 0 ]; then
   echo "WARN: ${INLINE_FAIL} inline comment(s) failed to post"

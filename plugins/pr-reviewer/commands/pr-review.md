@@ -614,13 +614,42 @@ else
 fi
 ```
 
-**If `PR_REVIEWER_NOOP=true`:** do not proceed to step 4. No sub-agents, no report compilation, no reconciliation. Post one short acknowledgement reply and stop:
+**If `PR_REVIEWER_NOOP=true`:** do not proceed to step 4. No sub-agents, no report compilation, no reconciliation. Post one short acknowledgement reply and stop — **verify the post actually landed before printing a success line.** This is the only posting step in this file that previously skipped that check; a silent no-op ack (script prints "posted" but the API call failed or never ran) is worse than no ack, because nothing downstream flags it. Match the status-check discipline every other posting step in this file already uses (see `providers/azure-devops.md` → *Posting the Starting Comment* and *Replying on addressed external threads*):
 
 - **GitHub** — a plain issue comment, same mechanism as the starting comment (`providers/github.md` → *Posting the "review in progress" comment*):
   ```bash
-  gh pr comment "$PR_NUMBER" --body "No new commits since the last review (\`${HEAD_SHA:0:7}\`) — nothing to re-analyze. Push a commit to trigger a fresh review."
+  if gh pr comment "$PR_NUMBER" --body "No new commits since the last review (\`${HEAD_SHA:0:7}\`) — nothing to re-analyze. Push a commit to trigger a fresh review."; then
+    echo "✓ No-op acknowledgment posted"
+  else
+    echo "WARN: no-op acknowledgment failed to post (gh exit $?) — no comment will appear on the PR for this run" >&2
+  fi
   ```
-- **Azure DevOps** — reply on the prior summary thread (`PRIOR_SUMMARY_THREAD_ID` from `/tmp/pr_prior.env`), using the same POST-to-`.../threads/{id}/comments` shape as *Replying on addressed external threads* in `providers/azure-devops.md`, with body `No new commits since the last review (\`${HEAD_SHA:0:7}\`) — nothing to re-analyze. Push a commit to trigger a fresh review.`
+
+- **Azure DevOps** — reply on the prior summary thread, using the same POST-to-`.../threads/{id}/comments` shape as *Replying on addressed external threads* in `providers/azure-devops.md`. `PRIOR_SUMMARY_THREAD_ID` (from `/tmp/pr_prior.env`) can be empty — e.g. if `scripts/ado-detect-prior.sh` wasn't actually run (hand-rolled detection instead, per the anti-pattern warning above) or found no marked summary thread. Guard for that instead of POSTing to a malformed URL, and check the response status before claiming success:
+  ```bash
+  source /tmp/pr_state.env
+  source /tmp/pr_azure.env
+  [ -f /tmp/pr_prior.env ] && source /tmp/pr_prior.env
+  if [ -z "${PRIOR_SUMMARY_THREAD_ID:-}" ]; then
+    echo "WARN: PRIOR_SUMMARY_THREAD_ID empty — cannot reply to a prior summary thread; skipping no-op acknowledgment (no comment will appear on the PR for this run)" >&2
+  else
+    python3 -c 'import json,sys; print(json.dumps({"content": sys.argv[1], "commentType": 1}))' \
+      "No new commits since the last review (\`${HEAD_SHA:0:7}\`) — nothing to re-analyze. Push a commit to trigger a fresh review." \
+      > /tmp/pr_noop_reply_payload.json
+    RESP=$(curl -sS -w "\nHTTP_STATUS:%{http_code}" \
+      -H "Content-Type: application/json" \
+      -u ":${AZURE_DEVOPS_TOKEN}" \
+      -X POST --data @/tmp/pr_noop_reply_payload.json \
+      "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads/${PRIOR_SUMMARY_THREAD_ID}/comments?api-version=7.1")
+    STATUS=$(echo "$RESP" | sed -n 's/^HTTP_STATUS://p')
+    if echo "$STATUS" | grep -qE '^2'; then
+      echo "✓ No-op acknowledgment posted (HTTP $STATUS)"
+    else
+      echo "WARN: no-op acknowledgment failed HTTP ${STATUS:-curl-error} — body: $(echo "$RESP" | sed '$d')" >&2
+    fi
+  fi
+  ```
+
 - **Generic** — no API; the `echo` above is the only output. Just stop.
 
 Do **not** stamp this acknowledgement with the `pr-reviewer:v1.2 kind=summary` marker — it isn't a review and must never be mistaken for one by the next run's prior-summary lookup (which already resolves correctly to the existing summary at this same SHA).

@@ -96,7 +96,7 @@ for page in pages:
         sys.exit(1)
     threads += nodes or []
 
-pat = re.compile(r"<!--\s*pr-reviewer:v2\s+kind=finding\s+fid=(\S+)\s+sha=(\S+)\s*-->")
+pat = re.compile(r"<!--\s*pr-reviewer:v1.2\s+kind=finding\s+fid=(\S+)\s+sha=(\S+)\s*-->")
 prior = open("/tmp/pr_prior_findings.jsonl", "w")
 open_threads = open("/tmp/pr_open_threads.jsonl", "w")
 for t in threads:
@@ -133,7 +133,7 @@ PY
 # Summary marker lives on pull reviews, not issue comments.
 # Also extract review ID for potential future updates.
 PRIOR_SUMMARY_DATA=$(gh api "repos/${OWNER}/${REPO}/pulls/${PR_NUMBER}/reviews" --paginate \
-  --jq '.[] | select(.body | contains("pr-reviewer:v2")) | [
+  --jq '.[] | select(.body | contains("pr-reviewer:v1.2")) | [
     (.body | match("sha=([0-9a-f]+)").captures[0].string),
     .id,
     .submitted_at

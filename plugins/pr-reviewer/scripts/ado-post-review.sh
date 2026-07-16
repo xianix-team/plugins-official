@@ -206,7 +206,9 @@ try:
     # Check body marker if properties weren't found
     if not sha:
       body = first.get("content") or ""
-      m = re.search(r"<!--\s*pr-reviewer:v1\s+kind=summary\s+sha=([0-9a-fA-F]+)", body)
+      m = re.search(r"<!--\s*pr-reviewer:v1.2\s+kind=summary\s+sha=([0-9a-fA-F]+)", body)
+      if not m:
+        m = re.search(r"<!--\s*pr-reviewer:v1\s+kind=summary\s+sha=([0-9a-fA-F]+)", body)
       if m:
         sha = m.group(1)
 
@@ -227,16 +229,34 @@ else
   echo "Summary does not exist for this commit, posting new thread..."
   SUMMARY_POSTED=false
 
-  # Embed body marker first (survives property stripping / retry modes)
+  # Sanitize and embed body marker (survives property stripping / retry modes)
   python3 - <<'PY'
-import os, pathlib
+import os, pathlib, re
 sha = os.environ["HEAD_SHA"]
 path = pathlib.Path("/tmp/pr_thread_body.md")
 body = path.read_text()
-marker = f"\n\n<!-- pr-reviewer:v2 kind=summary sha={sha} -->\n"
-if "pr-reviewer:v2 kind=summary" not in body:
+
+# Newline-density check: if body is large but nearly devoid of newlines, log a warning
+# (indicates the Write-tool mandate was bypassed and a Bash heredoc collapsed the lines)
+body_len = len(body)
+newline_count = body.count('\n')
+if body_len > 500 and newline_count < max(1, body_len // 200):
+  print(f"WARN: compiled report body has an abnormally low newline density ({body_len} chars, {newline_count} newlines) — applying best-effort paragraph repair; verify the posted comment renders correctly.", file=__import__('sys').stderr)
+  # Broader repair: insert \n\n before headings and list markers that aren't already preceded by newline
+  body = re.sub(r'([^\n])(#{1,6} )', r'\1\n\n\2', body)  # before ## / ### etc
+  body = re.sub(r'([^\n])(- \*\*)', r'\1\n\n\2', body)    # before - ** (list items)
+  body = re.sub(r'([^\n])(\d+\. )', r'\1\n\n\2', body)    # before 1. 2. etc (numbered lists)
+
+# Defensive: fix common formatting issues (verdict directly attached to body, headers without spacing)
+# Pattern: "## PR Review: REQUEST CHANGESThis PR" → "## PR Review: REQUEST CHANGES\n\nThis PR"
+body = re.sub(r'(REQUEST CHANGES|NEEDS DISCUSSION|APPROVE)([A-Z])', r'\1\n\n\2', body)
+# Pattern: "...merge.### Critical" → "...merge.\n\n### Critical"
+body = re.sub(r'(\.)([#*-])', r'\1\n\n\2', body)
+
+marker = f"\n\n<!-- pr-reviewer:v1.2 kind=summary sha={sha} -->\n"
+if "pr-reviewer:v1.2 kind=summary" not in body:
     path.write_text(body.rstrip() + marker)
-    print("✓ Summary marker embedded in body")
+    print("✓ Summary marker embedded in body (formatting sanitized)")
 else:
     print("✓ Summary marker already present")
 PY
@@ -267,6 +287,12 @@ PY
       || true)
     SUM_STATUS=$(echo "$SUM_RESP" | sed -n 's/^HTTP_STATUS://p')
     if echo "${SUM_STATUS:-}" | grep -qE '^2'; then
+      # Verify marker is present in response body (post-post audit trail)
+      SUM_RESP_BODY=$(echo "$SUM_RESP" | sed '$d')
+      if ! echo "$SUM_RESP_BODY" | grep -q 'pr-reviewer:v1.2.*kind=summary'; then
+        echo "ERROR: posted summary thread is missing its expected marker in response body — re-review detection will fail on the next run." >&2
+        export MARKER_VERIFY_FAILED=$((${MARKER_VERIFY_FAILED:-0} + 1))
+      fi
       echo "✓ Summary thread posted (HTTP $SUM_STATUS, mode=$label)"
       return 0
     fi
@@ -421,6 +447,54 @@ while IFS= read -r line; do
   fi
 
   INLINE_TOTAL=$((INLINE_TOTAL + 1))
+
+  # Validate and self-heal fid format before posting
+  python3 - <<'VALIDATE_FID' > /tmp/fid_validation.json 2>/dev/null
+import json, re, hashlib
+f = json.load(open('/tmp/pr_inline_finding.json'))
+fid = f.get('fid') or ""
+file_path = f.get('file') or f.get('path') or ""
+line_no = f.get('line') or f.get('line_number') or 0
+snippet = f.get('snippet') or ""
+occurrence_index = f.get('occurrence_index') or 1
+
+valid_fid = re.match(r'^[0-9a-f]{12}$', fid) is not None
+result = {"valid": valid_fid, "fid": fid, "recomputed": False}
+
+if not valid_fid and snippet:
+    try:
+        occurrence_str = str(int(occurrence_index)) if occurrence_index else "1"
+        hash_input = f"{file_path}|{snippet}|{occurrence_str}"
+        new_fid = hashlib.md5(hash_input.encode()).hexdigest()[:12]
+        result["fid"] = new_fid
+        result["recomputed"] = True
+    except Exception as e:
+        result["error"] = str(e)
+
+json.dump(result, open('/tmp/fid_validation.json', 'w'))
+print(json.dumps(result))
+VALIDATE_FID
+
+  VALIDATE_RESULT=$(python3 -c "import json; j=json.load(open('/tmp/fid_validation.json')); print(json.dumps(j))" 2>/dev/null || echo '{}')
+  VALID_FID=$(python3 -c "import json,sys; print(json.load(open('/tmp/fid_validation.json')).get('valid', False))" 2>/dev/null || echo "false")
+  RECOMPUTED_FID=$(python3 -c "import json,sys; print(json.load(open('/tmp/fid_validation.json')).get('recomputed', False))" 2>/dev/null || echo "false")
+
+  if [ "$VALID_FID" = "False" ] && [ "$RECOMPUTED_FID" = "True" ]; then
+    NEW_FID=$(python3 -c "import json; print(json.load(open('/tmp/fid_validation.json')).get('fid', ''))" 2>/dev/null || echo "")
+    OLD_FID=$(python3 -c "import json; print(json.load(open('/tmp/pr_inline_finding.json')).get('fid', ''))" 2>/dev/null || echo "")
+    FILE_PATH=$(python3 -c "import json; print(json.load(open('/tmp/pr_inline_finding.json')).get('file') or json.load(open('/tmp/pr_inline_finding.json')).get('path', ''))" 2>/dev/null || echo "")
+    LINE_NO=$(python3 -c "import json; print(json.load(open('/tmp/pr_inline_finding.json')).get('line') or json.load(open('/tmp/pr_inline_finding.json')).get('line_number', ''))" 2>/dev/null || echo "")
+    echo "WARN: fid '$OLD_FID' for $FILE_PATH:$LINE_NO failed format validation (expected 12 hex chars) — recomputed as '$NEW_FID'. This indicates compute_fid was not invoked correctly; check the run's tool-call history." >&2
+    python3 - <<'UPDATE_FID' > /tmp/pr_inline_finding_updated.json
+import json
+f = json.load(open('/tmp/pr_inline_finding.json'))
+result = json.load(open('/tmp/fid_validation.json'))
+f['fid'] = result['fid']
+json.dump(f, open('/tmp/pr_inline_finding_updated.json', 'w'))
+UPDATE_FID
+    mv /tmp/pr_inline_finding_updated.json /tmp/pr_inline_finding.json
+  fi
+
   if ! HEAD_SHA="$REVIEW_HEAD_SHA" python3 - <<'PY' > /tmp/pr_thread_payload.json 2>>/tmp/pr_inline_failures.log
 import json, os
 f = json.load(open('/tmp/pr_inline_finding.json'))
@@ -431,8 +505,8 @@ fid = f.get("fid") or ""
 if not file_path or not line_no or not body:
     raise SystemExit("missing file/line/body in finding")
 sha = os.environ["HEAD_SHA"]
-if fid and "pr-reviewer:v2 kind=finding" not in body:
-    body = body.rstrip() + f"\n\n<!-- pr-reviewer:v2 kind=finding fid={fid} sha={sha} -->\n"
+if fid and "pr-reviewer:v1.2 kind=finding" not in body:
+    body = body.rstrip() + f"\n\n<!-- pr-reviewer:v1.2 kind=finding fid={fid} sha={sha} -->\n"
 print(json.dumps({
     "comments": [{"content": body, "commentType": 1}],
     "status": "active",
@@ -461,6 +535,12 @@ PY
     || true)
   STATUS=$(echo "$RESP" | sed -n 's/^HTTP_STATUS://p')
   if echo "${STATUS:-}" | grep -qE '^2'; then
+    # Verify marker is present in response body (post-post audit trail)
+    RESP_BODY=$(echo "$RESP" | sed '$d')
+    if ! echo "$RESP_BODY" | grep -q 'pr-reviewer:v1.2.*kind=finding'; then
+      echo "ERROR: posted inline thread is missing its expected marker in response body — re-review detection for this finding will fail on the next run." >&2
+      export MARKER_VERIFY_FAILED=$((${MARKER_VERIFY_FAILED:-0} + 1))
+    fi
     INLINE_OK=$((INLINE_OK + 1))
   else
     # Retry without custom properties (keep file anchor + markdown)
@@ -472,8 +552,8 @@ line_no = int(f.get("line") or f.get("line_number") or 0)
 body = f.get("body") or f.get("comment") or ""
 fid = f.get("fid") or ""
 sha = os.environ["HEAD_SHA"]
-if fid and "pr-reviewer:v2 kind=finding" not in body:
-    body = body.rstrip() + f"\n\n<!-- pr-reviewer:v2 kind=finding fid={fid} sha={sha} -->\n"
+if fid and "pr-reviewer:v1.2 kind=finding" not in body:
+    body = body.rstrip() + f"\n\n<!-- pr-reviewer:v1.2 kind=finding fid={fid} sha={sha} -->\n"
 print(json.dumps({
     "comments": [{"content": body, "commentType": 1}],
     "status": "active",
@@ -536,4 +616,8 @@ echo "========================================"
 if [ "$INLINE_FAIL" -gt 0 ]; then
   echo "WARN: ${INLINE_FAIL} inline comment(s) failed to post"
   exit 1
+fi
+
+if [ "${MARKER_VERIFY_FAILED:-0}" -gt 0 ]; then
+  echo "ERROR: ${MARKER_VERIFY_FAILED} posted thread(s) missing expected marker in response — reconciliation will fail on next re-review"
 fi

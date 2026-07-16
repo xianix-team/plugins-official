@@ -156,81 +156,6 @@ Use `${API_BASE}` in place of a hardcoded host for **every** API call below.
 
 ---
 
-## Posting pattern (use this exact form for every write call)
-
-The pattern below is what production runs converge on. **Use it as-is** rather than inventing a wrapper function — wrapper functions get ignored by the model in favor of inline curl.
-
-Two rules:
-1. **Always send the body via `--data @file`**, never inline. Heredocs inside `curl -d "$(...)"` produce hard-to-debug quoting bugs.
-2. **Always capture HTTP status** with `-w "\nHTTP_STATUS:%{http_code}\n"` and check it. Silent 401 / 404 responses are the #1 cause of "post succeeded but nothing showed up on the PR".
-
-#### Generic comment thread
-
-```bash
-# 1. Write the markdown body to a file
-cat > /tmp/pr_thread_body.md <<'BODY'
-**Your markdown content here.**
-BODY
-
-# 2. Build the JSON payload (use python so the markdown is escaped correctly)
-python3 - <<'PY' > /tmp/pr_thread_payload.json
-import json
-body = open('/tmp/pr_thread_body.md').read()
-print(json.dumps({
-    "comments": [{"content": body, "commentType": 1}],
-    "status": "active",
-    "properties": {
-        "Microsoft.TeamFoundation.Discussion.SupportsMarkdown": {"$type": "System.Int32", "$value": 1},
-    },
-}))
-PY
-
-# 3. POST and check status
-RESP=$(curl -sS -w "\nHTTP_STATUS:%{http_code}" \
-  -H "Content-Type: application/json" \
-  -u ":${AZURE_DEVOPS_TOKEN}" \
-  -X POST \
-  --data @/tmp/pr_thread_payload.json \
-  "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads?api-version=7.1")
-
-STATUS=$(echo "$RESP" | sed -n 's/^HTTP_STATUS://p')
-if echo "$STATUS" | grep -qE '^2'; then
-  echo "Thread posted (HTTP $STATUS)"
-else
-  echo "WARN: thread post failed HTTP $STATUS — body: $(echo "$RESP" | sed '$d')" >&2
-fi
-```
-
-#### Inline comment thread
-
-Same as above, but extend the JSON payload with `threadContext`. Replace the `python3 -c` step with:
-
-```bash
-FILE_PATH="Xians.Lib/Common/Caching/CacheService.cs" LINE_NUMBER=42 \
-python3 - <<'PY' > /tmp/pr_thread_payload.json
-import json, os
-body = open('/tmp/pr_thread_body.md').read()
-print(json.dumps({
-    "comments": [{"content": body, "commentType": 1}],
-    "status": "active",
-    "properties": {
-        "Microsoft.TeamFoundation.Discussion.SupportsMarkdown": {"$type": "System.Int32", "$value": 1},
-    },
-    "threadContext": {
-        "filePath": "/" + os.environ["FILE_PATH"].lstrip("/"),
-        "rightFileStart": {"line": int(os.environ["LINE_NUMBER"]), "offset": 1},
-        "rightFileEnd":   {"line": int(os.environ["LINE_NUMBER"]), "offset": 1},
-    },
-}))
-PY
-```
-
-Then POST exactly as in step 3 above.
-
-> **Authentication note:** always use `curl -u ":${AZURE_DEVOPS_TOKEN}"` — curl builds the Basic header itself and it is portable. Do **not** hand-roll the header with `base64 -w0`: the `-w` flag is GNU-only and fails on macOS/BSD (`base64: invalid option -- w`), silently sending a broken header. If you must construct the header manually, use `printf '%s' ":${AZURE_DEVOPS_TOKEN}" | base64 | tr -d '\n'`.
-
----
-
 ## Resolving the PR Number
 
 If no PR number was passed as an argument, find the active PR for the current branch.
@@ -336,7 +261,7 @@ For PR threads, put Markdown in `comments[].content`. Also set thread `propertie
 }
 ```
 
-Also append an HTML marker to the comment body (`<!-- pr-reviewer:v1 kind=summary sha=… -->`) so re-review detection still works if properties are stripped. `scripts/ado-post-review.sh` does both and retries `full → markdown-only → bare` until the summary thread lands.
+Also append an HTML marker to the comment body (`<!-- pr-reviewer:v1.2 kind=summary sha=… -->`) so re-review detection still works if properties are stripped. `scripts/ado-post-review.sh` does both and retries `full → markdown-only → bare` until the summary thread lands.
 
 ---
 
@@ -630,7 +555,7 @@ fi
 
 ### 3. Post the full report as a PR thread
 
-Write the **compiled report text itself** into `/tmp/pr_thread_body.md` (with the `Write` tool or a heredoc containing the actual markdown). Do not write a `${REPORT_BODY}` placeholder inside a quoted (`<<'EOF'`) heredoc — quoting suppresses expansion and the literal string `${REPORT_BODY}` gets posted to the PR.
+Write the **compiled report text itself** into `/tmp/pr_thread_body.md` **using the `Write` tool**. Do **not** use a Bash heredoc — a heredoc requires the model to reproduce ~4000 characters of multi-line markdown as a literal tool-call string argument, which risks losing line breaks in complex interactions. The `Write` tool takes the content as structured data and avoids this pitfall. Never write a `${REPORT_BODY}` placeholder inside a quoted (`<<'EOF'`) heredoc — quoting suppresses expansion and the literal string `${REPORT_BODY}` gets posted to the PR.
 
 **Do not hand-roll this step** — `scripts/ado-post-review.sh` posts the summary with the correct PropertiesCollection format, a body marker, and retries. The payload shape it uses:
 
@@ -642,8 +567,8 @@ HEAD_SHA=$(git rev-parse HEAD) python3 - <<'PY' > /tmp/pr_thread_payload.json
 import json, os, pathlib
 sha = os.environ["HEAD_SHA"]
 body = pathlib.Path("/tmp/pr_thread_body.md").read_text()
-if "pr-reviewer:v1 kind=summary" not in body:
-    body = body.rstrip() + f"\n\n<!-- pr-reviewer:v1 kind=summary sha={sha} -->\n"
+if "pr-reviewer:v1.2 kind=summary" not in body:
+    body = body.rstrip() + f"\n\n<!-- pr-reviewer:v1.2 kind=summary sha={sha} -->\n"
 print(json.dumps({
     "comments": [{"content": body, "commentType": 1}],
     "status": "active",
@@ -714,8 +639,8 @@ f = json.load(open('/tmp/pr_inline_finding.json'))
 sha = os.environ["HEAD_SHA"]
 body = f["body"]
 fid = f.get("fid", "")
-if fid and "pr-reviewer:v1 kind=finding" not in body:
-    body = body.rstrip() + f"\n\n<!-- pr-reviewer:v1 kind=finding fid={fid} sha={sha} -->\n"
+if fid and "pr-reviewer:v1.2 kind=finding" not in body:
+    body = body.rstrip() + f"\n\n<!-- pr-reviewer:v1.2 kind=finding fid={fid} sha={sha} -->\n"
 print(json.dumps({
     "comments": [{"content": body, "commentType": 1}],
     "status": "active",

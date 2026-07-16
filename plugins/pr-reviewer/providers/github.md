@@ -50,7 +50,7 @@ REPO=$(echo "$REMOTE"  | sed 's|https://github.com/||;s|git@github.com:||' | cut
 
 ## Detecting a prior review (re-review awareness)
 
-Called from Step 3 of `commands/pr-review.md` to decide initial vs. re-review mode. It reads the plugin's **own** previous comments (identified by the `<!-- pr-reviewer:v1 ... -->` marker) and writes a normalised prior-findings file the reconciliation step consumes. The same GraphQL fetch also writes **all open inline threads** (humans, bots, and this plugin) to `/tmp/pr_open_threads.jsonl` for external-thread awareness, dedup, and reply-only validation.
+Called from Step 3 of `commands/pr-review.md` to decide initial vs. re-review mode. It reads the plugin's **own** previous comments (identified by the `<!-- pr-reviewer:v1.2 ... -->` marker) and writes a normalised prior-findings file the reconciliation step consumes. The same GraphQL fetch also writes **all open inline threads** (humans, bots, and this plugin) to `/tmp/pr_open_threads.jsonl` for external-thread awareness, dedup, and reply-only validation. (Old `v1`-marked threads will not be recognized as plugin-owned and fall through to external-thread reply-only handling — a safe path for mixed v1/v2 transitions.)
 
 GitHub's REST review-comments endpoint returns comment bodies and ids but **not** the review-thread node id needed to resolve a thread. GraphQL returns both — **use the plugin script**, do not invent a REST-only shortcut.
 
@@ -169,7 +169,7 @@ case "${VERDICT}" in
 esac
 
 source /tmp/pr_state.env 2>/dev/null || HEAD_SHA=$(git rev-parse HEAD)
-printf '\n\n<!-- pr-reviewer:v2 kind=summary sha=%s -->\n' "$HEAD_SHA" >> /tmp/pr_review_body.md
+printf '\n\n<!-- pr-reviewer:v1.2 kind=summary sha=%s -->\n' "$HEAD_SHA" >> /tmp/pr_review_body.md
 
 if ! gh pr review "$PR_NUMBER" $REVIEW_FLAG --body "$(cat /tmp/pr_review_body.md)" 2>/tmp/pr_review_err.txt; then
   echo "WARN: gh pr review failed: $(cat /tmp/pr_review_err.txt)"
@@ -181,7 +181,7 @@ if ! gh pr review "$PR_NUMBER" $REVIEW_FLAG --body "$(cat /tmp/pr_review_body.md
 fi
 ```
 
-> **Stamp the summary marker.** The posting script above appends `<!-- pr-reviewer:v2 kind=summary sha=<HEAD_SHA> -->` to `/tmp/pr_review_body.md` before calling `gh pr review`, using `HEAD_SHA` from `/tmp/pr_state.env`. Each re-review posts a *new* review event (idiomatic on GitHub — reviews are timestamped), with the re-review delta block already at the top of the body from step 7. There is no need to edit the previous review.
+> **Stamp the summary marker.** The posting script above appends `<!-- pr-reviewer:v1.2 kind=summary sha=<HEAD_SHA> -->` to `/tmp/pr_review_body.md` before calling `gh pr review`, using `HEAD_SHA` from `/tmp/pr_state.env`. Each re-review posts a *new* review event (idiomatic on GitHub — reviews are timestamped), with the re-review delta block already at the top of the body from step 7. There is no need to edit the previous review.
 
 ### Inline comments (one thread per finding) — MANDATORY
 
@@ -229,7 +229,7 @@ for f in findings:
 PY
 ```
 
-> **Stamp the finding marker.** The posting loop below appends `<!-- pr-reviewer:v2 kind=finding fid=<fid> sha=<HEAD_SHA> -->` to each comment body. This is what lets the *next* re-review recognise the comment and reconcile it — a comment posted without it is invisible to reconciliation and will be duplicated next run.
+> **Stamp the finding marker.** The posting loop below appends `<!-- pr-reviewer:v1.2 kind=finding fid=<fid> sha=<HEAD_SHA> -->` to each comment body. This is what lets the *next* re-review recognise the comment and reconcile it — a comment posted without it is invisible to reconciliation and will be duplicated next run.
 
 #### b. Loop and POST, one comment per finding, with HTTP status checks
 
@@ -269,10 +269,36 @@ print('F_SUGGEST_START=' + shlex.quote(str(d.get('suggestion_start_line', ''))))
     continue
   fi
 
+  # Validate and self-heal fid format before posting
+  SNIPPET=$(printf '%s' "$line" | python3 -c "import sys,json; print(json.load(sys.stdin).get('snippet',''))")
+  OCCURRENCE=$(printf '%s' "$line" | python3 -c "import sys,json; print(json.load(sys.stdin).get('occurrence_index',1))")
+  VALIDATE=$(python3 - <<'VALIDATE_FID'
+import re, hashlib, sys
+fid = sys.argv[1] if len(sys.argv) > 1 else ""
+file_path = sys.argv[2] if len(sys.argv) > 2 else ""
+snippet = sys.argv[3] if len(sys.argv) > 3 else ""
+occurrence = int(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4] else 1
+valid = re.match(r'^[0-9a-f]{12}$', fid) is not None
+if not valid and snippet and file_path:
+  try:
+    hash_input = f"{file_path}|{snippet}|{occurrence}"
+    new_fid = hashlib.md5(hash_input.encode()).hexdigest()[:12]
+    print(f"{new_fid}")
+    sys.exit(0)
+  except:
+    pass
+print("")
+VALIDATE_FID
+)
+  if [ -z "$(printf '%s' "$F_FID" | grep -E '^[0-9a-f]{12}$')" ] && [ -n "$VALIDATE" ]; then
+    echo "WARN: fid '$F_FID' for $F_PATH:$F_LINE failed format validation (expected 12 hex chars) — recomputed as '$VALIDATE'. This indicates compute_fid was not invoked correctly; check the run's tool-call history." >&2
+    F_FID="$VALIDATE"
+  fi
+
   INLINE_TOTAL=$((INLINE_TOTAL + 1))
 
   # Append the hidden finding marker so the next re-review can reconcile this comment.
-  printf '\n\n<!-- pr-reviewer:v2 kind=finding fid=%s sha=%s -->\n' "$F_FID" "$COMMIT_ID" >> /tmp/pr_inline_body.md
+  printf '\n\n<!-- pr-reviewer:v1.2 kind=finding fid=%s sha=%s -->\n' "$F_FID" "$COMMIT_ID" >> /tmp/pr_inline_body.md
 
   # For multi-line suggestions, pass start_line + start_side so GitHub anchors the block correctly.
   SUGGESTION_ARGS=""
@@ -291,6 +317,11 @@ print('F_SUGGEST_START=' + shlex.quote(str(d.get('suggestion_start_line', ''))))
     2>/tmp/pr_inline_err.txt) && STATUS=ok || STATUS=fail
 
   if [ "$STATUS" = "ok" ]; then
+    # Verify marker is present in response body (post-post audit trail)
+    if ! echo "$RESP" | grep -q 'pr-reviewer:v1.2.*kind=finding'; then
+      echo "ERROR: posted inline comment is missing its expected marker in response body — re-review detection for this finding will fail on the next run." >&2
+      export MARKER_VERIFY_FAILED=$((${MARKER_VERIFY_FAILED:-0} + 1))
+    fi
     INLINE_OK=$((INLINE_OK + 1))
   else
     INLINE_FAIL=$((INLINE_FAIL + 1))
@@ -348,7 +379,7 @@ python3 -c "import json,sys; [print(json.dumps(x)) for x in json.load(open('/tmp
     --method POST \
     --field body="✅ Resolved as of \`${HEAD_SHA}\`. This finding no longer reproduces against the current head.
 
-<!-- pr-reviewer:v2 kind=resolve sha=${HEAD_SHA} -->" \
+<!-- pr-reviewer:v1.2 kind=resolve sha=${HEAD_SHA} -->" \
     >/dev/null 2>/tmp/pr_resolve_err.txt || true
 
   # 2. Resolve the review thread (GraphQL — REST has no resolve endpoint)
@@ -372,7 +403,7 @@ python3 -c "import json,sys; [print(json.dumps(x)) for x in json.load(open('/tmp
     --method POST \
     --field body="⚠️ This finding still reproduces as of \`${HEAD_SHA}\` despite being marked resolved. Reactivating thread.
 
-<!-- pr-reviewer:v2 kind=reopen sha=${HEAD_SHA} -->" \
+<!-- pr-reviewer:v1.2 kind=reopen sha=${HEAD_SHA} -->" \
     >/dev/null 2>/tmp/pr_reopen_err.txt || true
 
   # 2. Unresolve the review thread (GraphQL)
@@ -419,7 +450,7 @@ if [ -f /tmp/pr_external_reconcile.json ]; then
       --method POST \
       --field body="Looks addressed as of \`${HEAD_SHA}\` — leaving this thread open for the original author to resolve.
 
-<!-- pr-reviewer:v1 kind=external-ack sha=${HEAD_SHA} -->" \
+<!-- pr-reviewer:v1.2 kind=external-ack sha=${HEAD_SHA} -->" \
       >/dev/null 2>/tmp/pr_external_reply_err.txt \
       && echo ok >> /tmp/pr_external_replies.log \
       || echo "fail $COMMENT_ID" >> /tmp/pr_external_replies.log

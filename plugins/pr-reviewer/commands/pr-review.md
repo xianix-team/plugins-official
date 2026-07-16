@@ -74,7 +74,7 @@ Re-review depends on the plugin being able to recognise its **own** previous com
 Stamp every comment the plugin posts with a hidden marker string:
 
 ```
-<!-- pr-reviewer:v2 kind=<finding|summary> fid=<finding-id> sha=<HEAD_SHA> -->
+<!-- pr-reviewer:v1.2 kind=<finding|summary> fid=<finding-id> sha=<HEAD_SHA> -->
 ```
 
 - `kind` — `finding` for an inline finding thread, `summary` for the PR-level report comment.
@@ -200,6 +200,14 @@ Use the platform-appropriate method — each provider's starting-comment block i
 Resolve the PR number from the argument first; only fall back to a CLI lookup (`gh pr list` on GitHub, or the branch lookup inside the Azure starting-comment script) if it was not provided.
 
 If posting the starting comment fails, output a single warning line and continue — do not stop the review.
+
+### Self-check before continuing to Step 3
+
+Your conversation history should contain either:
+- A successful tool output containing `Review-in-progress comment posted on PR #<n>` (starting comment was posted), or
+- An explicit `WARN: ... skipping review-in-progress comment` line (starting comment was intentionally skipped on a platform that doesn't support it, like generic git).
+
+If neither appears in your conversation history, you skipped Step 2. Go back and run the starting-comment script now for your platform before proceeding to Step 3.
 
 ## 3. Gather PR Context (do this BEFORE indexing the codebase)
 
@@ -503,7 +511,7 @@ This is the one place reading platform PR comments is required, because it deter
 1. Unless `PR_REVIEWER_RECONCILE=false` (or platform is generic), list the existing review comments/threads on the PR. **Run the platform script as one Bash call** — do **not** invent a shortened `curl`/`gh` dump (Azure agents inventing `THREADS_JSON=$(curl …)` then `json.load` is a common crash on 401 HTML).
 
    The script writes:
-   - `/tmp/pr_prior_findings.jsonl` — only threads carrying the plugin marker (`<!-- pr-reviewer:v1 ... -->` on GitHub, or the `pr-reviewer.*` thread properties on Azure DevOps). Drives `REVIEW_MODE`.
+   - `/tmp/pr_prior_findings.jsonl` — only threads carrying the plugin marker (`<!-- pr-reviewer:v1.2 ... -->` on GitHub, or the `pr-reviewer.*` thread properties on Azure DevOps). Drives `REVIEW_MODE`.
    - `/tmp/pr_open_threads.jsonl` — **every open inline thread** (humans, bots, this plugin), one JSON object per line: `{file, line, body, author, is_plugin, thread_ref[, comment_ref]}`. Used for reviewer awareness, dedup, and external-thread validation.
    - `/tmp/pr_prior.env` — `PRIOR_SUMMARY_SHA` (shell state does not persist; always `source` this file afterward).
 
@@ -520,12 +528,19 @@ This is the one place reading platform PR comments is required, because it deter
 source /tmp/pr_state.env
 # shellcheck disable=SC1091
 [ -f /tmp/pr_prior.env ] && source /tmp/pr_prior.env
+
+# Mode-decision visibility: warn if detection never ran (missing prior.env)
+# This distinguishes "we checked and found nothing" from "we never checked"
+: "${PR_REVIEWER_RECONCILE:=true}"
+if [ "$PR_REVIEWER_RECONCILE" != "false" ] && [ ! -f /tmp/pr_prior.env ]; then
+  echo "WARN: /tmp/pr_prior.env missing — provider's detect-prior script was not run (or failed) before this mode decision. Proceeding as REVIEW_MODE=initial, but if a prior review actually exists on this PR, this run WILL post duplicate summary/findings. Re-run detection now if unsure." >&2
+fi
+
 # /tmp/pr_prior_findings.jsonl is written by the provider script: one JSON object per
 # prior marked finding thread: {fid, status(open|resolved), thread_ref[, comment_ref]}.
 # Matching is by fid alone, so file/line are not needed here.
 # /tmp/pr_open_threads.jsonl is written by the same script (may be empty).
 # Touch an empty file if the helper skipped writing it so later steps can test -s safely.
-: "${PR_REVIEWER_RECONCILE:=true}"
 if [ "$PR_REVIEWER_RECONCILE" = "false" ]; then
   : > /tmp/pr_prior_findings.jsonl
   : > /tmp/pr_open_threads.jsonl
@@ -849,7 +864,7 @@ Before step 7, your conversation history should contain a `Task` (or `Agent`) to
 
 Aggregate all findings into the structured report format defined in `styles/report-template.md`. Read that file and follow its template exactly.
 
-**Before posting (all platforms):** write the compiled report markdown to `/tmp/pr_thread_body.md` and serialize every finding to post as one JSON object per line in `/tmp/pr_inline_findings.jsonl` (fields: `file`, `line`, `body`, `fid`). Do **not** use alternate names like `pr_review_summary.md` or `pr_findings.jsonl` — the Azure posting script only auto-corrects those as a fallback.
+**Before posting (all platforms):** write the compiled report markdown to `/tmp/pr_thread_body.md` **using the `Write` tool**. Do not use a Bash heredoc. Also serialize every finding to post as one JSON object per line in `/tmp/pr_inline_findings.jsonl` (fields: `file`, `line`, `body`, `fid`, `snippet`, `occurrence_index`). Do **not** use alternate names like `pr_review_summary.md` or `pr_findings.jsonl` — the Azure posting script only auto-corrects those as a fallback.
 
 **Guidelines:**
 - Reference specific file paths and line numbers for every finding
@@ -874,6 +889,50 @@ A finding whose line cannot be validated to a real, in-range line in the changed
 ### Assign a `fid` to every current finding
 
 For each finding in the compiled report, compute its `fid` with the `compute_fid` helper (see *Comment markers and finding identity*) from its file path, the literal on-disk text of the flagged line (already read during line-number validation above — reuse it, don't re-fetch), and an occurrence index (1-based rank among all current findings with the same file and normalized snippet, ordered by line number). This is required in **both** modes — the marker written this run (`fid=` only, per the existing marker format) is what the *next* run reconciles against by fid equality; no other field needs to round-trip through the marker for this to work, since a future run recomputes its own current-state fid from file+snippet+occurrence the same way and simply compares the two hashes.
+
+### Reconcile against the prior review (re-review mode only)
+
+## 8. Execute the Posting Step (Immediately after compiling the report)
+
+**Mandatory:** Post the review to the platform immediately. Do not wait for user input or confirmations. All findings are lost if posting is skipped.
+
+### Load review state and execute platform-appropriate posting
+
+```bash
+# Load state written in step 3
+source /tmp/pr_state.env 2>/dev/null || { echo "ERROR: /tmp/pr_state.env missing"; exit 1; }
+source /tmp/pr_review_state.json >/dev/null 2>&1 || true  # optional: for inspection
+export VERDICT  # Must be set before posting (from step 7)
+
+# Verify prerequisites
+[ -f /tmp/pr_thread_body.md ] || { echo "ERROR: /tmp/pr_thread_body.md missing"; exit 1; }
+[ -f /tmp/pr_inline_findings.jsonl ] || { echo "ERROR: /tmp/pr_inline_findings.jsonl missing"; exit 1; }
+
+# Execute platform-specific posting script
+case "$PLATFORM" in
+  azure)
+    # Azure DevOps: source pr_azure.env for API endpoints, then run posting script
+    source /tmp/pr_azure.env 2>/dev/null || { echo "ERROR: /tmp/pr_azure.env missing (did you run Step 2?)"; exit 1; }
+    bash "${CLAUDE_PLUGIN_ROOT:-.}/scripts/ado-post-review.sh"
+    ;;
+  github)
+    # GitHub: use provider script from providers/github.md
+    bash "${CLAUDE_PLUGIN_ROOT:-.}/providers/github.md"
+    ;;
+  *)
+    echo "Platform '$PLATFORM' not yet supported for automated posting" >&2
+    exit 1
+    ;;
+esac
+```
+
+If posting fails:
+- Check `/tmp/pr_inline_failures.log` for which findings failed to post
+- Verify `VERDICT` was exported from Step 7
+- Confirm Azure token (`AZURE_DEVOPS_TOKEN`) or GitHub token is valid
+- Re-run the posting script once auth/env is corrected
+
+---
 
 ### Reconcile against the prior review (re-review mode only)
 

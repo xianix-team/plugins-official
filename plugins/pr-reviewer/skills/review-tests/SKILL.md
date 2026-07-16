@@ -9,15 +9,10 @@ Run a focused test coverage review of the current branch changes.
 
 ## Steps
 
-1. Gather the diff against the base branch:
-   ```bash
-   BASE=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||' || echo "main")
-   git diff origin/${BASE}...HEAD
-   git diff --name-only origin/${BASE}...HEAD
-   ```
+1. Gather the diff (one bash call). Use the setup script in `commands/pr-review.md` Step 3, or at minimum produce `/tmp/pr_full_diff_numbered.patch` and `/tmp/pr_changed_files.txt` as in `skills/review-code/SKILL.md` step 1.
 
-2. Use the **test-reviewer** agent, passing it the diff and changed file list.
+2. Launch the **test-reviewer** agent with `"subagent_type": "test-reviewer"` and `"model": "haiku"`. Pass `/tmp/pr_full_diff_numbered.patch` and `/tmp/pr_changed_files.txt` (inline the numbered diff only if ≤ 300 lines). Include the line-number constraint from `commands/pr-review.md` Step 6.
 
 3. Output the test review findings directly. Do not post to any platform — this is a local-only review.
 
-If a branch name is provided, compare that branch against `main`. Otherwise, review the current branch.
+If a branch name is provided, fetch and check out that branch first. Otherwise, review the current branch.

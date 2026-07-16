@@ -1,6 +1,6 @@
 {
     "name": "pr-reviewer",
-    "version": "1.9.2",
+    "version": "1.9.6",
     "description": "Comprehensive PR review plugin with specialized agents for code quality, security, test coverage, and performance analysis. Works with GitHub, Azure DevOps, Bitbucket, and any git repository.",
     "author": {
       "name": "99x",
@@ -12,6 +12,12 @@
     "license": "MIT",
     "keywords": ["pr-review", "pull-request", "review", "code-quality", "security", "testing", "azure-devops", "github"],
     "commands": ["./commands/pr-review.md"],
+    "agents": [
+      "./agents/code-reviewer.md",
+      "./agents/security-reviewer.md",
+      "./agents/test-reviewer.md",
+      "./agents/performance-reviewer.md"
+    ],
     "skills": "./skills/",
     "outputStyles": "./styles/",
     "providers": "./providers/",

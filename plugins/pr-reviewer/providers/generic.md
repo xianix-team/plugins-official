@@ -2,11 +2,9 @@
 
 Use this provider when the git remote does not match GitHub, Azure DevOps, or Bitbucket — or as a fallback when API posting is not possible.
 
-**Implemented by `scripts/gather-context.sh` (detection) and `scripts/post-review.sh` (report writing)** — this file documents the behavior, it is not instructions to re-implement.
-
 ## Behaviour
 
-In generic mode the review is **not posted to a remote platform**. `gather-context.sh` detects this platform and skips prior-review detection entirely (`detection_status: "skipped"`, `review_mode` always `"initial"`) — there is no API to read markers from. Instead, `post-review.sh` writes the compiled report to a local file so it can be consumed by an external process, CI system, or human operator.
+In generic mode the review is **not posted to a remote platform**. Instead, the compiled report is written to a local file so it can be consumed by an external process, CI system, or human operator.
 
 ---
 

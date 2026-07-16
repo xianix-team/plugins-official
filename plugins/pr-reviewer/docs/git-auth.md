@@ -6,9 +6,11 @@ The `pr-review` plugin can apply code fixes and push them directly to the PR bra
 
 ## How it works
 
-The plugin uses **`GIT_CONFIG_COUNT` environment variables** (Git 2.31+) to inject a token transparently into the `git push` command that triggered the hook. This rewrites any HTTPS remote URL to use the token inline.
+Every run executes in a **temporary Docker container**: there is no credential helper, no `~/.gitconfig`, no shell profile, and nothing survives the run. Tokens exist only as environment variables injected when the container starts.
 
-The `validate-prerequisites.sh` hook sets this up automatically before every `git push`, detecting the platform from the remote URL and injecting the correct token — but it does **not** do this via `export`. A PreToolUse hook runs as its own short-lived subprocess; anything it `export`s is gone once that subprocess exits and never reaches the separate process that actually runs the `git push` Bash tool call. Instead, the hook rewrites the command it's given via the CLI's `hookSpecificOutput.updatedInput` mechanism, prepending the `GIT_CONFIG_*` assignments directly onto the `git push` command line itself (`GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=... git push ...`) — standard POSIX "env vars scoped to one command" syntax, which *does* reach the process git push actually runs in.
+The plugin uses **`GIT_CONFIG_COUNT` environment variables** (Git 2.31+) to rewrite the HTTPS remote URL with the token inline — prefixed on the `git push` command itself, so the credential is scoped to that single command and never written to disk.
+
+The `validate-prerequisites.sh` hook **validates only** — it blocks a `git push` when the required token is missing from the container environment. It cannot inject anything: hooks run as separate short-lived processes, so variables exported there never reach the agent's shell.
 
 ---
 
@@ -21,12 +23,13 @@ The `validate-prerequisites.sh` hook sets this up automatically before every `gi
 | `GH_TOKEN` / `GITHUB_TOKEN` | GitHub CLI (`gh`) | Non-interactive API auth (optional if `gh auth login` was used) |
 | `GITHUB_TOKEN` | Local `git push` | Authenticate HTTPS pushes to the PR branch |
 
-These are typically the same PAT. The hook injects `GITHUB_TOKEN` as:
+These are typically the same PAT. Prefix the push command with the env-scoped config:
 
 ```bash
-GIT_CONFIG_COUNT=1
-GIT_CONFIG_KEY_0="url.https://x-access-token:<GITHUB_TOKEN>@github.com/.insteadOf"
-GIT_CONFIG_VALUE_0="https://github.com/"
+GIT_CONFIG_COUNT=1 \
+GIT_CONFIG_KEY_0="url.https://x-access-token:${GITHUB_TOKEN}@github.com/.insteadOf" \
+GIT_CONFIG_VALUE_0="https://github.com/" \
+git push origin HEAD
 ```
 
 **Generating a GitHub PAT:**
@@ -39,28 +42,33 @@ GIT_CONFIG_VALUE_0="https://github.com/"
 
 | Variable | Used by | Purpose |
 |---|---|---|
-| `AZURE_DEVOPS_TOKEN` | `az` CLI + Local `git push` | Authenticate API calls and HTTPS pushes |
+| `AZURE_DEVOPS_TOKEN` | `curl` (REST API) + Local `git push` | Authenticate API calls and HTTPS pushes |
 
-A single PAT covers both API access and git push. The hook injects `AZURE_DEVOPS_TOKEN` for both `dev.azure.com` and `*.visualstudio.com` remote URLs:
+A single PAT covers both API access and git push. Derive the host from the actual remote — `insteadOf` is a **prefix match on the full URL**, so legacy remotes need `{org}.visualstudio.com` (a bare `visualstudio.com` prefix would never match) — and prefix the push command:
 
 ```bash
-GIT_CONFIG_COUNT=2
-GIT_CONFIG_KEY_0="url.https://x-access-token:<PAT>@dev.azure.com/.insteadOf"
-GIT_CONFIG_VALUE_0="https://dev.azure.com/"
-GIT_CONFIG_KEY_1="url.https://x-access-token:<PAT>@visualstudio.com/.insteadOf"
-GIT_CONFIG_VALUE_1="https://visualstudio.com/"
+REMOTE_HOST=$(git remote get-url origin | sed -E 's|^[a-z+]+://||; s|^[^@/]+@||; s|[:/].*$||')
+
+GIT_CONFIG_COUNT=1 \
+GIT_CONFIG_KEY_0="url.https://x-access-token:${AZURE_DEVOPS_TOKEN}@${REMOTE_HOST}/.insteadOf" \
+GIT_CONFIG_VALUE_0="https://${REMOTE_HOST}/" \
+git push origin HEAD
 ```
 
 **Generating an Azure DevOps PAT:**
 1. Go to `https://dev.azure.com/<your-org>/_usersSettings/tokens`
 2. Click **New Token**
-3. Select scopes: `Code (Read & Write)`, `Pull Request Threads (Read & Write)`
+3. Select scopes: `Code (Read & Write)`, `Pull Request Threads (Read & Write)`, `User Profile (Read)`
 
 ---
 
 ## Passing Credentials at Runtime
 
-### Inline (single session)
+### Containerized runner (the normal case — e.g. the Xianix Executor)
+
+Every run happens in a **temporary Docker container**. Configure the secret on the runner/pipeline so it is injected into the container environment at startup — there is no shell profile, `.env` file, or credential store inside the container to persist anything in. Secrets may arrive under dashed keys (`AZURE-DEVOPS-TOKEN`); the Executor re-exports them as the underscored aliases the plugin references (`AZURE_DEVOPS_TOKEN`).
+
+### Inline (local interactive session)
 
 **GitHub:**
 ```bash
@@ -70,36 +78,6 @@ GH_TOKEN=ghp_xxx GITHUB_TOKEN=ghp_xxx claude
 **Azure DevOps:**
 ```bash
 AZURE_DEVOPS_TOKEN=<pat> claude
-```
-
-### Via shell export (persistent in current shell)
-
-```bash
-# GitHub
-export GH_TOKEN=ghp_xxx
-export GITHUB_TOKEN=ghp_xxx
-
-# Azure DevOps
-export AZURE_DEVOPS_TOKEN=<pat>
-```
-
-### Via `.env` file (per-project, never committed)
-
-Create a `.env` file in your project root (add it to `.gitignore`):
-
-```bash
-# GitHub
-GH_TOKEN=ghp_xxx
-GITHUB_TOKEN=ghp_xxx
-
-# Azure DevOps
-AZURE_DEVOPS_TOKEN=<pat>
-```
-
-Then source it before launching:
-
-```bash
-source .env && claude
 ```
 
 ---
@@ -124,27 +102,42 @@ The `validate-prerequisites.sh` hook blocks any `git push` attempt if the requir
 
 **GitHub:**
 ```
-blocked: GITHUB_TOKEN is not set. Pass it at runtime: GITHUB_TOKEN=ghp_xxx claude ... (see docs/git-auth.md)
+blocked: GITHUB_TOKEN is not set in the container environment. It must be injected when the container starts (see docs/platform-setup.md).
 ```
 
 **Azure DevOps:**
 ```
-blocked: AZURE_DEVOPS_TOKEN is not set. Pass it at runtime: AZURE_DEVOPS_TOKEN=<pat> claude ... (see docs/git-auth.md)
+blocked: AZURE_DEVOPS_TOKEN is not set in the container environment. It must be injected when the container starts (see docs/platform-setup.md).
 ```
 
 `git commit` and other local operations are unaffected — only push requires the token.
 
 ---
 
-## Verification
+## Secret hygiene
 
-After setting the token, verify git can push with a dry-run:
+**Never echo token values** (`echo "$AZURE_DEVOPS_TOKEN"`, `env | grep …`, unredirected `printenv`). Presence-check only:
 
 ```bash
+echo "AZURE_DEVOPS_TOKEN=${AZURE_DEVOPS_TOKEN:+yes}"
+echo "GITHUB_TOKEN=${GITHUB_TOKEN:+yes}"
+```
+
+If only the dashed `AZURE-DEVOPS-TOKEN` is set: `export AZURE_DEVOPS_TOKEN="$(printenv AZURE-DEVOPS-TOKEN)"`.
+
+## Verification
+
+Verify git can push with a dry-run, using the same inline `GIT_CONFIG_*` prefix as the real push:
+
+```bash
+REMOTE_HOST=$(git remote get-url origin | sed -E 's|^[a-z+]+://||; s|^[^@/]+@||; s|[:/].*$||')
+GIT_CONFIG_COUNT=1 \
+GIT_CONFIG_KEY_0="url.https://x-access-token:${PUSH_TOKEN}@${REMOTE_HOST}/.insteadOf" \
+GIT_CONFIG_VALUE_0="https://${REMOTE_HOST}/" \
 git push --dry-run origin HEAD
 ```
 
-If it completes without a credential prompt, the token is injected correctly.
+If it completes without a credential prompt, the token works.
 
 ---
 

@@ -31,6 +31,15 @@ Reviewed [N] new commit(s) since the last review (`[prior sha]`..`[current sha]`
 
 ---
 
+### Existing review threads
+> Include when `/tmp/pr_open_threads.jsonl` was non-empty (initial or re-review). Omit entirely when there were no open threads to consider.
+
+- ✅ Appears addressed: [count] open thread(s) — will reply, leave open for original author
+- ⏳ Still open: [count] open thread(s) — no reply (avoid spam)
+- 🔇 Duplicates avoided: [count] finding(s) not re-posted
+
+---
+
 ### Summary
 [2-3 sentence overall assessment of the change]
 
@@ -85,6 +94,8 @@ Reviewed [N] new commit(s) since the last review (`[prior sha]`..`[current sha]`
 ---
 
 ### Files Reviewed
+> Cap this table at **20 rows** (highest-risk first). For larger PRs, aggregate the rest into one final row — e.g. `| …and 34 more files | +210/-95 | 🟢 Low | Config, tests, docs |`. A row per file on a 100-file PR bloats the posted comment without adding review value.
+
 | File | Lines Changed | Risk | Notes |
 |------|---------------|------|-------|
 | `src/auth/login.<ext>` | +45/-12 | 🔴 High | Auth logic modified |

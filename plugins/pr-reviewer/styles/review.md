@@ -51,21 +51,23 @@ Every finding must follow this structure:
 
 ## GitHub Suggestion Blocks
 
-For findings with an exact, drop-in code fix, add a `**Suggestion**` annotation immediately after the `**Fix:**` block. The review lead carries this through to the GitHub PR inline comment as a native "Apply suggestion" / "Commit suggestion" button. Azure DevOps ignores these — there is no equivalent API mechanism.
+For findings with an exact, drop-in code fix, add a native suggestion block immediately after the `**Fix:**` block. The review lead carries this through to the GitHub PR inline comment as a native "Apply suggestion" / "Commit suggestion" button. Azure DevOps ignores these — there is no equivalent API mechanism.
 
 Format for a **single-line replacement** (replaces only the flagged line):
 
-    **Suggestion** (line NN):
-    ```
+    <!-- suggestion: line NN -->
+    ```suggestion
     [exact replacement for line NN, indentation preserved verbatim]
     ```
 
 Format for a **multi-line replacement** (replaces a consecutive block of lines):
 
-    **Suggestion** (lines NN–MM):
-    ```
+    <!-- suggestion: lines NN-MM -->
+    ```suggestion
     [exact verbatim lines replacing NN through MM, indentation preserved]
     ```
+
+The HTML comment carries the line range (the posting loop parses it to set `start_line`/`line` in the GitHub API call); the ` ```suggestion ` fence is what GitHub renders as the button. This format must stay in sync with the agent files and `commands/pr-review.md`.
 
 **Include** when the fix is a concrete, unambiguous swap: wrong identifier, missing null guard, insecure function replaced by its safe equivalent, N+1 query replaced by a batched call, sequential async calls made parallel, etc.
 

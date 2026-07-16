@@ -5,18 +5,8 @@
 
 set -euo pipefail
 
-# Real JSON parse, not a quote-blind grep — see validate-prerequisites.sh for why the old
-# `"command":"[^"]*"` extraction silently truncates on any embedded `"` (e.g. a quoted commit
-# message pushed just before this hook fires).
 INPUT=$(cat)
-COMMAND=$(printf '%s' "$INPUT" | python3 -c "
-import json, sys
-try:
-    data = json.load(sys.stdin)
-    print(data.get('tool_input', {}).get('command', ''))
-except Exception:
-    print('')
-")
+COMMAND=$(echo "$INPUT" | grep -o '"command":"[^"]*"' | head -1 | cut -d'"' -f4 2>/dev/null || echo "")
 
 # Only act on git push commands
 if ! echo "$COMMAND" | grep -qE "^git push"; then
@@ -32,9 +22,9 @@ echo "Push complete — branch '${BRANCH}' pushed to ${REMOTE}"
 echo "Latest commit: ${COMMIT}"
 
 if echo "$REMOTE" | grep -q "github.com"; then
-    echo "Platform: GitHub (providers/github.md)"
+    echo "Next step: post the review with gh (see providers/github.md)."
 elif echo "$REMOTE" | grep -qE "dev.azure.com|visualstudio.com"; then
-    echo "Platform: Azure DevOps (providers/azure-devops.md)"
+    echo "Next step: post the review via Azure DevOps REST API (see providers/azure-devops.md)."
 else
-    echo "Platform: Generic — report will be written to pr-review-report.md (providers/generic.md)"
+    echo "Next step: write the review report to pr-review-report.md (see providers/generic.md)."
 fi

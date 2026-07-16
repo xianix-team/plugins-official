@@ -594,6 +594,40 @@ fi
 
 > **Why review the full PR diff, not just the increment?** The full diff (`/tmp/pr_full_diff.patch`) stays the authoritative input to the reviewers so the *current* finding set is always complete — an unresolved finding in a file the latest commits didn't touch must still be detected so it stays open. The incremental diff focuses your attention and drives the delta summary; it does not replace the full scan. Reconciliation (step 7 / posting) compares the current finding set to the prior one **by `fid`**, and also validates open external threads against `HEAD`.
 
+### Cost gate: skip re-analysis entirely when HEAD hasn't moved (mandatory)
+
+The mode decision above already has everything needed to recognize a **true no-op re-review**: `REVIEW_MODE=rereview` and `HEAD_SHA` identical to `PRIOR_SUMMARY_SHA`. When both hold, the diff, the codebase, and every open thread are byte-identical to what the last run already analyzed — nothing downstream can produce a different result. **Steps 4, 5, and 6 (codebase indexing, tier selection, and the sub-agent fan-out) are the expensive part of a review**, and running them here only re-derives a finding set that step 7's Gate A is guaranteed to fully discard as `carried_over`. That is pure wasted spend — do not run them.
+
+```bash
+source /tmp/pr_state.env
+[ -f /tmp/pr_prior.env ] && source /tmp/pr_prior.env
+if [ "$REVIEW_MODE" = "rereview" ] && [ -n "${PRIOR_SUMMARY_SHA:-}" ] && [ "$HEAD_SHA" = "$PRIOR_SUMMARY_SHA" ]; then
+  echo "NO-OP: HEAD ($HEAD_SHA) unchanged since the last review — skipping codebase indexing, tier selection, and sub-agent review."
+  export PR_REVIEWER_NOOP=true
+else
+  export PR_REVIEWER_NOOP=false
+fi
+```
+
+**If `PR_REVIEWER_NOOP=true`:** do not proceed to step 4. No sub-agents, no report compilation, no reconciliation. Post one short acknowledgement reply and stop:
+
+- **GitHub** — a plain issue comment, same mechanism as the starting comment (`providers/github.md` → *Posting the "review in progress" comment*):
+  ```bash
+  gh pr comment "$PR_NUMBER" --body "No new commits since the last review (\`${HEAD_SHA:0:7}\`) — nothing to re-analyze. Push a commit to trigger a fresh review."
+  ```
+- **Azure DevOps** — reply on the prior summary thread (`PRIOR_SUMMARY_THREAD_ID` from `/tmp/pr_prior.env`), using the same POST-to-`.../threads/{id}/comments` shape as *Replying on addressed external threads* in `providers/azure-devops.md`, with body `No new commits since the last review (\`${HEAD_SHA:0:7}\`) — nothing to re-analyze. Push a commit to trigger a fresh review.`
+- **Generic** — no API; the `echo` above is the only output. Just stop.
+
+Do **not** stamp this acknowledgement with the `pr-reviewer:v1.2 kind=summary` marker — it isn't a review and must never be mistaken for one by the next run's prior-summary lookup (which already resolves correctly to the existing summary at this same SHA).
+
+Then output the final confirmation line and end the run:
+
+```text
+No-op re-review on PR #<number>: HEAD unchanged at <sha> since the last review — skipped re-analysis.
+```
+
+**If `PR_REVIEWER_NOOP=false`** (initial mode, or re-review with new commits): continue to step 4 as normal.
+
 ## 4. Index the Codebase (skip on small PRs)
 
 Every line these commands print lands in your context and is paid for on every subsequent turn — keep the index small. The caps below are mandatory, not decorative.

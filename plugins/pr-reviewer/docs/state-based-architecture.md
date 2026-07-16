@@ -188,10 +188,11 @@ Only includes findings posted by **this plugin** (identified by marker). Used to
    → Done (no duplicates!)
 ```
 
-## Flow: Re-Review (No New Commits)
+## Flow: Re-Review (No New Commits) — Cost Gate
 
 ```
-1. Author makes small changes without pushing (HEAD_SHA unchanged)
+1. PR is re-triggered (comment, re-run, etc.) but HEAD_SHA is unchanged
+   since the last review — no commits were pushed in between.
 
 2. Command runs ado-detect-prior.sh
    → /tmp/pr_prior_findings.jsonl contains prior findings
@@ -199,22 +200,25 @@ Only includes findings posted by **this plugin** (identified by marker). Used to
 
 3. Command decides mode:
    → PRIOR_SUMMARY_SHA (abc123) == HEAD_SHA (abc123)
-   → No new commits! But could still have findings changes
-   → REVIEW_MODE="rereview" (still checking for changes)
-   → RANGE_BASE="BASE_SHA" (review entire PR, not just delta)
+   → REVIEW_MODE="rereview"
 
-4. Command runs review agents
-   → Reviews full diff
+4. Cost gate (commands/pr-review.md, right after mode decision):
+   → REVIEW_MODE=rereview AND HEAD_SHA == PRIOR_SUMMARY_SHA
+   → PR_REVIEWER_NOOP=true
+   → SKIP codebase indexing (step 4), tier selection (step 5), and the
+     ENTIRE sub-agent fan-out (step 6) — the diff, codebase, and open
+     threads are byte-identical to what the last run already analyzed,
+     so nothing downstream could produce a different finding set.
+   → Post one lightweight acknowledgement reply (no marker) and stop.
 
-5. Command reconciliation:
-   → Might find same findings or new ones
-   → Write state
-
-6. Provider:
-   → Skip summary post (same SHA)
-   → Post only NEW/FIXED findings
-   → Don't duplicate carried-over threads
+Nothing in steps 5-9 executes. No Haiku/specialist sub-agents are spawned,
+no report is compiled, no reconciliation runs — this is the fix for a
+same-SHA re-review previously costing the same as a full review, because
+step 6 used to run unconditionally against the full diff even when the
+mode decision already knew there were zero new commits to look at.
 ```
+
+**Historical note:** prior to this cost gate, a same-SHA re-review still ran the full sub-agent fan-out over the complete diff (step 6), then relied on step 7's Gate A to force the `fixed` bucket empty and the `new` bucket to typically end up empty too — i.e. it paid for a full analysis just to throw the result away as `carried_over`. The cost gate above intercepts this case *before* any sub-agent is spawned.
 
 ## Key Design Decisions
 

@@ -160,10 +160,15 @@ Immediately after platform detection, clean up any leftover state from a prior r
 ```bash
 rm -f /tmp/pr_review_state.json /tmp/pr_reconcile.json /tmp/pr_external_reconcile.json \
       /tmp/pr_prior_findings.jsonl /tmp/pr_open_threads.jsonl /tmp/pr_inline_findings.jsonl \
-      /tmp/pr_thread_body.md /tmp/pr_review_summary.md /tmp/pr_findings.jsonl
+      /tmp/pr_thread_body.md /tmp/pr_review_summary.md /tmp/pr_findings.jsonl \
+      /tmp/pr_prior.env /tmp/pr_threads.json /tmp/pr_threads_pages.jsonl /tmp/pr_review_threads.json
 ```
 
 This prevents a prior run's state (with a different HEAD_SHA or even a different PR) from leaking into this run's reconciliation logic.
+
+**Why `/tmp/pr_prior.env` and `/tmp/pr_threads*.json` are in this list (mandatory, not optional).** These are the detect-prior scripts' own output files — `PRIOR_SUMMARY_SHA` in particular. If a container/session is reused across two triggers of the same PR and this file is left over, a run that (for any reason) doesn't freshly re-execute `ado-detect-prior.sh` / `gh-detect-prior.sh` will silently read the **previous run's** `PRIOR_SUMMARY_SHA` instead of the current most-recent one. This produces exactly the observed failure: a re-review reports "1 new commit since the last review (`<old-sha>`..`<current-sha>`)" for a transition that was **already reviewed and reconciled by an earlier run** — because it compared against a stale, out-of-date prior marker instead of the actual latest one. Deleting these files here means a skipped/failed detect-prior call fails loudly (missing file → the mode-decision WARN in step 3) instead of silently succeeding on garbage data.
+
+**The detect-prior script (`ado-detect-prior.sh` / `gh-detect-prior.sh`) MUST be re-run fresh on every invocation** — never skipped because its output files already exist from an earlier turn in this same session. The one-line cleanup above is the enforcement mechanism; do not bypass it by hand-checking "does the file already exist" before running the script.
 
 ### Platform-exclusive CLI rule (mandatory)
 

@@ -6,14 +6,15 @@
 # Run this file instead of retyping.
 #
 # Usage:
-#   VERDICT="REQUEST CHANGES" REVIEW_MODE=initial bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-post-review.sh"
+#   bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-post-review.sh" \
+#     --verdict "REQUEST CHANGES" --mode initial --pr 123
 #
-# Inputs:
+# Inputs (flags preferred; env names kept as fallback):
+#   --verdict TEXT / --mode initial|rereview / --pr N / --block-on-critical
 #   /tmp/pr_state.env              — PLATFORM, PR_NUMBER, HEAD_SHA (optional)
 #   /tmp/pr_thread_body.md         — compiled report (fallback: /tmp/pr_review_body.md, /tmp/pr_review_summary.md)
 #   /tmp/pr_inline_findings.jsonl  — one JSON object per finding
-#   VERDICT, REVIEW_MODE           — env vars
-#   gh CLI authenticated
+#   gh CLI authenticated (tokens via resolve_token)
 #   Optional: /tmp/pr_reconcile.json (fixed[]/carried_over[]/reopened[]/new[]), /tmp/pr_external_reconcile.json
 #
 # Emits RESOLVED_OK/FAIL, REOPENED_OK/FAIL, EXTERNAL_REPLY_OK/FAIL,
@@ -21,9 +22,19 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib-args.sh"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib-token.sh"
+
+parse_pr_args "$@" || exit 1
+resolve_token github || true
+
 : "${VERDICT:=NEEDS DISCUSSION}"
 : "${REVIEW_MODE:=initial}"
 
+CALLER_PR="${PR_NUMBER:-${PR_ID:-}}"
 # shellcheck disable=SC1091
 [ -f /tmp/pr_state.env ] && source /tmp/pr_state.env
 
@@ -32,12 +43,12 @@ if ! command -v gh >/dev/null 2>&1; then
   exit 1
 fi
 
-PR_NUMBER="${PR_NUMBER:-${PR_ID:-}}"
+PR_NUMBER="${CALLER_PR:-${PR_NUMBER:-${PR_ID:-}}}"
 if [ -z "$PR_NUMBER" ]; then
   PR_NUMBER=$(gh pr view --json number --jq '.number' 2>/dev/null || true)
 fi
 if [ -z "$PR_NUMBER" ]; then
-  echo "ERROR: PR_NUMBER unset — pass PR number before posting" >&2
+  echo "ERROR: PR id unknown — re-run with --pr <number>" >&2
   exit 1
 fi
 

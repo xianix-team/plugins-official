@@ -105,6 +105,8 @@ When invoked with a PR number, branch name, or no argument (defaults to current 
 
 **Hard rule:** If a required script cannot be resolved, **STOP immediately**. Output the error. Do **not** invent ad-hoc `curl`/`gh` replacements for permissions, start-comment, setup, detect-prior, or post-review.
 
+**Pass inputs as flags on every script call.** Always pass agent-chosen scalars (`--pr`, `--branch`, `--verdict`, `--mode`, `--fix`) on the same Bash command line — never rely on an `export` from a previous Bash call surviving (each Bash tool call is a fresh shell). Env-name fallbacks still work for backward compatibility, but flags are the required form.
+
 Paste this helper **once** at the start of the first Bash call that needs a script (typically step 1b). It writes `/tmp/pr_plugin.env` so later Bash calls can `source` it:
 
 ```bash
@@ -142,7 +144,8 @@ remember_pr_plugin_root() {
   echo "CLAUDE_PLUGIN_ROOT=$root"
 }
 
-# Example — every later step: source /tmp/pr_plugin.env && bash "$CLAUDE_PLUGIN_ROOT/scripts/<name>.sh"
+# Example — every later step:
+#   source /tmp/pr_plugin.env && bash "$CLAUDE_PLUGIN_ROOT/scripts/<name>.sh" --pr <N> …
 ```
 
 ## 1. Detect Platform (do this FIRST, before any other tool call)
@@ -206,7 +209,10 @@ Before posting the starting comment, run **`scripts/check-permissions.sh` as one
 
 ```bash
 # Include the resolve_pr_script / remember_pr_plugin_root helpers from step 0 in this same Bash call.
-export PR_NUMBER="${PR_NUMBER:-}"   # set from the invocation argument
+# Discover the PR number / branch / fix flag from the invocation ($ARGUMENTS), then pass as flags.
+PR_ARG=…          # numeric PR from the invocation, or empty
+BRANCH_ARG=…      # branch name from the invocation, or empty
+FIX_FLAG=()       # set to (--fix) when the invocation includes --fix
 PERM=$(resolve_pr_script check-permissions.sh)
 [ -n "${PERM:-}" ] && [ -f "$PERM" ] || {
   echo "ERROR: scripts/check-permissions.sh not found" >&2
@@ -215,8 +221,11 @@ PERM=$(resolve_pr_script check-permissions.sh)
   exit 1
 }
 remember_pr_plugin_root "$PERM"
-# Optional: FIX_MODE=true (when --fix)
-bash "$PERM"
+PERM_ARGS=()
+[ -n "$PR_ARG" ] && PERM_ARGS+=(--pr "$PR_ARG")
+[ -n "$BRANCH_ARG" ] && PERM_ARGS+=(--branch "$BRANCH_ARG")
+PERM_ARGS+=("${FIX_FLAG[@]}")
+bash "$PERM" "${PERM_ARGS[@]}"
 # shellcheck disable=SC1091
 source /tmp/pr_permissions.env
 ```
@@ -245,21 +254,26 @@ Use the platform-appropriate **plugin script** as one `Bash` call — do not inv
 ```bash
 # shellcheck disable=SC1091
 [ -f /tmp/pr_plugin.env ] && source /tmp/pr_plugin.env
-export PR_NUMBER=…   # from the invocation
+# Pass --pr / --branch discovered from the invocation. On executor detached-HEAD
+# checkouts a PR number is required — without --pr the Azure script exits 1.
+START_ARGS=()
+[ -n "$PR_ARG" ] && START_ARGS+=(--pr "$PR_ARG")
+[ -n "$BRANCH_ARG" ] && START_ARGS+=(--branch "$BRANCH_ARG")
+# Branch-only / no-PR reviews may pass --optional to soft-skip instead of failing.
 case "$PLATFORM" in
-  github) bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-start-comment.sh" ;;
-  azure)  bash "$CLAUDE_PLUGIN_ROOT/scripts/ado-start-comment.sh" ;;
+  github) bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-start-comment.sh" "${START_ARGS[@]}" ;;
+  azure)  bash "$CLAUDE_PLUGIN_ROOT/scripts/ado-start-comment.sh" "${START_ARGS[@]}" ;;
   *)      echo "Generic platform — skipping start comment" ;;
 esac
 ```
 
-- **GitHub:** `scripts/gh-start-comment.sh` — see `providers/github.md`
-- **Azure DevOps:** `scripts/ado-start-comment.sh` — writes `/tmp/pr_azure.env`. See `providers/azure-devops.md`
+- **GitHub:** `scripts/gh-start-comment.sh --pr <N>` — see `providers/github.md`
+- **Azure DevOps:** `scripts/ado-start-comment.sh --pr <N>` — writes `/tmp/pr_azure.env`. See `providers/azure-devops.md`
 - **Generic / unknown platform:** Skip — no API available
 
 If `CLAUDE_PLUGIN_ROOT` is missing, re-run the step 0 resolver — **do not** hand-roll a starting-comment `curl`.
 
-If posting the starting comment fails, output a single warning line and continue — do not stop the review.
+If posting the starting comment fails with a non-zero exit because `--pr` was omitted on a detached HEAD, **stop** and re-run with `--pr <number>`. Other soft failures (HTTP errors after a PR id is known): output a single warning line and continue.
 
 ## 3. Gather PR Context (do this BEFORE indexing the codebase)
 
@@ -271,7 +285,7 @@ The diff is what matters. Resolve the base/head and pull the diff first — for 
 
 > **Xianix Executor / CI worktrees:** the runner checks out the repo's **default branch** only — it knows nothing about PRs. When a PR number is provided, this script is a **hard gate**. You must see `Checked out PR #<n> at <sha>` (or branch checkout) in the output before proceeding. If `HEAD_SHA` does not match the platform's `headRefOid`, the script exits with an error.
 
-Set `PR_NUMBER` (numeric argument, if any) and `BRANCH_ARG` (branch name argument, if any) before running. You may leave `PLATFORM` unset — the script always resolves it from `origin` and normalizes executor aliases such as `azuredevops`. Canonical values inside the script are only `github`, `azure`, or `generic`. Then run **`scripts/pr-setup.sh` as a single `Bash` call** — do **not** invent a shortened checkout/diff script:
+Pass the PR number / branch discovered from the invocation as flags. You may also pass `--platform <hint>` — the script always resolves the real platform from `origin` and normalizes executor aliases such as `azuredevops`. Canonical values inside the script are only `github`, `azure`, or `generic`. Then run **`scripts/pr-setup.sh` as a single `Bash` call** — do **not** invent a shortened checkout/diff script:
 
 ```bash
 # shellcheck disable=SC1091
@@ -280,8 +294,10 @@ Set `PR_NUMBER` (numeric argument, if any) and `BRANCH_ARG` (branch name argumen
   echo "ERROR: CLAUDE_PLUGIN_ROOT unset — re-run step 0/1b resolve (do NOT invent a checkout/diff script)" >&2
   exit 1
 }
-# PR_NUMBER / BRANCH_ARG already exported from the invocation argument
-bash "$CLAUDE_PLUGIN_ROOT/scripts/pr-setup.sh"
+SETUP_ARGS=()
+[ -n "$PR_ARG" ] && SETUP_ARGS+=(--pr "$PR_ARG")
+[ -n "$BRANCH_ARG" ] && SETUP_ARGS+=(--branch "$BRANCH_ARG")
+bash "$CLAUDE_PLUGIN_ROOT/scripts/pr-setup.sh" "${SETUP_ARGS[@]}"
 # shellcheck disable=SC1091
 source /tmp/pr_state.env
 ```
@@ -307,7 +323,9 @@ This is the one place reading platform PR comments is required, because it deter
 ```bash
 # shellcheck disable=SC1091
 [ -f /tmp/pr_plugin.env ] && source /tmp/pr_plugin.env
-bash "$CLAUDE_PLUGIN_ROOT/scripts/detect-review-mode.sh"
+DETECT_ARGS=()
+[ -n "${PR_ARG:-${PR_NUMBER:-}}" ] && DETECT_ARGS+=(--pr "${PR_ARG:-$PR_NUMBER}")
+bash "$CLAUDE_PLUGIN_ROOT/scripts/detect-review-mode.sh" "${DETECT_ARGS[@]}"
 # shellcheck disable=SC1091
 source /tmp/pr_state.env
 # also sources PRIOR_SUMMARY_SHA when present:
@@ -650,6 +668,7 @@ The run executes in a temporary Docker container with no stored git credentials,
 ```bash
 # shellcheck disable=SC1091
 [ -f /tmp/pr_plugin.env ] && source /tmp/pr_plugin.env
+# Optional: --branch <name> when HEAD is detached and /tmp/pr_state.env lacks PR_HEAD_BRANCH
 bash "$CLAUDE_PLUGIN_ROOT/scripts/push-fixes.sh"
 ```
 
@@ -736,8 +755,8 @@ If a finding has no ` ```suggestion ` block, omit `suggestion_start_line` and `s
 The reviewers were already instructed (step 6) to return post-change line numbers, but verify here — a wrong line number is the single most common cause of silently dropped inline comments.
 
 Read and follow the instructions in the appropriate provider file — prefer the **plugin scripts** as one Bash call:
-- **GitHub** → run `scripts/gh-post-review.sh` (see `providers/github.md` → *Posting the final review*). Set `VERDICT` and `REVIEW_MODE`, ensure `/tmp/pr_thread_body.md` and `/tmp/pr_inline_findings.jsonl` exist. Do **not** invent ad-hoc `gh api` loops.
-- **Azure DevOps** → run `scripts/ado-post-review.sh` (see `providers/azure-devops.md` → *Posting the Review*). Set `VERDICT` and `REVIEW_MODE`, ensure `/tmp/pr_thread_body.md` and `/tmp/pr_inline_findings.jsonl` exist. Do **not** invent a shortened curl script — bare custom thread properties are a common cause of the summary comment never appearing. Never hand-build URLs with `AZURE_DEVOPS_ORG` / `PR_NUMBER` — use `source /tmp/pr_azure.env` and `PR_ID`.
+- **GitHub** → run `scripts/gh-post-review.sh --verdict "<VERDICT>" --mode "<REVIEW_MODE>" --pr <N>` (see `providers/github.md` → *Posting the final review*). Ensure `/tmp/pr_thread_body.md` and `/tmp/pr_inline_findings.jsonl` exist. Do **not** invent ad-hoc `gh api` loops.
+- **Azure DevOps** → run `scripts/ado-post-review.sh --verdict "<VERDICT>" --mode "<REVIEW_MODE>" --pr <N>` (see `providers/azure-devops.md` → *Posting the Review*). Ensure `/tmp/pr_thread_body.md` and `/tmp/pr_inline_findings.jsonl` exist. Do **not** invent a shortened curl script — bare custom thread properties are a common cause of the summary comment never appearing. Never hand-build URLs with `AZURE_DEVOPS_ORG` / `PR_NUMBER` — use `source /tmp/pr_azure.env` and pass `--pr`.
 - **Bitbucket or Unknown Platform** → `providers/generic.md`
 
 > **Blocking vs non-blocking on CRITICAL findings:** by **default** a `REQUEST CHANGES` verdict is posted as a *non-blocking* review (GitHub `--comment`, Azure DevOps vote `-5`) so the plugin runs in advisory / shadow mode out of the box. To make `REQUEST CHANGES` *blocking* (GitHub `--request-changes`, Azure DevOps vote `-10`), set `PR_REVIEWER_BLOCK_ON_CRITICAL=true`. Verdict, report body, and inline comments are identical in both modes — only the platform-side review type changes. Provider files contain the exact mapping logic.

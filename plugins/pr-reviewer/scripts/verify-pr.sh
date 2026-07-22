@@ -2,13 +2,13 @@
 # verify-pr.sh — confirm the PR exists and is still open (post-review / pre-post).
 #
 # Usage:
-#   PR_NUMBER=123 bash "${CLAUDE_PLUGIN_ROOT}/scripts/verify-pr.sh"
+#   bash "${CLAUDE_PLUGIN_ROOT}/scripts/verify-pr.sh" --pr 123
 #
-# Inputs:
-#   PR_NUMBER / PR_ID
+# Inputs (flags preferred; env names kept as fallback):
+#   --pr N
 #   PLATFORM (or detect from origin)
 #   /tmp/pr_azure.env — Azure (from ado-start-comment / check-permissions)
-#   AZURE_DEVOPS_TOKEN / gh CLI
+#   AZURE_DEVOPS_TOKEN (via resolve_token) / gh CLI
 #
 # Outputs:
 #   /tmp/pr_verify.env — PR_STATE, PR_TITLE, PR_HEAD_BRANCH, …
@@ -18,10 +18,18 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib-args.sh"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib-token.sh"
+# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib-azure-remote.sh"
 
+parse_pr_args "$@" || exit 1
+resolve_token azure || true
+resolve_token github || true
+
 PR_NUMBER="${PR_NUMBER:-${PR_ID:-}}"
-[ -n "$PR_NUMBER" ] || { echo "ERROR: PR_NUMBER required" >&2; exit 1; }
+[ -n "$PR_NUMBER" ] || { echo "ERROR: PR id unknown — re-run with --pr <number>" >&2; exit 1; }
 
 REMOTE_URL=$(git remote get-url origin 2>/dev/null || echo "")
 [ -n "$REMOTE_URL" ] || { echo "ERROR: no git remote origin" >&2; exit 1; }

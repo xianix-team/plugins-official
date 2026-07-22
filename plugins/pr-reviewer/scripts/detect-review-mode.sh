@@ -2,9 +2,10 @@
 # detect-review-mode.sh — run platform detect-prior + decide initial vs re-review.
 #
 # Usage:
-#   bash "${CLAUDE_PLUGIN_ROOT}/scripts/detect-review-mode.sh"
+#   bash "${CLAUDE_PLUGIN_ROOT}/scripts/detect-review-mode.sh" [--pr N]
 #
-# Inputs:
+# Inputs (flags preferred; env names kept as fallback):
+#   --pr N                  — forwarded to platform detect-prior scripts
 #   /tmp/pr_state.env       — from pr-setup.sh (PLATFORM, PR_NUMBER, BASE_SHA, HEAD_SHA)
 #   PR_REVIEWER_RECONCILE   — default true; set false for stateless full review
 #   CLAUDE_PLUGIN_ROOT      — preferred path to scripts/
@@ -28,9 +29,21 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib-args.sh"
+
+parse_pr_args "$@" || exit 1
+CALLER_PR="${PR_NUMBER:-${PR_ID:-}}"
 
 # shellcheck disable=SC1091
 [ -f /tmp/pr_state.env ] && source /tmp/pr_state.env
+
+# Flag --pr wins over stale state.
+if [ -n "${CALLER_PR:-}" ]; then
+  PR_NUMBER="$CALLER_PR"
+  PR_ID="$CALLER_PR"
+  export PR_NUMBER PR_ID
+fi
 
 : "${PR_REVIEWER_RECONCILE:=true}"
 PLATFORM="${PLATFORM:-}"
@@ -91,7 +104,11 @@ else
         echo "ERROR: scripts/gh-detect-prior.sh not found — refuse to invent a GraphQL dump" >&2
         exit 1
       }
-      bash "$DETECT"
+      if [ -n "${PR_NUMBER:-${PR_ID:-}}" ]; then
+        bash "$DETECT" --pr "${PR_NUMBER:-$PR_ID}"
+      else
+        bash "$DETECT"
+      fi
       ;;
     azure)
       DETECT=$(resolve_script ado-detect-prior.sh)
@@ -99,7 +116,11 @@ else
         echo "ERROR: scripts/ado-detect-prior.sh not found — refuse to invent a threads curl" >&2
         exit 1
       }
-      bash "$DETECT"
+      if [ -n "${PR_NUMBER:-${PR_ID:-}}" ]; then
+        bash "$DETECT" --pr "${PR_NUMBER:-$PR_ID}"
+      else
+        bash "$DETECT"
+      fi
       ;;
     *)
       : > /tmp/pr_prior_findings.jsonl

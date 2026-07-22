@@ -5,14 +5,15 @@
 # curl flows that abort before the summary posts. Run this file instead of retyping.
 #
 # Usage:
-#   VERDICT="REQUEST CHANGES" REVIEW_MODE=initial bash "${CLAUDE_PLUGIN_ROOT}/scripts/ado-post-review.sh"
+#   bash "${CLAUDE_PLUGIN_ROOT}/scripts/ado-post-review.sh" \
+#     --verdict "REQUEST CHANGES" --mode initial --pr 123
 #
-# Inputs:
+# Inputs (flags preferred; env names kept as fallback):
+#   --verdict TEXT / --mode initial|rereview / --pr N / --block-on-critical
 #   /tmp/pr_azure.env              — from starting-comment / parse step (API_BASE, AZURE_REPO, PR_ID, …)
 #   /tmp/pr_thread_body.md         — compiled report (fallback: /tmp/pr_review_summary.md)
 #   /tmp/pr_inline_findings.jsonl  — one JSON object per finding (fallback: /tmp/pr_findings.jsonl)
-#   VERDICT, REVIEW_MODE           — env vars
-#   AZURE_DEVOPS_TOKEN             — required
+#   AZURE_DEVOPS_TOKEN (via resolve_token) — required
 #
 # Optional: /tmp/pr_reconcile.json (fixed[]/carried_over[]/reopened[]/new[]), /tmp/pr_external_reconcile.json
 #
@@ -23,18 +24,25 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib-args.sh"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib-token.sh"
+# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib-azure-remote.sh"
+
+parse_pr_args "$@" || exit 1
 
 : "${VERDICT:=NEEDS DISCUSSION}"
 : "${REVIEW_MODE:=initial}"
 
 # --- 0. Token ---
-if [ -z "${AZURE_DEVOPS_TOKEN:-}" ]; then
+if ! resolve_token azure; then
   echo "ERROR: AZURE_DEVOPS_TOKEN unset — cannot post review" >&2
   exit 1
 fi
 
 # --- 1. Load API targets (from starting-comment step) or re-parse remote ---
+CALLER_PR="${PR_NUMBER:-${PR_ID:-}}"
 if [ -f /tmp/pr_azure.env ]; then
   # shellcheck disable=SC1091
   source /tmp/pr_azure.env
@@ -42,9 +50,9 @@ else
   echo "WARN: /tmp/pr_azure.env missing — re-parsing remote" >&2
   parse_azure_remote || exit 1
 fi
-PR_ID="${PR_ID:-${PR_NUMBER:-}}"
+PR_ID="${CALLER_PR:-${PR_ID:-${PR_NUMBER:-}}}"
 if [ -z "$PR_ID" ]; then
-  echo "ERROR: PR_ID unset — pass PR number as argument and set PR_NUMBER before posting" >&2
+  echo "ERROR: PR id unknown — re-run with --pr <number>" >&2
   exit 1
 fi
 echo "Posting to ${API_BASE}/_git/${AZURE_REPO}/pullrequest/${PR_ID}"

@@ -6,12 +6,12 @@
 # bodies. Run this file instead of retyping.
 #
 # Usage:
-#   bash "${CLAUDE_PLUGIN_ROOT}/scripts/ado-detect-prior.sh"
+#   bash "${CLAUDE_PLUGIN_ROOT}/scripts/ado-detect-prior.sh" --pr 123
 #
-# Inputs:
+# Inputs (flags preferred; env names kept as fallback):
+#   --pr N
 #   /tmp/pr_azure.env   — from starting-comment / parse step (API_BASE, AZURE_REPO, PR_ID, …)
-#   AZURE_DEVOPS_TOKEN  — required (underscores only)
-#   PR_ID / PR_NUMBER   — if not already in /tmp/pr_azure.env
+#   AZURE_DEVOPS_TOKEN (via resolve_token) — required
 #
 # Outputs:
 #   /tmp/pr_threads.json
@@ -21,25 +21,30 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib-args.sh"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib-token.sh"
+
+parse_pr_args "$@" || exit 1
+CALLER_PR="${PR_NUMBER:-${PR_ID:-}}"
+
 # --- 0. Token (never echo the value) ---
-if [ -z "${AZURE_DEVOPS_TOKEN:-}" ]; then
-  if compgen -e | grep -qx 'AZURE-DEVOPS-TOKEN'; then
-    echo "ERROR: AZURE_DEVOPS_TOKEN empty but dashed AZURE-DEVOPS-TOKEN exists." >&2
-    echo "Re-export: export AZURE_DEVOPS_TOKEN=\"\$(printenv AZURE-DEVOPS-TOKEN)\"" >&2
-    echo "Presence-check only: echo \"AZURE_DEVOPS_TOKEN=\${AZURE_DEVOPS_TOKEN:+yes}\"" >&2
-  else
-    echo "ERROR: AZURE_DEVOPS_TOKEN unset — cannot detect prior review" >&2
-  fi
+if ! resolve_token azure; then
+  echo "ERROR: AZURE_DEVOPS_TOKEN unset — cannot detect prior review" >&2
+  echo "Presence-check only: echo \"AZURE_DEVOPS_TOKEN=\${AZURE_DEVOPS_TOKEN:+yes}\"" >&2
   exit 1
 fi
 
 # --- 1. Load API targets ---
 # shellcheck disable=SC1091
 [ -f /tmp/pr_azure.env ] && source /tmp/pr_azure.env
-PR_ID="${PR_ID:-${PR_NUMBER:-}}"
+# Flag --pr wins over a stale / empty PR_ID left in /tmp/pr_azure.env.
+PR_ID="${CALLER_PR:-${PR_ID:-${PR_NUMBER:-}}}"
 [ -n "$PR_ID" ] && [ -n "${API_BASE:-}" ] && [ -n "${AZURE_REPO:-}" ] || {
-  echo "ERROR: detect prior review needs /tmp/pr_azure.env (API_BASE, AZURE_REPO, PR_ID)" >&2
-  echo "Run scripts/ado-start-comment.sh first (or parse the remote via lib-azure-remote.sh)." >&2
+  echo "ERROR: detect prior review needs API_BASE, AZURE_REPO, and PR id" >&2
+  echo "Run scripts/ado-start-comment.sh --pr <number> first, or pass --pr <number> here." >&2
   exit 1
 }
 

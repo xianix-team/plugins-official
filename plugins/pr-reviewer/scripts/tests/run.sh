@@ -187,6 +187,168 @@ JSON
 assert_eq "Gate A blocks (same sha): forced to carried_over" "yes" "$(bucket_has "$OUT2" carried_over "$FID_REMOVED")"
 assert_eq "Gate A blocks (same sha): fixed bucket stays empty" "no" "$(bucket_has "$OUT2" fixed "$FID_REMOVED")"
 
+echo "=== lib-args.sh flag parsing ==="
+
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib-args.sh"
+
+# Flag beats env
+unset PR_NUMBER BRANCH_ARG FIX_MODE VERDICT REVIEW_MODE PLATFORM PR_ID START_COMMENT_OPTIONAL PR_REVIEWER_BLOCK_ON_CRITICAL
+export PR_NUMBER=999
+parse_pr_args --pr 123 --branch feat/x --fix --verdict "REQUEST CHANGES" --mode rereview --platform azuredevops --block-on-critical --optional
+assert_eq "--pr beats env PR_NUMBER" "123" "$PR_NUMBER"
+assert_eq "--branch sets BRANCH_ARG" "feat/x" "$BRANCH_ARG"
+assert_eq "--fix sets FIX_MODE" "true" "$FIX_MODE"
+assert_eq "--verdict sets VERDICT" "REQUEST CHANGES" "$VERDICT"
+assert_eq "--mode sets REVIEW_MODE" "rereview" "$REVIEW_MODE"
+assert_eq "--platform sets PLATFORM" "azuredevops" "$PLATFORM"
+assert_eq "--block-on-critical sets flag" "true" "$PR_REVIEWER_BLOCK_ON_CRITICAL"
+assert_eq "--optional sets START_COMMENT_OPTIONAL" "true" "$START_COMMENT_OPTIONAL"
+assert_eq "--pr also sets PR_ID when empty" "123" "$PR_ID"
+
+# Env fallback when flag absent
+unset PR_NUMBER BRANCH_ARG FIX_MODE VERDICT REVIEW_MODE PLATFORM PR_ID START_COMMENT_OPTIONAL PR_REVIEWER_BLOCK_ON_CRITICAL
+export PR_NUMBER=42 BRANCH_ARG=env-branch VERDICT="APPROVE" REVIEW_MODE=initial
+parse_pr_args
+assert_eq "env fallback keeps PR_NUMBER" "42" "$PR_NUMBER"
+assert_eq "env fallback keeps BRANCH_ARG" "env-branch" "$BRANCH_ARG"
+assert_eq "env fallback keeps VERDICT" "APPROVE" "$VERDICT"
+assert_eq "default FIX_MODE is false" "false" "$FIX_MODE"
+
+# Unknown flag errors
+unset PR_NUMBER
+if parse_pr_args --unknown-flag 2>/dev/null; then
+  assert_eq "unknown flag should fail" "fail" "ok"
+else
+  assert_eq "unknown flag should fail" "fail" "fail"
+fi
+
+# Equals-form flags
+unset PR_NUMBER BRANCH_ARG VERDICT
+parse_pr_args --pr=77 --branch=feat/y --verdict=APPROVE
+assert_eq "--pr=N equals form" "77" "$PR_NUMBER"
+assert_eq "--branch=NAME equals form" "feat/y" "$BRANCH_ARG"
+assert_eq "--verdict=TEXT equals form" "APPROVE" "$VERDICT"
+
+echo "=== lib-token.sh resolve_token ==="
+
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib-token.sh"
+
+# Clean slate for azure
+unset AZURE_DEVOPS_TOKEN ADO_TOKEN AZURE_TOKEN
+# Dashed alias via env (simulate executor inject). Use env -i-style carefully:
+# bash cannot `export AZURE-DEVOPS-TOKEN=…` as an identifier, so use env prefix.
+OUT_TOKEN=$(
+  env -u AZURE_DEVOPS_TOKEN -u ADO_TOKEN -u AZURE_TOKEN \
+    "AZURE-DEVOPS-TOKEN=secret-dashed-value" \
+    bash -c '
+      set -euo pipefail
+      # shellcheck disable=SC1091
+      source "'"${SCRIPT_DIR}"'/lib-token.sh"
+      resolve_token azure
+      # Presence only — never print the value
+      echo "present=${AZURE_DEVOPS_TOKEN:+yes}"
+      # Confirm value was re-exported without leaking into this outer assert string
+      [ "$AZURE_DEVOPS_TOKEN" = "secret-dashed-value" ] && echo "value_ok=yes" || echo "value_ok=no"
+    '
+)
+assert_eq "resolve_token azure re-exports dashed alias (present)" "present=yes" "$(echo "$OUT_TOKEN" | grep '^present=')"
+assert_eq "resolve_token azure re-exports dashed alias (value)" "value_ok=yes" "$(echo "$OUT_TOKEN" | grep '^value_ok=')"
+
+# GitHub: GITHUB_TOKEN → GH_TOKEN
+OUT_GH=$(
+  env -u GH_TOKEN -u GITHUB_TOKEN \
+    GITHUB_TOKEN=gh-secret \
+    bash -c '
+      set -euo pipefail
+      # shellcheck disable=SC1091
+      source "'"${SCRIPT_DIR}"'/lib-token.sh"
+      resolve_token github
+      echo "gh=${GH_TOKEN:+yes}"
+      echo "github=${GITHUB_TOKEN:+yes}"
+      [ "$GH_TOKEN" = "gh-secret" ] && [ "$GITHUB_TOKEN" = "gh-secret" ] && echo "sync_ok=yes" || echo "sync_ok=no"
+    '
+)
+assert_eq "resolve_token github maps GITHUB_TOKEN → GH_TOKEN" "gh=yes" "$(echo "$OUT_GH" | grep '^gh=')"
+assert_eq "resolve_token github keeps GITHUB_TOKEN" "github=yes" "$(echo "$OUT_GH" | grep '^github=')"
+assert_eq "resolve_token github syncs both names" "sync_ok=yes" "$(echo "$OUT_GH" | grep '^sync_ok=')"
+
+# Missing token → non-zero, and token_present never echoes a secret
+MISSING=$(
+  env -u AZURE_DEVOPS_TOKEN -u ADO_TOKEN -u AZURE_TOKEN \
+    bash -c '
+      set +e
+      # shellcheck disable=SC1091
+      source "'"${SCRIPT_DIR}"'/lib-token.sh"
+      resolve_token azure
+      ec=$?
+      token_present azure
+      echo "ec=$ec"
+    ' 2>/dev/null
+)
+assert_eq "resolve_token azure missing returns 1" "ec=1" "$(echo "$MISSING" | grep '^ec=')"
+assert_eq "token_present never echoes a secret value" "AZURE_DEVOPS_TOKEN=" "$(echo "$MISSING" | grep '^AZURE_DEVOPS_TOKEN=')"
+# Guard: the fake secret string must not appear in any output
+if echo "$OUT_TOKEN$OUT_GH$MISSING" | grep -q 'secret-dashed-value\|gh-secret'; then
+  assert_eq "token values never appear in test outer logs" "clean" "leaked"
+else
+  assert_eq "token values never appear in test outer logs" "clean" "clean"
+fi
+
+echo "=== ado-start-comment.sh hard-fail without --pr on detached HEAD ==="
+
+# Clear any PR_* leaked from the lib-args tests above — ado-start-comment inherits
+# the parent env, and a leftover PR_NUMBER would short-circuit the hard-fail path.
+unset PR_NUMBER PR_ID BRANCH_ARG CALLER_PR START_COMMENT_OPTIONAL
+
+# Build a tiny azure-remote-shaped repo so parse_azure_remote succeeds, then
+# detach HEAD with no branch and no --pr. Expect exit 1 mentioning --pr.
+ADO_REPO="$WORK/ado-repo"
+mkdir -p "$ADO_REPO"
+git -C "$ADO_REPO" init -q -b main
+git -C "$ADO_REPO" config user.email "test@example.com"
+git -C "$ADO_REPO" config user.name "Test"
+echo "x" > "$ADO_REPO/README"
+git -C "$ADO_REPO" add -A
+git -C "$ADO_REPO" commit -q -m "init"
+git -C "$ADO_REPO" remote add origin "https://dev.azure.com/org/project/_git/repo"
+# Detach HEAD and delete the only branch name so branch resolution fails
+DETACH_SHA=$(git -C "$ADO_REPO" rev-parse HEAD)
+git -C "$ADO_REPO" checkout -q --detach "$DETACH_SHA"
+git -C "$ADO_REPO" branch -D main >/dev/null 2>&1 || true
+
+ADO_STATUS=0
+(
+  cd "$ADO_REPO"
+  env -u PR_NUMBER -u PR_ID -u BRANCH_ARG -u START_COMMENT_OPTIONAL \
+    AZURE_DEVOPS_TOKEN=fake-token \
+    bash "${SCRIPT_DIR}/ado-start-comment.sh" >/dev/null 2>"$WORK/ado-stderr.txt"
+) || ADO_STATUS=$?
+assert_eq "ado-start-comment hard-fails without --pr on detached HEAD" "1" "$ADO_STATUS"
+if grep -q '\-\-pr' "$WORK/ado-stderr.txt"; then
+  assert_eq "ado-start-comment error mentions --pr" "yes" "yes"
+else
+  assert_eq "ado-start-comment error mentions --pr" "yes" "no"
+  echo "  stderr was: $(cat "$WORK/ado-stderr.txt")" >&2
+fi
+
+# --optional soft-skips instead
+ADO_OPT_STATUS=0
+(
+  cd "$ADO_REPO"
+  env -u PR_NUMBER -u PR_ID -u BRANCH_ARG \
+    AZURE_DEVOPS_TOKEN=fake-token \
+    bash "${SCRIPT_DIR}/ado-start-comment.sh" --optional >/dev/null 2>"$WORK/ado-opt-stderr.txt"
+) || ADO_OPT_STATUS=$?
+assert_eq "ado-start-comment --optional soft-skips (exit 0)" "0" "$ADO_OPT_STATUS"
+if grep -qi 'WARN:.*skipping' "$WORK/ado-opt-stderr.txt"; then
+  assert_eq "ado-start-comment --optional warns and skips" "yes" "yes"
+else
+  assert_eq "ado-start-comment --optional warns and skips" "yes" "no"
+  echo "  stderr was: $(cat "$WORK/ado-opt-stderr.txt")" >&2
+fi
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]

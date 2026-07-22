@@ -6,13 +6,13 @@
 # Run this file instead of retyping.
 #
 # Usage:
-#   PR_NUMBER=123 bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-setup.sh"
-#   BRANCH_ARG=feature/foo bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-setup.sh"
+#   bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-setup.sh" --pr 123
+#   bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-setup.sh" --branch feature/foo
+#   bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-setup.sh" --pr 123 --platform azuredevops
 #
-# Inputs:
-#   PR_NUMBER / BRANCH_ARG  — optional; leave both empty for current branch vs default
-#   PLATFORM                — optional hint (normalized; origin is authoritative)
-#   AZURE_DEVOPS_TOKEN      — required for Azure PR metadata / checkout fallback
+# Inputs (flags preferred; env names kept as fallback):
+#   --pr N / --branch NAME / --platform HINT
+#   AZURE_DEVOPS_TOKEN (via resolve_token) — required for Azure PR metadata / checkout fallback
 #   gh CLI                  — required for GitHub PR metadata
 #   /tmp/pr_azure.env       — optional; written by ado-start-comment.sh
 #
@@ -28,7 +28,15 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib-args.sh"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib-token.sh"
+# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib-azure-remote.sh"
+
+parse_pr_args "$@" || exit 1
+resolve_token azure || true
+resolve_token github || true
 
 # --- Clean up run-scoped state from a prior invocation in this container/session ---
 # These are per-run artifacts produced later in the pipeline by the *orchestrating

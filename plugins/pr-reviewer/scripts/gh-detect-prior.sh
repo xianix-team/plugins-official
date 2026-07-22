@@ -6,11 +6,11 @@
 # Run this file instead of retyping.
 #
 # Usage:
-#   PR_NUMBER=123 bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-detect-prior.sh"
+#   bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-detect-prior.sh" --pr 123
 #
-# Inputs:
-#   PR_NUMBER (or from /tmp/pr_state.env)
-#   gh CLI authenticated (GH_TOKEN / GITHUB_TOKEN)
+# Inputs (flags preferred; env names kept as fallback):
+#   --pr N (or from /tmp/pr_state.env)
+#   gh CLI authenticated (GH_TOKEN / GITHUB_TOKEN via resolve_token)
 #
 # Outputs:
 #   /tmp/pr_review_threads.json
@@ -20,12 +20,23 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib-args.sh"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib-token.sh"
+
+parse_pr_args "$@" || exit 1
+resolve_token github || true
+
+# Caller --pr must win over a stale /tmp/pr_state.env.
+CALLER_PR="${PR_NUMBER:-${PR_ID:-}}"
 # shellcheck disable=SC1091
 [ -f /tmp/pr_state.env ] && source /tmp/pr_state.env
 
-PR_NUMBER="${PR_NUMBER:-${PR_ID:-}}"
+PR_NUMBER="${CALLER_PR:-${PR_NUMBER:-${PR_ID:-}}}"
 if [ -z "$PR_NUMBER" ]; then
-  echo "ERROR: PR_NUMBER unset — pass PR number before detecting prior review" >&2
+  echo "ERROR: PR id unknown — re-run with --pr <number>" >&2
   exit 1
 fi
 

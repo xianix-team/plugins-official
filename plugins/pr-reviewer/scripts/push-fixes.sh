@@ -6,11 +6,12 @@
 # git push via GIT_CONFIG_* and never prints the secret.
 #
 # Usage:
-#   bash "${CLAUDE_PLUGIN_ROOT}/scripts/push-fixes.sh"
+#   bash "${CLAUDE_PLUGIN_ROOT}/scripts/push-fixes.sh" [--branch NAME]
 #
-# Inputs:
+# Inputs (flags preferred; env names kept as fallback):
+#   --branch NAME           — destination branch when HEAD is detached
 #   origin remote
-#   GITHUB_TOKEN / AZURE_DEVOPS_TOKEN (platform-appropriate)
+#   GITHUB_TOKEN / AZURE_DEVOPS_TOKEN via resolve_token (platform-appropriate)
 #   /tmp/pr_state.env — optional PR_HEAD_BRANCH / CURRENT_BRANCH (needed when
 #                       HEAD is detached after pr-setup.sh checkout)
 #
@@ -19,6 +20,14 @@
 #   Never echoes token values.
 
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib-args.sh"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib-token.sh"
+
+parse_pr_args "$@" || exit 1
 
 # shellcheck disable=SC1091
 [ -f /tmp/pr_state.env ] && source /tmp/pr_state.env
@@ -30,14 +39,18 @@ REMOTE_HOST=$(echo "$REMOTE_URL" | sed -E 's|^[a-z+]+://||; s|^[^@/]+@||; s|[:/]
 
 case "$REMOTE_URL" in
   *dev.azure.com*|*visualstudio.com*)
-    PUSH_TOKEN="${AZURE_DEVOPS_TOKEN:-}"
-    if [ -z "$PUSH_TOKEN" ] && compgen -e | grep -qx 'AZURE-DEVOPS-TOKEN'; then
-      PUSH_TOKEN="$(printenv AZURE-DEVOPS-TOKEN)"
-      export AZURE_DEVOPS_TOKEN="$PUSH_TOKEN"
+    if ! resolve_token azure; then
+      echo "ERROR: AZURE_DEVOPS_TOKEN unset — required for fix-mode push (see docs/git-auth.md)" >&2
+      exit 1
     fi
+    PUSH_TOKEN="${AZURE_DEVOPS_TOKEN}"
     TOKEN_NAME=AZURE_DEVOPS_TOKEN
     ;;
   *github.com*)
+    if ! resolve_token github; then
+      echo "ERROR: GITHUB_TOKEN unset — required for fix-mode push (see docs/git-auth.md)" >&2
+      exit 1
+    fi
     PUSH_TOKEN="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
     TOKEN_NAME=GITHUB_TOKEN
     ;;
@@ -54,8 +67,8 @@ echo "${TOKEN_NAME}=${PUSH_TOKEN:+yes}"
 }
 
 # Resolve destination branch. After pr-setup.sh, HEAD is detached at the PR tip —
-# `git push origin HEAD` fails with "not a full refname". Prefer PR_HEAD_BRANCH.
-BRANCH="${PR_HEAD_BRANCH:-${CURRENT_BRANCH:-}}"
+# `git push origin HEAD` fails with "not a full refname". Prefer --branch / PR_HEAD_BRANCH.
+BRANCH="${BRANCH_ARG:-${PR_HEAD_BRANCH:-${CURRENT_BRANCH:-}}}"
 if [ -z "$BRANCH" ] || [ "$BRANCH" = "HEAD" ]; then
   BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
 fi
@@ -65,7 +78,7 @@ if [ -z "$BRANCH" ] || [ "$BRANCH" = "HEAD" ]; then
     | sed 's|^[* ] *||' | grep -v '^(' | head -1 || true)
 fi
 if [ -z "$BRANCH" ] || [ "$BRANCH" = "HEAD" ]; then
-  echo "ERROR: cannot resolve PR head branch for push (set PR_HEAD_BRANCH or run pr-setup.sh)" >&2
+  echo "ERROR: cannot resolve PR head branch for push (pass --branch NAME or run pr-setup.sh)" >&2
   exit 1
 fi
 # Strip accidental refs/heads/ prefix

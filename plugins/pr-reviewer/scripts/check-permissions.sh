@@ -6,14 +6,13 @@
 #
 # Usage:
 #   bash "${CLAUDE_PLUGIN_ROOT}/scripts/check-permissions.sh"
-#   PR_NUMBER=20 FIX_MODE=true bash …/check-permissions.sh   # optional
+#   bash …/check-permissions.sh --pr 20 --fix
 #
-# Inputs:
+# Inputs (flags preferred; env names kept as fallback):
 #   origin remote (authoritative platform)
-#   GH_TOKEN / GITHUB_TOKEN / gh auth   — GitHub
-#   AZURE_DEVOPS_TOKEN                 — Azure (underscores; auto-reexports dashed alias)
-#   PR_NUMBER                          — optional; enables deeper ADO thread probe
-#   FIX_MODE=true                      — optional; elevates push-capability warnings
+#   --pr N / --fix
+#   GitHub token via resolve_token (GH_TOKEN / GITHUB_TOKEN / GITHUB-TOKEN) or gh auth
+#   Azure token via resolve_token (AZURE_DEVOPS_TOKEN / AZURE-DEVOPS-TOKEN)
 #
 # Outputs:
 #   /tmp/pr_permissions.env            — PLATFORM, AUTH_OK, capability flags, WARNINGS
@@ -24,7 +23,13 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib-args.sh"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib-token.sh"
+# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib-azure-remote.sh"
+
+parse_pr_args "$@" || exit 1
 
 CURL="${CURL:-curl}"
 command -v "$CURL" >/dev/null 2>&1 || CURL=/usr/bin/curl
@@ -75,10 +80,8 @@ check_github() {
   ok "gh CLI present"
 
   # Prefer explicit token env if set (CI); otherwise rely on gh's stored auth.
-  if [ -z "${GH_TOKEN:-}" ] && [ -n "${GITHUB_TOKEN:-}" ]; then
-    export GH_TOKEN="$GITHUB_TOKEN"
-  fi
-  echo "GITHUB_TOKEN/GH_TOKEN=${GH_TOKEN:+yes} (or gh auth login)"
+  resolve_token github || true
+  echo "$(token_present github) (or gh auth login)"
 
   # Auth + scopes from /user response headers
   HEADERS=$(mktemp)
@@ -196,18 +199,11 @@ check_github() {
 # Azure DevOps
 # =============================================================================
 check_azure() {
-  # Re-export dashed alias if needed (never print the value)
-  if [ -z "${AZURE_DEVOPS_TOKEN:-}" ] && compgen -e | grep -qx 'AZURE-DEVOPS-TOKEN'; then
-    AZURE_DEVOPS_TOKEN="$(printenv AZURE-DEVOPS-TOKEN)"
-    export AZURE_DEVOPS_TOKEN
-    ok "re-exported AZURE-DEVOPS-TOKEN → AZURE_DEVOPS_TOKEN"
-  fi
-  echo "AZURE_DEVOPS_TOKEN=${AZURE_DEVOPS_TOKEN:+yes}"
-
-  if [ -z "${AZURE_DEVOPS_TOKEN:-}" ]; then
+  if ! resolve_token azure; then
     fail "AZURE_DEVOPS_TOKEN unset — required for Azure DevOps posting (see docs/platform-setup.md)"
     return
   fi
+  token_present azure
 
   if ! parse_azure_remote; then
     fail "could not parse Azure DevOps remote URL"

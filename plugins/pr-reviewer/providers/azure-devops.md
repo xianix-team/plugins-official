@@ -239,8 +239,11 @@ ADO_START="${CLAUDE_PLUGIN_ROOT}/scripts/ado-start-comment.sh"
   echo "ERROR: scripts/ado-start-comment.sh not found — source /tmp/pr_plugin.env from step 0; refuse to invent a starting-comment curl" >&2
   exit 1
 }
-# Set PR_NUMBER from the numeric argument when provided; BRANCH_ARG when a branch was given
-bash "$ADO_START"
+# Pass --pr / --branch discovered from the invocation (required on executor detached HEAD)
+START_ARGS=()
+[ -n "${PR_ARG:-}" ] && START_ARGS+=(--pr "$PR_ARG")
+[ -n "${BRANCH_ARG:-}" ] && START_ARGS+=(--branch "$BRANCH_ARG")
+bash "$ADO_START" "${START_ARGS[@]}"
 # shellcheck disable=SC1091
 source /tmp/pr_azure.env   # API_BASE, AZURE_REPO, PR_ID, …
 ```
@@ -260,11 +263,12 @@ ADO_POST="${CLAUDE_PLUGIN_ROOT}/scripts/ado-post-review.sh"
   exit 1
 }
 
-# Set VERDICT to exactly one of: APPROVE | APPROVE WITH SUGGESTIONS | REQUEST CHANGES | NEEDS DISCUSSION
-# (REQUEST_CHANGES / waitForAuthor aliases are normalized inside the script)
-export VERDICT="REQUEST CHANGES"   # <- replace with the actual verdict from step 7
-export REVIEW_MODE="${REVIEW_MODE:-initial}"
-bash "$ADO_POST"
+# Pass verdict / mode / pr as flags (shell state does not persist across Bash calls)
+# VERDICT: APPROVE | APPROVE WITH SUGGESTIONS | REQUEST CHANGES | NEEDS DISCUSSION
+bash "$ADO_POST" \
+  --verdict "REQUEST CHANGES" \
+  --mode "${REVIEW_MODE:-initial}" \
+  --pr "${PR_ARG:-${PR_NUMBER:-${PR_ID:-}}}"
 ```
 
 That script loads `/tmp/pr_azure.env`, casts the vote, posts the **summary** thread (with PropertiesCollection `$type`/`$value` + body marker + retries), reconciles re-review/external threads, and loops inline findings. **Do not** invent a shortened script, hand-build `curl` URLs, or invent `AZURE_DEVOPS_*` variables — that is the #1 cause of 401/404 posting failures, vote steps aborting under `set -e`, and **summary comments never appearing on the PR**.
@@ -323,7 +327,7 @@ else
 fi
 PR_ID="${PR_ID:-${PR_NUMBER:-}}"
 if [ -z "$PR_ID" ]; then
-  echo "ERROR: PR_ID unset — pass PR number as argument and set PR_NUMBER before posting" >&2
+  echo "ERROR: PR id unknown — re-run with --pr <number>" >&2
   exit 1
 fi
 echo "Posting to ${API_BASE}/_git/${AZURE_REPO}/pullrequest/${PR_ID}"

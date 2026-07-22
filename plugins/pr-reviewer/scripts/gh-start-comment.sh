@@ -2,15 +2,23 @@
 # gh-start-comment.sh — post GitHub "review in progress" comment.
 #
 # Usage:
-#   PR_NUMBER=123 bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-start-comment.sh"
+#   bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-start-comment.sh" --pr 123
+#   bash "${CLAUDE_PLUGIN_ROOT}/scripts/gh-start-comment.sh" --optional
 #
-# Inputs:
-#   PR_NUMBER             — required (or resolvable via gh for current branch)
+# Inputs (flags preferred; env names kept as fallback):
+#   --pr N / --optional
 #   gh CLI authenticated
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib-args.sh"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib-token.sh"
+
+parse_pr_args "$@" || exit 1
+resolve_token github || true
 
 # A caller-provided PR number must win over a stale /tmp/pr_state.env left by a
 # previous run (this script normally runs before pr-setup.sh writes that file).
@@ -28,8 +36,12 @@ if [ -z "$PR_NUMBER" ]; then
   PR_NUMBER=$(gh pr view --json number --jq '.number' 2>/dev/null || true)
 fi
 if [ -z "$PR_NUMBER" ]; then
-  echo "WARN: no PR number — skipping review-in-progress comment" >&2
-  exit 0
+  if [ "${START_COMMENT_OPTIONAL:-false}" = "true" ]; then
+    echo "WARN: no PR number — skipping review-in-progress comment" >&2
+    exit 0
+  fi
+  echo "ERROR: PR id unknown — re-run with --pr <number>" >&2
+  exit 1
 fi
 
 PLUGIN_VERSION=$(grep -hom1 '"version"[^,}]*' \

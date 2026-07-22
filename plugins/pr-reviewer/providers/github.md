@@ -64,8 +64,8 @@ GH_DETECT="${CLAUDE_PLUGIN_ROOT}/scripts/gh-detect-prior.sh"
   echo "ERROR: scripts/gh-detect-prior.sh not found — source /tmp/pr_plugin.env from step 0; refuse to invent a GraphQL dump" >&2
   exit 1
 }
-# PR_NUMBER from /tmp/pr_state.env or the invocation argument
-bash "$GH_DETECT"
+# Pass --pr discovered from the invocation (or from /tmp/pr_state.env)
+bash "$GH_DETECT" --pr "${PR_ARG:-${PR_NUMBER:-}}"
 # shellcheck disable=SC1091
 source /tmp/pr_prior.env   # PRIOR_SUMMARY_SHA
 ```
@@ -88,8 +88,8 @@ GH_START="${CLAUDE_PLUGIN_ROOT}/scripts/gh-start-comment.sh"
   echo "ERROR: scripts/gh-start-comment.sh not found — source /tmp/pr_plugin.env from step 0" >&2
   exit 1
 }
-# PR_NUMBER from the invocation argument or /tmp/pr_state.env
-bash "$GH_START"
+# Pass --pr discovered from the invocation
+bash "$GH_START" --pr "${PR_ARG:-${PR_NUMBER:-}}"
 ```
 
 If posting fails, output one warning line and continue.
@@ -111,10 +111,12 @@ GH_POST="${CLAUDE_PLUGIN_ROOT}/scripts/gh-post-review.sh"
   exit 1
 }
 
-# Set VERDICT to exactly one of: APPROVE | APPROVE WITH SUGGESTIONS | REQUEST CHANGES | NEEDS DISCUSSION
-export VERDICT="REQUEST CHANGES"   # <- replace with the actual verdict from step 7
-export REVIEW_MODE="${REVIEW_MODE:-initial}"
-bash "$GH_POST"
+# Pass verdict / mode / pr as flags (shell state does not persist across Bash calls)
+# VERDICT: APPROVE | APPROVE WITH SUGGESTIONS | REQUEST CHANGES | NEEDS DISCUSSION
+bash "$GH_POST" \
+  --verdict "REQUEST CHANGES" \
+  --mode "${REVIEW_MODE:-initial}" \
+  --pr "${PR_ARG:-${PR_NUMBER:-}}"
 ```
 
 That script: detects self-review, maps verdict + `PR_REVIEWER_BLOCK_ON_CRITICAL` to the `gh pr review` flag, posts the summary with the marker (falls back to `gh pr comment`), reconciles re-review/external threads (sub-steps R and E), and loops inline findings with suggestion-range args. **Inputs:** `/tmp/pr_thread_body.md`, `/tmp/pr_inline_findings.jsonl` (fields: `file`, `line`, `body`, `fid`, optional `suggestion_start_line` / `suggestion_end_line`).

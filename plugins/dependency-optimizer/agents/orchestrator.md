@@ -237,6 +237,36 @@ For **.NET**:
 dotnet add package <package> --version <safe_version>
 ```
 
+#### Verify the build (MANDATORY — before any commit)
+
+Follow `docs/build-verification.md` for the ecosystem detected in Step 3. Run the
+matching compile/build check **once**, for the whole batch of applied fixes, and
+capture its output:
+
+```bash
+# Example for Node.js — substitute the command from docs/build-verification.md
+# for the detected ecosystem/package manager.
+npm run build > /tmp/dep_build_verify_output.log 2>&1
+BUILD_EXIT=$?
+```
+
+- **Exit 0 → PASSED.** Write `/tmp/dep_build_verify_status` per the doc's success
+  contract, and continue to "Commit the fixes" below.
+- **Non-zero → FAILED.** Write `/tmp/dep_build_verify_status` per the doc's failure
+  contract, then:
+  1. `git checkout -- .` to revert every fix in the working tree.
+  2. Downgrade the run's Health Status to `MANUAL INTERVENTION`, even if the
+     sub-agents reported `FIXES AVAILABLE`.
+  3. Move the reverted items into the report's **Critical Issues Requiring
+     Attention** section, including the verification command and the tail of its
+     output.
+  4. Skip the rest of this section (do not commit, push, or open a PR) and go
+     straight to Step 7's `MANUAL INTERVENTION` posting path (comment, not PR).
+  5. Note in the final confirmation line (Step 8) that fixes were reverted after a
+     failed build check.
+
+**Do not commit a fix that has not passed this check.**
+
 #### Commit the fixes
 
 ```bash
@@ -245,7 +275,8 @@ git commit -m "fix(deps): automated dependency optimization
 
 - Patched CVEs: [list from vulnerability-scanner]
 - Updated packages: [list from version-updater]
-- Removed unused: [list from bloat-analyzer]"
+- Removed unused: [list from bloat-analyzer]
+- Build verification: PASSED ([command used])"
 ```
 
 #### Push the branch

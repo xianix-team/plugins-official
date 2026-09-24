@@ -111,8 +111,8 @@ if echo "$TARGET_URL" | grep -q "^https://"; then
     | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)
   echo "Certificate expiry: $EXPIRY"
 
-  if command -v python3 > /dev/null 2>&1; then
-    python3 -c "
+  if command -v python3 > /dev/null 2>&1 || command -v python > /dev/null 2>&1; then
+    "$(command -v python3 || command -v python)" -c "
 from datetime import datetime, timezone
 import sys
 expiry_str = '$EXPIRY'

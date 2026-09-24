@@ -8,7 +8,7 @@
   "properties": {
     "agent": {
       "type": "string",
-      "enum": ["iac-scanner", "sbom-generator", "network-scanner"]
+      "enum": ["iac-scanner", "sbom-generator", "network-scanner", "fix-writer"]
     },
     "scanner": { "type": "string" },
     "scanned_at": { "type": "string", "format": "date-time" },
@@ -59,7 +59,60 @@
           }
         },
         "references": { "type": "array", "items": { "type": "string", "format": "uri" } },
-        "suppressed": { "type": "boolean", "default": false }
+        "suppressed": { "type": "boolean", "default": false },
+        "fix": {
+          "type": "object",
+          "description": "Remediation guidance attached to this finding. The 'before'/'after' fields are populated for mechanically-fixable findings (so the report can show a concrete diff). The 'mechanically_fixable' flag controls whether fix-writer is allowed to propose a PR for this change when --fix is passed. Nothing is ever auto-applied to source — delivery is always via a draft PR for human review.",
+          "properties": {
+            "mechanically_fixable": {
+              "type": "boolean",
+              "description": "True only for categories where fix-writer can compute a correct patch by template without human judgment: iac-config-flag (Terraform/Kubernetes boolean swaps) and action-pin (pinning a GitHub Action to a commit SHA). False for open ingress, public DB, hardcoded creds, secret-in-ENV, curl|bash, latest-tag, ADD-url, and workflow-injection findings — these stay as report guidance only and never get a PR. Note: 'mechanically' does not mean 'auto-applied' — even when true, the delivery is a draft PR that a human merges."
+            },
+            "category": {
+              "type": "string",
+              "enum": ["iac-config-flag", "action-pin", "guide-only"]
+            },
+            "root_cause": {
+              "type": "string",
+              "description": "One-sentence explanation of why this is a misconfiguration."
+            },
+            "command": {
+              "type": "string",
+              "description": "Shell command to apply the fix when applicable, e.g. 'gh api repos/actions/checkout/commits/v4 --jq .sha'. Empty for pure code-edit fixes (iac-config-flag)."
+            },
+            "before": {
+              "type": "string",
+              "description": "Misconfigured snippet (loaded from the finding location line). Empty when the finding is guide-only."
+            },
+            "after": {
+              "type": "string",
+              "description": "Fixed version of the same snippet. For action-pin this is a placeholder until fix-writer resolves the SHA."
+            },
+            "verification": {
+              "type": "string",
+              "description": "Imperative step to confirm the fix worked (e.g. 're-run /infra-scan --authorized; IAC-K8S-PRIVILEGED no longer reported')."
+            },
+            "applied": {
+              "type": "boolean",
+              "default": false,
+              "description": "Set to true by fix-writer when a PR has been successfully opened for this finding. 'Applied' here means 'PR proposed' — not 'merged'."
+            },
+            "applied_at": {
+              "type": ["string", "null"],
+              "format": "date-time",
+              "description": "ISO 8601 timestamp of when fix-writer opened the PR. Null until proposed."
+            },
+            "pr_url": {
+              "type": ["string", "null"],
+              "format": "uri",
+              "description": "URL of the draft PR fix-writer opened for this finding. Populated only when status was 'pr-opened'. Null otherwise — including when status was 'branch-pushed-no-pr' (no CLI available) or 'branch-only' (push failed)."
+            },
+            "pr_branch": {
+              "type": ["string", "null"],
+              "description": "Branch name fix-writer created for the PR (e.g. 'infra-fix/iac-k8s-privileged'). Populated whenever the worktree + commit step succeeded, even if push or PR-open later failed."
+            }
+          }
+        }
       }
     }
   }

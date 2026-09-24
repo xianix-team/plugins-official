@@ -341,8 +341,8 @@
     {
       "name": "infra-scanner",
       "source": "./plugins/infra-scanner",
-      "description": "Authorized infrastructure security scanning plugin. Runs Infrastructure-as-Code misconfiguration detection (Dockerfile, Terraform, Kubernetes, GitHub Actions), CycloneDX SBOM generation, and optional network port + TLS scanning. Companion to pentest-agent for users who want infra coverage alongside web-application pentesting. Requires explicit --authorized flag.",
-      "version": "1.0.0",
+      "description": "Authorized infrastructure security scanning plugin. Runs Infrastructure-as-Code misconfiguration detection (Dockerfile, Terraform, Kubernetes, GitHub Actions), CycloneDX SBOM generation, and optional network port + TLS scanning. Optional --fix opens a draft PR for the single top mechanically-fixable finding (Terraform/Kubernetes config flags, GitHub Action SHA-pinning) without ever modifying your working tree. Companion to pentest-agent for users who want infra coverage alongside web-application pentesting. Requires explicit --authorized flag.",
+      "version": "1.1.0",
       "author": {
         "name": "Xianix",
         "email": "hello@xianix.com"

@@ -341,8 +341,8 @@
     {
       "name": "infra-scanner",
       "source": "./plugins/infra-scanner",
-      "description": "Authorized infrastructure security scanning plugin. Runs Infrastructure-as-Code misconfiguration detection (Dockerfile, Terraform, Kubernetes, GitHub Actions), CycloneDX SBOM generation, and optional network port + TLS scanning. Companion to pentest-agent for users who want infra coverage alongside web-application pentesting. Requires explicit --authorized flag.",
-      "version": "1.0.0",
+      "description": "Authorized infrastructure security scanning plugin. Runs Infrastructure-as-Code misconfiguration detection (Dockerfile, Terraform, Kubernetes, GitHub Actions), CycloneDX SBOM generation, and optional network port + TLS scanning. Optional --fix opens a draft PR for the single top mechanically-fixable finding (Terraform/Kubernetes config flags, GitHub Action SHA-pinning) without ever modifying your working tree. Companion to pentest-agent for users who want infra coverage alongside web-application pentesting. Requires explicit --authorized flag.",
+      "version": "1.1.0",
       "author": {
         "name": "Xianix",
         "email": "hello@xianix.com"
@@ -389,6 +389,21 @@
         "human-gated",
         "ux-design"
       ],
+      "license": "MIT"
+    },
+    {
+      "name": "deadcode-scanner",
+      "source": "./plugins/deadcode-scanner",
+      "description": "Dead code detection for JS/TS repos using Knip — finds unused files, exports, types, and dependencies. Produces HTML/Markdown/JSON reports with run history and delta tracking; optional --fix opens a draft PR that safely removes the dead code via an isolated git worktree, never touching your working tree.",
+      "version": "1.0.0",
+      "author": {
+        "name": "Xianix",
+        "email": "hello@xianix.com"
+      },
+      "homepage": "https://xianix.com",
+      "repository": "https://github.com/xianix-team/plugins-official",
+      "category": "code-quality",
+      "keywords": ["dead-code", "knip", "unused-exports", "unused-dependencies", "unused-files", "tree-shaking", "code-quality", "cleanup", "typescript", "javascript"],
       "license": "MIT"
     }
   ]

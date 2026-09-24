@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://xianix.com/schemas/deadcode-scanner/findings.schema.json",
+  "title": "deadcode-scanner Findings",
+  "description": "Canonical intermediate format produced by knip-detector and consumed by report-writer and fix-writer.",
+  "type": "object",
+  "required": ["agent", "scanner", "scanned_at", "status", "findings", "summary"],
+  "properties": {
+    "agent": {
+      "type": "string",
+      "description": "Name of the agent that produced this document.",
+      "enum": ["knip-detector", "fix-writer"]
+    },
+    "scanner": {
+      "type": "string",
+      "description": "Underlying tool actually used (e.g. knip, knip --fix)."
+    },
+    "scanned_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 UTC timestamp when this scan started."
+    },
+    "target": {
+      "type": "string",
+      "description": "Repo path the scan was applied to."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["ok", "partial", "failed", "skipped", "pr-opened", "branch-pushed-no-pr", "branch-only", "dry-run"],
+      "description": "Outcome. 'ok/partial/failed/skipped' for knip-detector; PR statuses for fix-writer. report-writer surfaces 'partial' and 'failed' explicitly."
+    },
+    "status_reason": {
+      "type": "string",
+      "description": "Required when status is 'partial', 'failed', or 'skipped'. One-line explanation."
+    },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/finding" }
+    },
+    "summary": {
+      "type": "object",
+      "required": ["total", "critical", "high", "medium", "low", "info"],
+      "properties": {
+        "total":    { "type": "integer", "minimum": 0 },
+        "critical": { "type": "integer", "minimum": 0 },
+        "high":     { "type": "integer", "minimum": 0 },
+        "medium":   { "type": "integer", "minimum": 0 },
+        "low":      { "type": "integer", "minimum": 0 },
+        "info":     { "type": "integer", "minimum": 0 }
+      }
+    },
+    "evidence_path": {
+      "type": "string",
+      "description": "Path to the raw knip JSON output preserved for audit, e.g. deadcode-reports/<timestamp>/deadcode-evidence/knip.json."
+    },
+    "fix_result": {
+      "type": "object",
+      "description": "Present only in fix-writer output. Records what knip --fix changed and where the PR lives.",
+      "properties": {
+        "fix_types":      { "type": "string", "description": "Comma-separated --fix-type value used, e.g. 'exports,types,dependencies'." },
+        "include_files":  { "type": "boolean" },
+        "platform":       { "type": "string", "enum": ["github", "azure-devops", "generic"] },
+        "files_changed":  { "type": "integer", "minimum": 0 },
+        "branch_name":    { "type": ["string", "null"] },
+        "commit_sha":     { "type": ["string", "null"] },
+        "pr_url":         { "type": ["string", "null"], "format": "uri" },
+        "diff_path":      { "type": ["string", "null"] },
+        "applied_at":     { "type": ["string", "null"], "format": "date-time" },
+        "dry_run":        { "type": "boolean" }
+      }
+    }
+  },
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "required": ["id", "severity", "category", "title", "location", "remediation"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Stable identifier derived from file path + symbol name only (never line numbers), e.g. DEAD-EXPORT-src/utils.ts#unusedFn, DEAD-DEP-lodash. Used for .deadcode-ignore suppression and delta matching."
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"],
+          "description": "Dead code caps at MEDIUM (unused/unlisted dependencies). Unused files and duplicate exports are LOW; unused exports/types are INFO."
+        },
+        "category": {
+          "type": "string",
+          "enum": ["DEAD-CODE/FILE", "DEAD-CODE/EXPORT", "DEAD-CODE/TYPE", "DEAD-CODE/DUPLICATE", "DEAD-CODE/DEPENDENCY", "DEAD-CODE/UNLISTED", "DEAD-CODE/UNRESOLVED"]
+        },
+        "title": {
+          "type": "string",
+          "description": "Short, present-tense headline (e.g. 'Unused export: parseConfig')."
+        },
+        "location": {
+          "type": "string",
+          "description": "Repo-relative file:line where the finding was observed. 'package.json' for dependency findings."
+        },
+        "description": {
+          "type": "string",
+          "description": "1-2 sentence explanation of the issue and its impact."
+        },
+        "remediation": {
+          "type": "string",
+          "description": "Imperative remediation step. Required."
+        },
+        "evidence": {
+          "type": "string",
+          "description": "Supporting evidence (e.g. the export signature, dependency version)."
+        },
+        "suppressed": {
+          "type": "boolean",
+          "default": false,
+          "description": "Set to true if matched against .deadcode-ignore. Report-writer excludes from the main view but logs in the suppression section."
+        },
+        "handler_file": {
+          "type": "string",
+          "description": "Repo-relative file path containing the dead code. Pairs with handler_line to produce a clickable code reference in the report."
+        },
+        "handler_line": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Line number within handler_file, from Knip's reported position."
+        },
+        "fix": {
+          "type": "object",
+          "description": "Remediation guidance attached to this finding. The 'mechanically_fixable' flag controls whether fix-writer's knip --fix pass covers this finding when --fix is passed. Nothing is ever auto-applied to the working tree — delivery is always via a draft PR for human review.",
+          "properties": {
+            "mechanically_fixable": {
+              "type": "boolean",
+              "description": "True for remove-export, remove-file (only when --include-files), and remove-dependency — categories knip --fix handles safely. False for guide-only categories (duplicates, unlisted, unresolved) which need human judgment."
+            },
+            "category": {
+              "type": "string",
+              "enum": ["remove-export", "remove-file", "remove-dependency", "guide-only"]
+            },
+            "command": {
+              "type": "string",
+              "description": "Scoped shell command for a manual fix, e.g. 'npx knip --fix --fix-type exports' or 'npm uninstall lodash'. Empty for guide-only."
+            },
+            "verification": {
+              "type": "string",
+              "description": "Imperative step to confirm the fix is safe (e.g. 'Re-run /deadcode; run the project build and tests')."
+            },
+            "applied": {
+              "type": "boolean",
+              "default": false,
+              "description": "Set to true by fix-writer when a PR covering this finding has been opened. 'Applied' means 'PR proposed' — not 'merged'."
+            },
+            "pr_url": {
+              "type": ["string", "null"],
+              "format": "uri",
+              "description": "URL of the draft PR that covers this finding. Null until fix-writer runs successfully."
+            }
+          }
+        }
+      }
+    }
+  }
+}

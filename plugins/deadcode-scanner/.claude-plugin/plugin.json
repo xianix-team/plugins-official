@@ -1,0 +1,23 @@
+{
+  "name": "deadcode-scanner",
+  "version": "1.0.0",
+  "description": "Dead code detection for JS/TS repos using Knip — finds unused files, exports, types, enum members, and dependencies. Produces HTML, Markdown, and JSON reports with run history and delta tracking. Optional --fix opens a draft PR that safely removes dead code via an isolated git worktree — the user's working tree is never touched. Respects an existing knip.json/knip.ts config. Degrades gracefully on non-JS/TS repositories.",
+  "author": {
+    "name": "Xianix",
+    "email": "hello@xianix.com",
+    "url": "https://xianix.com"
+  },
+  "homepage": "https://xianix.com",
+  "repository": "https://github.com/xianix-team/plugins-official",
+  "license": "MIT",
+  "keywords": ["dead-code", "knip", "unused-exports", "unused-dependencies", "unused-files", "tree-shaking", "code-quality", "cleanup", "typescript", "javascript"],
+  "commands": ["./commands/deadcode.md"],
+  "agents": [
+    "./agents/orchestrator.md",
+    "./agents/knip-detector.md",
+    "./agents/report-writer.md",
+    "./agents/fix-writer.md"
+  ],
+  "outputStyles": "./styles/",
+  "schemas": "./schemas/"
+}

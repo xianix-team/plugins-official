@@ -36,7 +36,10 @@ SCAN_START="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 ```bash
 echo "=== IaC file detection ==="
 find "$REPO" -name "Dockerfile*" -not -path "*/node_modules/*" -not -path "*/.git/*" | head -20
-find "$REPO" -name "docker-compose*.yml" -o -name "docker-compose*.yaml" \
+# The \( \) grouping is required: -o binds looser than the implicit -a, so without
+# it the -not -path exclusions would apply ONLY to the last -name and vendored
+# compose files under node_modules would be scanned.
+find "$REPO" \( -name "docker-compose*.yml" -o -name "docker-compose*.yaml" \) \
   -not -path "*/node_modules/*" -not -path "*/.git/*" 2>/dev/null | head -10
 find "$REPO" -name "*.tf" -not -path "*/.git/*" | head -20
 find "$REPO" -name "*.yaml" -path "*/.github/workflows/*" 2>/dev/null | head -20
@@ -154,7 +157,7 @@ fi
 Scan `.github/workflows/*.yml` for common supply-chain attack vectors.
 
 ```bash
-find "$REPO/.github/workflows" -name "*.yml" -o -name "*.yaml" 2>/dev/null | while read wf; do
+find "$REPO/.github/workflows" \( -name "*.yml" -o -name "*.yaml" \) 2>/dev/null | while read wf; do
   echo "=== GitHub Actions: $wf ==="
 
   if grep -q "pull_request_target" "$wf"; then
@@ -169,6 +172,23 @@ find "$REPO/.github/workflows" -name "*.yml" -o -name "*.yaml" 2>/dev/null | whi
 
   grep -n "uses:" "$wf" | grep -v "@" && echo "GHA_UNPINNED_ACTION: $wf — action not pinned to commit SHA" || true
   grep -n "uses:" "$wf" | grep "@main\|@master" && echo "GHA_MUTABLE_TAG: $wf — action pinned to mutable branch" || true
+
+  # actions/checkout persists GITHUB_TOKEN in .git/config unless persist-credentials: false.
+  # grep alone can't tell which step a key belongs to, so walk each checkout step's block.
+  awk -v f="$wf" '
+    function keycol(s) { match(s, /^[[:space:]]*(-[[:space:]]+)?/); return RLENGTH }
+    /uses:[[:space:]]*actions\/checkout@/ {
+      if (inblk && !found) print "GHA_PERSIST_CREDS: " f ":" ln
+      inblk=1; ln=NR; found=0; ind=keycol($0); next
+    }
+    inblk {
+      if ($0 ~ /^[[:space:]]*(#.*)?$/) next
+      match($0, /^[[:space:]]*/)
+      if (RLENGTH < ind) { if (!found) print "GHA_PERSIST_CREDS: " f ":" ln; inblk=0; next }
+      if ($0 ~ /persist-credentials[[:space:]]*:/) found=1
+    }
+    END { if (inblk && !found) print "GHA_PERSIST_CREDS: " f ":" ln }
+  ' "$wf"
 done
 ```
 
@@ -177,6 +197,20 @@ done
 - Untrusted input in `run:` → `[HIGH] Command injection from github.event data`, `IAC-GHA-UNTRUSTED-INPUT`
 - Actions pinned to mutable tag/branch → `[MEDIUM] Supply chain risk from unpinned action`, `IAC-GHA-MUTABLE-ACTION`
 - Actions not pinned at all → `[MEDIUM]`, `IAC-GHA-UNPINNED-ACTION`
+- `actions/checkout` without `persist-credentials: false` → `[MEDIUM] GITHUB_TOKEN persisted in .git/config for all later steps`, `IAC-GHA-PERSIST-CREDS`
+
+Escalate `IAC-GHA-PERSIST-CREDS` to **HIGH** when the same workflow also produced
+`GHA_PPT_CHECKOUT`, `GHA_UNPINNED_ACTION`, or `GHA_MUTABLE_TAG` — a persisted token plus
+untrusted or mutable code in the same job is directly exploitable, not just latent.
+
+Emit it with:
+
+- **title:** `GITHUB_TOKEN persisted in .git/config by actions/checkout`
+- **location:** the `<workflow>:<line>` pair printed by the awk check (the `uses:` line)
+- **description:** `actions/checkout stores the job's GITHUB_TOKEN as a git credential in .git/config unless persist-credentials is set to false. Every subsequent step in the job — including third-party actions and build scripts — can read the token and push to the repository.`
+- **remediation:** ``Add `persist-credentials: false` to the checkout step's `with:` block. If a later step needs to push, pass an explicitly scoped token to that step instead.``
+- **evidence:** ``uses: actions/checkout@<ref> at line N with no persist-credentials key in its step block``
+- **references:** `https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions`, `https://woodruffw.github.io/zizmor/audits/#artipacked`
 
 ---
 

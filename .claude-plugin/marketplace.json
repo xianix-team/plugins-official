@@ -315,7 +315,7 @@
       "name": "pentest-agent",
       "source": "./plugins/pentest-agent",
       "description": "Authorized web-application penetration testing with whitebox source-code analysis. Combines OWASP Top 10 dynamic probes (DAST), static code analysis (SAST via semgrep), web-ecosystem dependency CVE scanning, and secrets detection. Source-code recon runs first and drives targeted URL probing — including authenticated routes, real parameter names, and sink locations — instead of blind crawling. Includes a Playwright-driven probe path for SPA targets and DAST+SAST dual-confirmation. Requires explicit --authorized flag.",
-      "version": "3.0.0",
+      "version": "3.1.0",
       "author": {
         "name": "Xianix",
         "email": "hello@xianix.com"

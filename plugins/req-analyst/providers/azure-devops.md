@@ -6,163 +6,209 @@ Use this provider when `git remote get-url origin` contains `dev.azure.com` or `
 
 The Azure DevOps REST API is called directly via `curl` using a Personal Access Token (PAT).
 
-Required environment variable:
-
 | Variable | Purpose |
 |---|---|
-| `AZURE-DEVOPS-TOKEN` | Azure DevOps PAT — must have `Work Items (Read & Write)` scopes |
+| `AZURE-DEVOPS-TOKEN` | PAT with `Work Items (Read & Write)` scope — the plugin edits the description and tags, not just comments |
 
-Optional — used to override values parsed from the remote URL:
-
-| Variable | Default |
-|---|---|
-| `AZURE_ORG` | Parsed from remote URL |
-| `AZURE_PROJECT` | Parsed from remote URL |
+Optional overrides: `AZURE_ORG`, `AZURE_PROJECT` (otherwise parsed from the remote URL).
 
 ---
 
 ## Parsing the Remote URL
 
-Extract org and project from the remote URL before making any API calls.
-
-**HTTPS format:** `https://dev.azure.com/{org}/{project}/_git/{repo}`
+**HTTPS:** `https://dev.azure.com/{org}/{project}/_git/{repo}`
 
 ```bash
 REMOTE=$(git remote get-url origin)
-
-AZURE_ORG=$(echo "$REMOTE"   | sed 's|https://dev.azure.com/||' | cut -d'/' -f1)
+AZURE_ORG=$(echo "$REMOTE"     | sed 's|https://dev.azure.com/||' | cut -d'/' -f1)
 AZURE_PROJECT=$(echo "$REMOTE" | sed 's|https://dev.azure.com/||' | cut -d'/' -f2)
 ```
 
-**Legacy HTTPS format:** `https://{org}.visualstudio.com/{project}/_git/{repo}`
+**Legacy:** `https://{org}.visualstudio.com/{project}/_git/{repo}`
 
 ```bash
-AZURE_ORG=$(echo "$REMOTE"   | sed 's|https://||' | cut -d'.' -f1)
+AZURE_ORG=$(echo "$REMOTE"     | sed 's|https://||' | cut -d'.' -f1)
 AZURE_PROJECT=$(echo "$REMOTE" | cut -d'/' -f4)
 ```
 
----
-
-## Fetching Work Item Details
-
-Fetch the full work item with all fields, comments, and relations:
-
-```bash
-curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
-  "https://dev.azure.com/${AZURE_ORG}/${AZURE_PROJECT}/_apis/wit/workitems/${WORK_ITEM_ID}?api-version=7.1&\$expand=all"
-```
-
-Extract from the response:
-- `fields.System.Title` — title
-- `fields.System.Description` — body/description (HTML)
-- `fields.System.WorkItemType` — Bug, User Story, Task, etc.
-- `fields.System.State` — New, Active, Closed, etc.
-- `fields.System.Tags` — existing tags
-- `fields.System.AssignedTo` — assigned person
-- `fields.System.IterationPath` — sprint/iteration
-- `fields.System.AreaPath` — area/team
-- `relations` — linked work items (parent, child, related)
-- `comments` (from `$expand=all`) — prior discussion
+Set `BASE="https://dev.azure.com/${AZURE_ORG}/${AZURE_PROJECT}/_apis/wit"` for the calls below.
 
 ---
 
-## Finding Related Work Items
-
-Query for related items in the same iteration or area path using WIQL:
+## Fetching the Work Item
 
 ```bash
 curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
-  -X POST \
-  -H "Content-Type: application/json" \
-  "https://dev.azure.com/${AZURE_ORG}/${AZURE_PROJECT}/_apis/wit/wiql?api-version=7.1" \
-  -d "{\"query\": \"SELECT [System.Id], [System.Title], [System.State], [System.WorkItemType] FROM WorkItems WHERE [System.IterationPath] = '${ITERATION_PATH}' AND [System.Id] <> ${WORK_ITEM_ID} ORDER BY [System.Id] DESC\"}"
+  "${BASE}/workitems/${WORK_ITEM_ID}?api-version=7.1&\$expand=all"
 ```
 
-Then fetch details for each related item ID:
+Extract: `System.Title`, `System.Description` (HTML), `System.WorkItemType`, `System.State`, `System.Tags` (`;`-separated), `System.AssignedTo`, `System.IterationPath`, `System.AreaPath`, `Microsoft.VSTS.Common.AcceptanceCriteria` (if present), and `relations`.
+
+## Fetching the Full Discussion Thread
+
+Comments are **not** included in the work item payload. Fetch them separately:
 
 ```bash
 curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
-  "https://dev.azure.com/${AZURE_ORG}/${AZURE_PROJECT}/_apis/wit/workitems?ids=${ID1},${ID2},${ID3}&api-version=7.1"
+  "${BASE}/workItems/${WORK_ITEM_ID}/comments?order=asc&\$top=200&api-version=7.1-preview.4"
+```
+
+From `comments[]` use:
+
+| Field | Purpose |
+|---|---|
+| `id` | Needed for reactions |
+| `createdBy.displayName` / `createdBy.uniqueName` | Who wrote it |
+| `createdDate` | Ordering |
+| `text` | Content (HTML). Look for the `` req-analyst · `` footer marker, `@xianix` mentions (rendered as `<a data-vss-mention …>`), numbered answers |
+
+Identify agent comments by the footer marker. If needed, the current identity is:
+
+```bash
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
+  "https://app.vssps.visualstudio.com/_apis/profile/profiles/me?api-version=7.1"
+```
+
+### Finding related work items (analysis context only)
+
+```bash
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" -X POST -H "Content-Type: application/json" \
+  "${BASE}/wiql?api-version=7.1" \
+  -d "{\"query\": \"SELECT [System.Id], [System.Title], [System.State] FROM WorkItems WHERE [System.IterationPath] = '${ITERATION_PATH}' AND [System.Id] <> ${WORK_ITEM_ID} ORDER BY [System.Id] DESC\"}"
 ```
 
 ---
 
-## Posting the Starting Comment
+## Acknowledging a Human Comment
 
-Post a starting comment on the work item discussion immediately after fetching it so the author knows the elaboration has started and that it can take a few minutes to complete.
-
-Azure DevOps must be told that comment bodies are Markdown via the `format=markdown` query string.
+React to the comment you are acting on before doing long work on a follow-up round:
 
 ```bash
-curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
-  -X POST \
-  -H "Content-Type: application/json" \
-  "https://dev.azure.com/${AZURE_ORG}/${AZURE_PROJECT}/_apis/wit/workitems/${WORK_ITEM_ID}/comments?format=markdown&api-version=7.1-preview.4" \
-  -d '{"text":"**Requirement elaboration in progress**\n\nA senior analyst is surrounding this item with context for the next refinement session. The following will be posted as ordered comments:\n\n1. **Elaboration Summary** — readiness signal and key takeaways\n2. **Fit with Existing Requirements** — overlaps, dependencies, contradictions, and gaps against existing docs\n3. **Context** — intent, user journey, personas, domain, and competitive patterns\n4. **Open Questions & Gaps** — discussion prompts for the next refinement session\n5. **Refined Requirement** — structured specification with functional requirements, user journey, and acceptance criteria\n\nThis is a thinking-partner exercise — the original description will not be modified."}'
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" -X PUT \
+  "${BASE}/workItems/${WORK_ITEM_ID}/comments/${COMMENT_ID}/reactions/like?api-version=7.1-preview.1"
 ```
 
-If posting the starting comment fails, output a single warning line and continue — do not stop the elaboration.
+No "in progress" comment on follow-up rounds.
 
 ---
 
-## Posting a Comment
+## Posting the Round-1 Starting Comment
 
-Azure DevOps must be told that comment bodies are Markdown. If you omit `format=markdown`, the API stores the text as plain content and the UI shows `##`, tables, and emphasis as raw characters.
-
-### Posting each comment
-
-Azure DevOps must be told that comment bodies are Markdown. If you omit `format=markdown`, the API stores the text as plain content and the UI shows `##`, tables, and emphasis as raw characters.
+Only on the very first turn:
 
 ```bash
-curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
-  -X POST \
-  -H "Content-Type: application/json" \
-  "https://dev.azure.com/${AZURE_ORG}/${AZURE_PROJECT}/_apis/wit/workitems/${WORK_ITEM_ID}/comments?format=markdown&api-version=7.1-preview.4" \
-  -d "$(python3 -c "
-import json, sys
-body = sys.stdin.read()
-print(json.dumps({'text': body}))
-" <<'COMMENT'
-${COMMENT_BODY}
-COMMENT
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" -X POST -H "Content-Type: application/json" \
+  "${BASE}/workItems/${WORK_ITEM_ID}/comments?format=markdown&api-version=7.1-preview.4" \
+  -d '{"text":"Looking at this now — I will come back with a few clarifying questions in a couple of minutes."}'
+```
+
+---
+
+## Posting a Round Comment
+
+Always pass `format=markdown`, otherwise headings and emphasis render as raw characters. Omit `<details>` blocks — they do not render reliably in work item discussions.
+
+```bash
+cat > /tmp/req-analyst-comment.md <<'EOF'
+## Requirement analysis — round 1 of 3
+
+...
+
+---
+`req-analyst` · round 1/3 · status: **awaiting answers** · open: 3
+EOF
+
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" -X POST -H "Content-Type: application/json" \
+  "${BASE}/workItems/${WORK_ITEM_ID}/comments?format=markdown&api-version=7.1-preview.4" \
+  -d "$(python3 -c 'import json,sys; print(json.dumps({"text": sys.stdin.read()}))' < /tmp/req-analyst-comment.md)"
+```
+
+Post **one** comment per invocation.
+
+---
+
+## Updating the Description and Acceptance Criteria
+
+`System.Description` is HTML. Write the HTML version from `styles/refined-description-template.md`.
+
+If `System.WorkItemType` is `User Story` or `Product Backlog Item` (or the item already has `Microsoft.VSTS.Common.AcceptanceCriteria`), write acceptance criteria into that field; otherwise include them in the description.
+
+```bash
+cat > /tmp/req-analyst-desc.html <<'EOF'
+<p><em>req-analyst managed section — humans may edit; the agent rewrites it as decisions land in the discussion.</em></p>
+<h2>Summary</h2>
+...
+<h2>Original description</h2>
+<blockquote>…original System.Description HTML, unchanged…</blockquote>
+EOF
+
+cat > /tmp/req-analyst-ac.html <<'EOF'
+<ul>
+  <li><strong>Given</strong> … <strong>when</strong> … <strong>then</strong> …</li>
+</ul>
+EOF
+
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" -X PATCH -H "Content-Type: application/json-patch+json" \
+  "${BASE}/workitems/${WORK_ITEM_ID}?api-version=7.1" \
+  -d "$(python3 - <<'PY'
+import json
+ops = [
+  {"op": "add", "path": "/fields/System.Description", "value": open("/tmp/req-analyst-desc.html").read()},
+  {"op": "add", "path": "/fields/Microsoft.VSTS.Common.AcceptanceCriteria", "value": open("/tmp/req-analyst-ac.html").read()},
+]
+print(json.dumps(ops))
+PY
 )"
 ```
 
-### Applying the readiness signal tag
+Drop the `AcceptanceCriteria` op for types that do not have the field (Bug, Task) — the PATCH fails otherwise.
 
-After posting all comments, add the readiness signal tag without replacing existing tags:
+On the **first** edit, the `Original description` block receives the current `System.Description` exactly as fetched. On later edits, copy it forward unchanged.
+
+---
+
+## Swapping the Readiness Tag
+
+Tags are one `;`-separated string. Remove the other readiness tags, add the new one, keep everything else (including `ai-dlc/issue/analyze`):
 
 ```bash
-EXISTING_TAGS=$(curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
-  "https://dev.azure.com/${AZURE_ORG}/${AZURE_PROJECT}/_apis/wit/workitems/${WORK_ITEM_ID}?api-version=7.1&fields=System.Tags" \
-  | python3 -c "import sys,json; print(json.load(sys.stdin).get('fields',{}).get('System.Tags',''))")
+NEW_TAG="needs-clarification"   # or groomed / needs-decomposition
 
-NEW_TAGS="${EXISTING_TAGS}; ${SIGNAL_TAG}"
+NEW_TAGS=$(curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
+  "${BASE}/workitems/${WORK_ITEM_ID}?api-version=7.1&fields=System.Tags" \
+  | python3 -c "
+import sys, json
+tags = [t.strip() for t in json.load(sys.stdin).get('fields', {}).get('System.Tags', '').split(';') if t.strip()]
+tags = [t for t in tags if t not in ('groomed', 'needs-clarification', 'needs-decomposition')]
+tags.append('${NEW_TAG}')
+print('; '.join(tags))")
 
-curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
-  -X PATCH \
-  -H "Content-Type: application/json-patch+json" \
-  "https://dev.azure.com/${AZURE_ORG}/${AZURE_PROJECT}/_apis/wit/workitems/${WORK_ITEM_ID}?api-version=7.1" \
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" -X PATCH -H "Content-Type: application/json-patch+json" \
+  "${BASE}/workitems/${WORK_ITEM_ID}?api-version=7.1" \
+  -d "$(python3 -c "import json; print(json.dumps([{'op':'replace','path':'/fields/System.Tags','value':'''${NEW_TAGS}'''}]))")"
+```
+
+---
+
+## Creating Child Work Items (confirmed decomposition only)
+
+```bash
+curl -s -u ":${AZURE-DEVOPS-TOKEN}" -X POST -H "Content-Type: application/json-patch+json" \
+  "${BASE}/workitems/\$${CHILD_TYPE}?api-version=7.1" \
   -d "$(python3 -c "
 import json
 print(json.dumps([
-  {'op': 'replace', 'path': '/fields/System.Tags', 'value': '''${NEW_TAGS}'''}
-]))
-")"
+  {'op':'add','path':'/fields/System.Title','value':'''${CHILD_TITLE}'''},
+  {'op':'add','path':'/fields/System.Description','value':'''${CHILD_DESCRIPTION_HTML}'''},
+  {'op':'add','path':'/fields/System.Tags','value':'ai-dlc/issue/analyze'},
+  {'op':'add','path':'/relations/-','value':{'rel':'System.LinkTypes.Hierarchy-Reverse','url':'https://dev.azure.com/${AZURE_ORG}/_apis/wit/workItems/${WORK_ITEM_ID}'}}
+]))")"
 ```
 
-| Plugin signal | Azure DevOps tag |
-|---|---|
-| `GROOMED` | `groomed` |
-| `NEEDS CLARIFICATION` | `needs-clarification` |
-| `NEEDS DECOMPOSITION` | `needs-decomposition` |
+`CHILD_TYPE` is URL-encoded (`User%20Story`, `Product%20Backlog%20Item`, `Task`). The `Hierarchy-Reverse` relation makes the new item a child of the parent. Use the parent's iteration and area path when set.
 
 ---
 
 ## Output
 
-On completion:
-
-```
-Elaboration posted on work item #<id>: <signal> — <N> comments — <N> open questions — refined requirement posted
-```
+On completion, one status line — see the orchestrator's Step 6.

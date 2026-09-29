@@ -4,148 +4,162 @@ Use this provider when `git remote get-url origin` contains `github.com`.
 
 ## Prerequisites
 
-The `gh` CLI must be installed and authenticated. Verify with:
+The `gh` CLI must be installed and authenticated (`gh auth status`). If not, run `gh auth login` or set `GITHUB-TOKEN`.
 
-```bash
-gh auth status
-```
-
-If not authenticated, the user needs to run `gh auth login` or set the `GITHUB-TOKEN` environment variable.
+The token needs `repo` scope — the plugin **edits the issue body** and **adds/removes labels**, not just comments.
 
 ---
 
-## Fetching Issue Details
-
-Fetch the full issue with metadata, labels, milestone, and comments:
+## Fetching the Issue and the Full Thread
 
 ```bash
-gh issue view ${ISSUE_NUMBER} --json number,title,body,state,labels,assignees,milestone,comments,projectItems
+gh issue view ${ISSUE_NUMBER} --json number,title,body,state,labels,assignees,milestone,updatedAt,comments
 ```
 
-Extract from the JSON response:
-- `title` — issue title
-- `body` — issue description
-- `state` — OPEN / CLOSED
-- `labels[].name` — existing labels
-- `assignees[].login` — assigned users
-- `milestone.title` — milestone name
-- `comments[].body` — prior discussion and context
+From `comments[]` use:
 
----
+| Field | Purpose |
+|---|---|
+| `author.login` | Who wrote it |
+| `body` | Content — look for the `` `req-analyst` · `` footer marker, `@xianix`, numbered answers |
+| `createdAt` | Ordering |
+| `viewerDidAuthor` | `true` when the current token wrote it — fallback for identifying agent comments |
+| `url` | Link to record in the *Decisions* table (`…#issuecomment-<id>`) |
 
-## Finding Related Issues
+`gh issue view` does not return numeric comment ids. When you need one (to react to a comment), fetch via the API:
 
-Find issues in the same milestone:
+```bash
+gh api "repos/{owner}/{repo}/issues/${ISSUE_NUMBER}/comments?per_page=100" \
+  --jq '.[] | {id, user: .user.login, created_at, body}'
+```
+
+`{owner}/{repo}` placeholders are filled by `gh` from the current repo.
+
+### Finding related issues (analysis context only)
 
 ```bash
 gh issue list --milestone "${MILESTONE}" --json number,title,state,labels --limit 20
-```
-
-Find issues with the same label:
-
-```bash
 gh issue list --label "${LABEL}" --json number,title,state --limit 20
-```
-
-Search by keyword from the issue body:
-
-```bash
 gh issue list --search "${KEYWORD}" --json number,title,state --limit 10
 ```
 
 ---
 
-## Posting the "Elaboration in Progress" Comment
+## Acknowledging a Human Comment
 
-Post a single starting comment on the issue immediately after fetching it so the author knows the elaboration has started and that it can take a few minutes to complete.
+Before doing any long work on a follow-up round, react to the human comment you are acting on so they know it was picked up:
 
 ```bash
-gh issue comment ${ISSUE_NUMBER} --body "$(cat <<'EOF'
-**Requirement elaboration in progress**
+gh api -X POST "repos/{owner}/{repo}/issues/comments/${COMMENT_ID}/reactions" -f content=eyes
+```
 
-A senior analyst is surrounding this item with context for the next refinement session. The following will be posted as ordered comments:
+Do not post an "in progress" comment on follow-up rounds — the reaction is the acknowledgement.
 
-1. **Elaboration Summary** — readiness signal and key takeaways
-2. **Fit with Existing Requirements** — overlaps, dependencies, contradictions, and gaps against existing docs
-3. **Context** — intent, user journey, personas, domain, and competitive patterns
-4. **Open Questions & Gaps** — discussion prompts for the next refinement session
-5. **Refined Requirement** — structured specification with functional requirements, user journey, and acceptance criteria
+---
 
-This is a thinking-partner exercise — the original description will not be modified.
+## Posting the Round-1 Starting Comment
+
+Only on the very first turn (state `NEW`):
+
+```bash
+gh issue comment ${ISSUE_NUMBER} --body "Looking at this now — I'll come back with a few clarifying questions in a couple of minutes."
+```
+
+If this fails, warn and continue.
+
+---
+
+## Posting a Round Comment
+
+Write the body to a temp file first — round comments contain backticks, `<details>`, and pipes that are fragile inside inline quoting.
+
+```bash
+cat > /tmp/req-analyst-comment.md <<'EOF'
+## Requirement analysis — round 1 of 3
+
+...
+
+---
+`req-analyst` · round 1/3 · status: **awaiting answers** · open: 3
+EOF
+
+gh issue comment ${ISSUE_NUMBER} --body-file /tmp/req-analyst-comment.md
+```
+
+Post **one** comment per invocation.
+
+---
+
+## Updating the Issue Description
+
+Write the refined description (see `styles/refined-description-template.md`, Markdown version) to a file and replace the body:
+
+```bash
+cat > /tmp/req-analyst-body.md <<'EOF'
+<!-- req-analyst: managed section — humans may edit; the agent rewrites it as decisions land in the thread -->
+
+## Summary
+...
+
+<details><summary>Original description</summary>
+
+<original body verbatim>
+
+</details>
+EOF
+
+gh issue edit ${ISSUE_NUMBER} --body-file /tmp/req-analyst-body.md
+```
+
+On the **first** edit, the `Original description` block receives the current `body` exactly as fetched. On later edits, copy that block forward unchanged from the current body.
+
+---
+
+## Swapping the Readiness Label
+
+Exactly one readiness label at a time. Add the new one and remove the others in a single call:
+
+```bash
+# → awaiting answers
+gh issue edit ${ISSUE_NUMBER} --add-label needs-clarification --remove-label groomed,needs-decomposition
+
+# → ready to proceed
+gh issue edit ${ISSUE_NUMBER} --add-label groomed --remove-label needs-clarification,needs-decomposition
+
+# → decomposition
+gh issue edit ${ISSUE_NUMBER} --add-label needs-decomposition --remove-label needs-clarification,groomed
+```
+
+`--remove-label` on a label that is not present is a no-op. Never remove `ai-dlc/issue/analyze`.
+
+If a label does not exist in the repo, create it once:
+
+```bash
+gh label create groomed             --color 0E8A16 --description "Requirement groomed — ready to proceed" 2>/dev/null || true
+gh label create needs-clarification --color FBCA04 --description "req-analyst is waiting on answers"     2>/dev/null || true
+gh label create needs-decomposition --color D93F0B --description "Too large — split proposed"           2>/dev/null || true
+```
+
+---
+
+## Creating Child Issues (confirmed decomposition only)
+
+```bash
+gh issue create \
+  --title "${CHILD_TITLE}" \
+  --label "ai-dlc/issue/analyze" \
+  --body "$(cat <<EOF
+${CHILD_DESCRIPTION}
+
+Split from #${ISSUE_NUMBER}.
 EOF
 )"
 ```
 
-If posting fails, output a single warning line and continue — do not stop the elaboration.
-
----
-
-## Posting a Comment
-
-Post a comment on the issue:
-
-```bash
-gh issue comment ${ISSUE_NUMBER} --body "${COMMENT_BODY}"
-```
-
-For multi-line content, use a heredoc:
-
-```bash
-gh issue comment ${ISSUE_NUMBER} --body "$(cat <<'EOF'
-## Heading
-
-${CONTENT}
-EOF
-)"
-```
-
----
-
-## Applying the Readiness Signal
-
-After posting all comments, apply the readiness label as a **triage hint**:
-
-```bash
-gh issue edit ${ISSUE_NUMBER} --add-label "${SIGNAL_LABEL}"
-```
-
-| Plugin signal | GitHub label |
-|---|---|
-| `GROOMED` | `groomed` |
-| `NEEDS CLARIFICATION` | `needs-clarification` |
-| `NEEDS DECOMPOSITION` | `needs-decomposition` |
-
----
-
-## Posting Open Questions
-
-Post each open question as a separate comment:
-
-```bash
-gh issue comment ${ISSUE_NUMBER} --body "${QUESTION_BODY}"
-```
-
----
-
-## Resolving the Issue
-
-If no issue number was passed as an argument:
-
-1. Parse the GitHub remote to get `{owner}` and `{repo}`:
-
-```bash
-git remote get-url origin
-# e.g. https://github.com/org/repo.git  →  owner=org, repo=repo
-```
-
-2. List recent issues: `gh issue list --limit 10 --json number,title`
+Capture the returned issue number for the parent's *Split into* list. Add the children to the same milestone as the parent if it has one (`--milestone`).
 
 ---
 
 ## Output
 
-On completion:
-
-```
-Elaboration posted on issue #<number>: <signal> — <N> comments — <N> open questions — refined requirement posted
-```
+On completion, one status line — see the orchestrator's Step 6.

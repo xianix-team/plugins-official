@@ -1,77 +1,79 @@
 ---
 name: requirement-analysis
-description: Surround a backlog item with the context a senior analyst would bring to a refinement session — fit with existing requirements, domain knowledge, competitive insight, user journeys, persona impact, usability and adoption considerations, and open questions. Works with GitHub Issues, Azure DevOps Work Items, or plain text. Usage: /requirement-analysis [issue-number or work-item-id]
+description: Groom a backlog item through a short conversation in its comment thread. Each run reads the thread, works out where the conversation stands, and takes one step — ask up to 5 clarifying questions, fold the answers into the description, or mark the item ready to proceed. Works with GitHub Issues, Azure DevOps Work Items, or plain text. Usage: /requirement-analysis [issue-number or work-item-id]
 argument-hint: [issue-number | work-item-id]
 ---
 
-Elaborate the backlog item $ARGUMENTS — act as a thinking partner, not a gatekeeper.
+Take the next grooming step on backlog item $ARGUMENTS.
 
 ## What This Does
 
-This command invokes the **orchestrator** agent. It fetches the item, indexes the repository for product/requirements documents (PRDs, specs, RFCs, ADRs, feature briefs, user stories), reasons about how the new ask fits the existing product context, then runs two analysts in sequence.
+This command invokes the **orchestrator** agent, which runs **one turn** of a grooming conversation:
 
-**Phase 1 — Context (`context-analyst`):**
+1. **Read the thread** — the item, every comment, and the current description.
+2. **Determine the state** from the plugin's own previous comments and any human replies after them.
+3. **Take one action:**
 
-A single all-in-one pass returning 5–8 bullets covering intent (the "why"), user journey, personas & adoption, domain knowledge, and competitive patterns.
+| State | Action |
+|---|---|
+| No previous round | Analyse the item (repo docs, `context-analyst`, `gap-risk-analyst`), then post **round 1**: 2–3 sentences of understanding and up to 5 numbered questions, each with a proposed default. Label `needs-clarification`. |
+| Humans replied with `@xianix` | Fold the answers into the **description** (requirements, acceptance criteria, decisions table), then either post the next round with what is still open, or mark the item **ready** (`groomed`). |
+| Waiting, no new replies | Do nothing. |
+| Item already ready, human asks for a change | Update the description, post a one-line *Updated* comment. |
+| Item is too large | Propose a split; create linked child items only if the human confirms. |
 
-**Phase 2 — Gap & Risk (`gap-risk-analyst`):**
+4. **Stop.** The next run — usually triggered by the human's reply — takes the next step.
 
-Open questions, assumptions worth validating, acceptance criteria worth tightening — framed as **prompts for the team**, not blockers.
+The conversation is capped at **3 rounds**. After that, remaining questions are resolved with their stated defaults, flagged as assumptions in the description, and the item is marked ready.
 
-The orchestrator also reasons explicitly about **fit with existing requirements** — overlaps, dependencies, contradictions, and gaps at the **product/requirements level** (not the code level).
+## How Humans Reply
 
-## How to Use
+Comment on the issue / work item, addressing the agent and answering by number:
 
 ```
-/requirement-analysis 42          # Elaborate GitHub issue #42 or Azure DevOps work item #42
+@xianix 1. yes  2. admins only  3. skip for v1
 ```
+
+or accept the proposed defaults:
+
+```
+@xianix go with defaults
+```
+
+Prose answers work too; the agent maps them to the open questions. Editing the description directly also counts — the next run re-checks open questions against it.
+
+## What Changes on the Item
+
+- **Comments:** one short round comment per turn, ending with a `req-analyst · round N/3 · status: …` footer that the next run uses to detect state.
+- **Description:** rewritten into a concise structured form — summary, scope, requirements, acceptance criteria, decisions table (who decided what, linked to the comment), open questions. The author's original text is preserved verbatim in a collapsed *Original description* block.
+- **Labels / tags:** exactly one of `needs-clarification`, `needs-decomposition`, `groomed` at a time. `groomed` means ready to proceed.
 
 ## Platform Support
 
-The plugin auto-detects the hosting platform from your git remote URL:
+Auto-detected from `git remote get-url origin`:
 
-| Remote URL contains | Platform | How items are fetched | How elaboration is delivered |
+| Remote contains | Platform | Thread | Description edit |
 |---|---|---|---|
-| `github.com` | GitHub | `gh` CLI | Ordered comments via `gh` CLI |
-| `dev.azure.com` / `visualstudio.com` | Azure DevOps | REST API (`curl`) | Ordered comments via REST |
-| Anything else | Generic / plain text | User-provided | Written to `requirement-elaboration-report.md` |
+| `github.com` | GitHub | `gh issue view --json comments`, `gh issue comment` | `gh issue edit --body-file` |
+| `dev.azure.com` / `visualstudio.com` | Azure DevOps | Work item comments REST API | PATCH `System.Description` (+ `AcceptanceCriteria` when the type has it) |
+| Anything else | Generic | `requirement-grooming.md` — human edits the answers block | Same file |
 
-## How It Posts
+## Output
 
-Each section is posted as a **separate comment** on the issue/work item, preserving the original description. The thread looks like:
-
-1. **Elaboration Summary** — a short overview, the readiness signal, and the key takeaways
-2. **Fit with Existing Requirements** — overlaps, dependencies, contradictions, gaps with PRDs/specs/ADRs/feature briefs already in the repo *(skipped if no requirement docs exist)*
-3. **Context** — the 5–8 bullets returned by context-analyst as-is, under `## Context`. No sub-sections, no expansion.
-4. **Open Questions & Gaps** — assumptions to validate, ACs worth tightening — as prompts for the next refinement *(skipped if no findings)*
-5. **Refined Requirement** — a structured requirement spec compiled from the full analysis, always posted last
-
-Sections with no findings are **skipped**, not filled with "None identified."
-
-## Readiness Signal (Hint, Not a Gate)
-
-A lightweight label/tag is also applied as a triage hint — but the real value is in the elaboration itself. The team decides what to do next.
-
-| Signal | What it means |
-|---|---|
-| `GROOMED` | Intent is clear and the elaboration didn't surface critical open questions |
-| `NEEDS CLARIFICATION` | Worth a short conversation before development picks it up |
-| `NEEDS DECOMPOSITION` | Likely too large — the elaboration suggests how it might split |
-
-## After the Elaboration
-
-The agent outputs:
+One status line, e.g.
 
 ```
-Elaboration posted on issue #<number>: <signal> — <N> comments — <N> open questions — refined requirement posted
+Round 1 posted on #42: 4 open questions — awaiting answers
+Applied 3 answers on #42; round 2 posted: 1 still open
+Ready to proceed: #42 marked groomed — 2 assumptions recorded
 ```
 
 ## Prerequisites
 
-- **GitHub**: `gh` CLI installed and authenticated (see `docs/platform-config.md`)
-- **Azure DevOps**: `AZURE-DEVOPS-TOKEN` environment variable set (see `docs/platform-config.md`)
-- **Plain text / unknown platform**: nothing — the report is written to a local file
+- **GitHub:** `gh` CLI authenticated with `repo` scope (edits the body and labels)
+- **Azure DevOps:** `AZURE-DEVOPS-TOKEN` with `Work Items (Read & Write)`
+- **Generic:** nothing
 
 ---
 
-Starting elaboration now...
+Reading the thread now...

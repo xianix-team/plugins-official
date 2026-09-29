@@ -1,82 +1,66 @@
 # Provider: Generic / Plain Text
 
-Use this provider when:
-
-- The git remote does not match GitHub or Azure DevOps
-- The user supplies the requirement as plain text (no remote at all)
-- API posting is otherwise not possible
+Use this provider when the git remote is neither GitHub nor Azure DevOps, when the requirement is pasted as plain text, or when API posting is otherwise not possible.
 
 ## Behaviour
 
-In generic mode the elaboration is **not posted to a remote platform**. Instead, each lens is written to a local file as a separate section so it can be consumed by an external process, CI system, or human operator.
+There is no comment thread, so the conversation happens in a single local file that both the agent and the human edit in turns:
+
+```
+requirement-grooming.md
+```
+
+Each run reads the file, works out the state from the **Thread** section, appends one round, and rewrites the **Refined description** section. The human answers by editing the file under the latest round and re-running the command.
 
 ---
 
-## Writing the Report File
-
-Write the full compiled elaboration to a file in the repository root (or current working directory if there is no repo):
-
-```
-requirement-elaboration-report.md
-```
-
-The file must be written even if the readiness signal is `GROOMED` — it serves as the audit artifact.
-
-**File format:**
+## File Layout
 
 ```markdown
-# Requirement Elaboration Report
+# Requirement grooming — <short title>
 
-Generated: <ISO 8601 timestamp>
 Source: <repo URL or "plain text input">
-Item: #<issue number or short title>
-Readiness signal: GROOMED | NEEDS CLARIFICATION | NEEDS DECOMPOSITION
+Item: <id or short title>
+Status: awaiting answers | awaiting split confirmation | ready
+Round: 1/3
 
 ---
 
-## Elaboration Summary
-<summary and intent decomposition>
+## Refined description
+
+<Markdown version of styles/refined-description-template.md — rewritten every run>
 
 ---
 
-## Fit with Existing Requirements
-<orchestrator's fit note — omit if no requirement docs in the repo>
+## Thread
 
----
+### Round 1 — agent
+<Variant A from styles/round-comment-template.md, footer included>
 
-## Context
-<5–8 bullets from context-analyst — intent, journey, personas, domain, competitors — omit if no findings>
+### Round 1 — answers
+<!-- Human: write numbered answers here, e.g. "1. yes", "2. admins only", or "go with defaults" -->
 
----
+### Round 2 — agent
+<Variant B …>
 
-## Open Questions & Gaps
-<gap-risk-analyst output — framed as prompts for the team>
-
----
-
-## Refined Requirement
-<structured requirement compiled by the orchestrator in Step 10 — user intent, functional requirements, non-functional requirements, user journey, and acceptance criteria; TODO markers for all assumed values>
+### Round 2 — answers
+<!-- Human: … -->
 ```
 
----
+## State Detection
+
+- No file → `NEW`.
+- Latest `### Round N — answers` block is empty (only the HTML comment) → `AWAITING`; output the waiting status line and stop.
+- Latest answers block has content → `ANSWERED`; apply the answers, rewrite *Refined description*, append the next round (or the *Ready to proceed* variant), update `Status:` and `Round:` in the header.
 
 ## Output
 
-On completion:
-
-```
-Elaboration complete: <signal> — report written to requirement-elaboration-report.md — refined requirement included
-```
+One status line — see the orchestrator's Step 6 — followed by the file path.
 
 ---
 
 ## When to Use
 
-This provider is the correct fallback for:
-
-- **Plain text input** — the user pastes a requirement and wants the elaboration in a file
-- Azure Boards (when REST API posting is not configured)
-- Jira instances (API posting not yet implemented — use generic)
-- Self-hosted issue trackers
-- Local or offline runs where no remote API is available
-- CI environments where only the report file output is needed
+- Plain text input (no tracker)
+- Jira, Azure Boards without a PAT, self-hosted trackers
+- Local / offline runs and CI jobs that only want the file

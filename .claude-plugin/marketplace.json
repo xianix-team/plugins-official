@@ -37,8 +37,8 @@
     {
       "name": "req-analyst",
       "source": "./plugins/req-analyst",
-      "description": "AI thinking partner for backlog refinement. Enriches GitHub Issues, Azure DevOps Work Items, or plain text with fit-to-existing-requirements analysis, domain knowledge, competitive insight, user journeys, persona impact, usability and adoption considerations, and open questions for the team.",
-      "version": "1.1.0",
+      "description": "Conversational backlog grooming. Reads an issue or work item's comment thread, asks up to 5 clarifying questions per round (each with a proposed default), folds the humans' @xianix replies into a concise structured description, and marks the item groomed when no decisions remain. Works with GitHub Issues, Azure DevOps Work Items, or plain text.",
+      "version": "2.0.0",
       "author": {
         "name": "99x",
         "email": "xianix-agent@99x.io"
@@ -48,14 +48,14 @@
       "category": "requirements",
       "keywords": [
         "requirement-analysis",
-        "requirement-elaboration",
         "backlog-refinement",
-        "domain-knowledge",
-        "competitive-insights",
+        "clarifying-questions",
+        "conversational",
+        "issue-comments",
+        "acceptance-criteria",
+        "grooming",
         "user-journey",
-        "personas",
-        "usability",
-        "adoption"
+        "personas"
       ],
       "license": "MIT"
     },

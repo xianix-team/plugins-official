@@ -38,7 +38,7 @@
       "name": "req-analyst",
       "source": "./plugins/req-analyst",
       "description": "Conversational backlog grooming. Reads an issue or work item's comment thread, asks up to 5 clarifying questions per round (each with a proposed default), folds the humans' @xianix replies into a concise structured description, and marks the item groomed when no decisions remain. Works with GitHub Issues, Azure DevOps Work Items, or plain text.",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "author": {
         "name": "99x",
         "email": "xianix-agent@99x.io"
@@ -56,6 +56,31 @@
         "grooming",
         "user-journey",
         "personas"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "solution-designer",
+      "source": "./plugins/solution-designer",
+      "description": "Software design agent for groomed backlog items. Reads the repository's accepted architecture (arch-fitness constraints, ADRs, architecture docs) and the code the requirement touches, then produces a conforming design as a design PR, proposing ADRs for any needed deviation. Triggered by the ai-dlc/issue/design tag; conversational via @xianix comments. Works with GitHub, Azure DevOps, and plain text.",
+      "version": "1.0.0",
+      "author": {
+        "name": "99x",
+        "email": "xianix-agent@99x.io"
+      },
+      "homepage": "https://opensource.99x.io/xianix-team/",
+      "repository": "https://github.com/xianix-team/xianix-plugins-official",
+      "category": "architecture",
+      "keywords": [
+        "software-design",
+        "solution-design",
+        "architecture",
+        "adr",
+        "design-doc",
+        "technical-design",
+        "conversational",
+        "github",
+        "azure-devops"
       ],
       "license": "MIT"
     },

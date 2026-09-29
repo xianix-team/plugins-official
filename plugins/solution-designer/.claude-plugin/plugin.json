@@ -1,0 +1,24 @@
+{
+  "name": "solution-designer",
+  "version": "1.0.0",
+  "description": "Software design agent for groomed backlog items. Reads the repository's accepted architecture (arch-fitness constraints, ADRs, architecture docs) and the code the requirement touches, then produces a conforming design — components, interfaces, data, flows, traceability, implementation plan — as a design PR, proposing ADRs for any needed deviation. Conversational via @xianix comments on the issue / work item. Works with GitHub, Azure DevOps, and plain text.",
+  "author": {
+    "name": "99x",
+    "email": "xianix@99x.io",
+    "url": "https://github.com/99x"
+  },
+  "homepage": "https://github.com/99x/xianix-team",
+  "repository": "https://github.com/99x/xianix-team",
+  "license": "MIT",
+  "keywords": ["software-design", "solution-design", "architecture", "adr", "design-doc", "technical-design", "conversational", "github", "azure-devops"],
+  "commands": ["./commands/software-design.md"],
+  "agents": [
+    "./agents/orchestrator.md",
+    "./agents/architecture-analyst.md",
+    "./agents/solution-designer.md",
+    "./agents/design-reviewer.md"
+  ],
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json",
+  "outputStyles": "./styles/"
+}

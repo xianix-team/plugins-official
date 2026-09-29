@@ -1,6 +1,6 @@
 {
     "name": "req-analyst-plugin",
-    "version": "2.0.0",
+    "version": "2.1.0",
     "description": "Conversational backlog grooming. Reads an issue or work item's comment thread, asks up to 5 clarifying questions per round (each with a proposed default), folds the humans' @xianix replies into a concise structured description, and marks the item groomed when no decisions remain. Max 3 rounds. Works with GitHub Issues, Azure DevOps Work Items, or plain text.",
     "author": {
       "name": "99x",

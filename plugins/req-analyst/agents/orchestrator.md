@@ -62,6 +62,7 @@ Sort comments chronologically. You will need:
 - `human_comments_after` — human comments posted after `last_agent_comment`. Split them into:
   - **addressed** — contain `@xianix`, or start with / contain numbered answers matching open question ids (`1.`, `Q2:`, `#3 —`), or are a direct reply to the agent comment.
   - **other** — general discussion. Read them for context; do not treat them as answers unless they unambiguously answer an open question.
+- **Thread ownership** — other plugins (notably `solution-designer`, footer `` `solution-designer` · ``) also converse on this thread via `@xianix`. A human comment is for **you** only when the most recent footer-bearing agent comment before it is a `req-analyst` comment, or it clearly refers to the requirement (a `Q<n>` id, *requirement*, *scope*, *acceptance criteria*, *groom*). Ignore comments that belong to another plugin — do not reply to them.
 - `open_questions` — the numbered questions in `last_agent_comment` that are not yet marked resolved in the description's *Decisions* table.
 
 ### 2. Determine the Grooming State

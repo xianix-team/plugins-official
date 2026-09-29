@@ -1,7 +1,7 @@
 {
     "name": "req-analyst-plugin",
-    "version": "1.1.0",
-    "description": "AI thinking partner for backlog refinement. Surrounds an issue or work item with the context a senior analyst would bring to a session — fit with existing requirements, domain knowledge, competitive insight, user journeys, persona impact, usability and adoption considerations, and open questions worth answering before code is written.",
+    "version": "2.0.0",
+    "description": "Conversational backlog grooming. Reads an issue or work item's comment thread, asks up to 5 clarifying questions per round (each with a proposed default), folds the humans' @xianix replies into a concise structured description, and marks the item groomed when no decisions remain. Max 3 rounds. Works with GitHub Issues, Azure DevOps Work Items, or plain text.",
     "author": {
       "name": "99x",
       "email": "xianix@99x.io",
@@ -10,10 +10,9 @@
     "homepage": "https://github.com/99x/xianix-team",
     "repository": "https://github.com/99x/xianix-team",
     "license": "MIT",
-    "keywords": ["requirement-analysis", "requirement-elaboration", "backlog-refinement", "domain-knowledge", "competitive-insights", "user-journey", "personas", "usability", "adoption"],
+    "keywords": ["requirement-analysis", "backlog-refinement", "clarifying-questions", "conversational", "issue-comments", "acceptance-criteria", "grooming", "user-journey", "personas"],
     "commands": ["./commands/requirement-analysis.md"],
     "skills": "./skills/",
     "hooks": "./hooks/hooks.json",
-    "outputStyles": "./styles/",
-    "lspServers": "./.lsp.json"
+    "outputStyles": "./styles/"
   }

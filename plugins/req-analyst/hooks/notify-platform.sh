@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# notify-elaboration.sh
+# notify-platform.sh
 # PostToolUse hook — runs after every Bash tool execution.
+# Emits a short nudge once the platform has been detected from the git remote.
 
 set -euo pipefail
 
@@ -12,4 +13,4 @@ if ! echo "$COMMAND" | grep -qE "^git remote"; then
     exit 0
 fi
 
-echo "Platform detected. Next step: post elaboration to the backlog platform."
+echo "Platform detected. Next step: fetch the item and the full comment thread, then determine the grooming state."

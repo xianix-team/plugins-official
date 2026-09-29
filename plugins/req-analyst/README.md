@@ -1,50 +1,72 @@
 # Requirement Analyst Plugin
 
-> An AI **thinking partner** for backlog refinement. Surrounds an issue or work item with the context a senior analyst would bring to a refinement session — fit with existing requirements, domain knowledge, competitive insight, user journeys, persona impact, usability and adoption considerations, and the open questions worth answering before any code is written.
-
-The plugin's job is to **expand the team's thinking**, not to gate the work. A lightweight readiness signal (`GROOMED` / `NEEDS CLARIFICATION` / `NEEDS DECOMPOSITION`) is also applied as a label/tag, but it is a **triage hint** — the real value is in the elaboration itself.
+> A **conversational grooming partner** for backlog items. Instead of posting a long analysis, it asks the few questions that actually change what gets built, folds the answers into the issue description, and marks the item ready when it is groomed — all inside the issue / work item comment thread.
 
 Works with **GitHub Issues**, **Azure DevOps Work Items**, or **plain text input**.
 
 ---
 
-## What You Get Back
+## The Conversation
 
-Each run produces a structured elaboration posted directly on the backlog item — one comment per lens, the original description is never modified.
+```
+Human    adds the `ai-dlc/issue/analyze` label
+Agent    ── round 1 ──  "What I understand: … Decisions I need: Q1 … Q2 … Q3 … (each with a default)"
+Human    "@xianix 1. yes  2. admins only"
+Agent    updates the description with Q1, Q2 → posts round 2: "Still open: Q3 …"
+Human    "@xianix go with defaults"
+Agent    updates the description, marks it `groomed` → "Ready to proceed. Assumptions: Q3 → …"
+```
 
-- **Fit with existing requirements** — if the repo contains other requirement documents (PRDs, specs, RFCs, ADRs, feature briefs, user stories), the plugin reads them and reasons about how the new ask fits the existing product context: overlaps, dependencies, contradictions, and gaps. Product/requirements level — not code level.
-- **Intent & user context** — the underlying need, success definition, situational context, decision points.
-- **Domain & competitive context** — concepts, terminology, regulations, and how comparable products / open-source alternatives / competitors approach the same problem.
-- **User journey** — upstream triggers, downstream consequences, **usability touchpoints** (accessibility, discoverability, error states, empty states, "what happens when…"), and **friction risks**.
-- **Personas & adoption** — affected user types, where their goals diverge, persona-specific edge cases, and **adoption considerations** per persona (onboarding, migration, change management, documentation needs, success signals).
-- **Open questions & gaps** — assumptions worth validating and acceptance criteria worth tightening, framed as **prompts for the team** rather than blockers.
+Each run of the plugin is **one turn**. It reads the whole thread, works out where the conversation stands, takes exactly one action, and stops. The human's reply triggers the next turn.
+
+What the humans see per turn:
+
+- **Round comment** — 2–3 sentences of understanding, up to **5 numbered questions**, each one line with *why it matters* and a *default*. Readable in under a minute.
+- **Description** — rewritten into a concise structured requirement: summary, scope, requirements, acceptance criteria, a *Decisions* table (who decided what, linked to the comment), open questions. The original text is preserved verbatim in a collapsed block.
+- **Label / tag** — exactly one of `needs-clarification` (a round is open), `needs-decomposition` (too large — split proposed), `groomed` (ready to proceed).
+
+The analysis depth is still there — repo documentation, fit with existing PRDs / ADRs, intent, personas, journey, domain — but it stays **internal** and surfaces only as questions or as lines in the refined description. On GitHub, the analyst notes are available as an optional collapsed block in the round-1 comment.
 
 ---
 
-## How It Works
+## State Machine
 
 ```mermaid
-flowchart TD
-    A[Fetch backlog item] --> B[Index project docs & existing requirements]
-    B --> C[Reason about Fit with existing requirements]
-    C --> D[Classify item]
-    D --> E[Phase 1: 4 analysts in parallel]
-    E --> F[Phase 2: Gap & Risk]
-    F --> G[Compile elaboration & post one comment per lens]
+stateDiagram-v2
+    [*] --> NEW: label applied
+    NEW --> NEW: duplicate webhook → skip (starting comment acts as lock)
+    NEW --> AWAITING: analyse → post round 1 (≤5 questions)
+    NEW --> READY: no critical questions
+    NEW --> SPLIT_PENDING: too large → propose split
+    AWAITING --> ANSWERED: human replies @xianix
+    AWAITING --> AWAITING: no reply → do nothing
+    ANSWERED --> AWAITING: apply answers → post round N+1
+    ANSWERED --> READY: nothing open, or round 3 done, or "go with defaults"
+    SPLIT_PENDING --> READY: "@xianix split" → create children
+    READY --> READY: change request → update description
 ```
 
-1. **Fetch item** — `gh` CLI for GitHub, REST API for Azure DevOps, or paste/read a file for plain text.
-2. **Index project context** — scans READMEs, manifests, and any requirement documents in the repo (PRDs, specs, RFCs, ADRs, feature briefs, user stories under `/docs`, `/specs`, `/requirements`, `/adr`, `/rfcs`, etc.) to build a ~500-word project summary and a map of existing requirements. The new item is reasoned about *against* that map — overlaps, dependencies, contradictions, gaps — at the **product level**, not the code level.
-3. **Classify** — type (story / task / bug / spike), domain, complexity — used to tune depth.
-4. **Phase 1 (parallel)** — four analysts contribute different lenses simultaneously:
-   - **Intent** — surfaces the underlying user need and the "why" behind the ask.
-   - **Domain** — brings domain knowledge, industry conventions, and how competitors / comparable products handle the same problem.
-   - **Journey** — maps the user workflow around this requirement, including usability touchpoints and friction risks.
-   - **Persona** — identifies affected user personas and adoption considerations specific to each.
-5. **Phase 2** — a **Gap & Risk** analyst reviews Phase 1 output to surface missing acceptance criteria, edge cases, and risks as **discussion prompts**.
-6. **Compile & post** — findings are posted as ordered comments on the item, ready for the team to react to in the next refinement.
+State is derived from the thread itself — every agent comment ends with a footer `` `req-analyst` · round N/3 · status: … `` that the next run parses. Nothing is stored elsewhere.
 
-For unsupported platforms, the output is written to `requirement-elaboration-report.md`.
+**Bounds:** max 5 questions per round, max 3 rounds. Unanswered questions after round 3 resolve to their stated defaults, are flagged **(assumed)** in the description, and the item is marked ready.
+
+---
+
+## How to Reply
+
+Comment on the item, addressing the agent:
+
+| You write | Effect |
+|---|---|
+| `@xianix 1. yes 2. admins only 3. skip for v1` | Answers by number — folded into the description |
+| `@xianix Q2 should be admins only` | Prose answers work too |
+| `@xianix go with defaults` | Accept every proposed default → item marked ready |
+| `@xianix split` | Confirm a proposed decomposition → child items created and linked |
+| `@xianix keep as one` | Reject a proposed split → groom as a single item |
+| `@xianix hold` | Park it — no further rounds until you reply again |
+| `@xianix what do you mean by 3?` | Short reply, no state change |
+
+Editing the description directly also works — the next run re-checks open questions against it.
 
 ---
 
@@ -53,29 +75,20 @@ For unsupported platforms, the output is written to `requirement-elaboration-rep
 ### Prerequisites
 
 - [Claude Code](https://docs.anthropic.com/claude-code) installed (`claude` CLI)
-- **GitHub**: `gh` CLI installed and authenticated (`gh auth login`) — or `GITHUB-TOKEN` env var
-- **Azure DevOps**: `AZURE-DEVOPS-TOKEN` PAT with `Work Items (Read & Write)` scope
-- **Plain text**: nothing — the report is written to disk
+- **GitHub:** `gh` CLI authenticated with `repo` scope (the plugin edits the body and labels) — or `GITHUB-TOKEN`
+- **Azure DevOps:** `AZURE-DEVOPS-TOKEN` PAT with `Work Items (Read & Write)`
+- **Plain text:** nothing — the conversation lives in `requirement-grooming.md`
 
 ### Run
 
 ```bash
-# Point Claude Code at the plugin
 claude --plugin-dir /path/to/xianix-plugins-official/plugins/req-analyst
 
-# Then in the chat
+# In the chat — run once per turn
 /requirement-analysis 42
 ```
 
-See [docs/platform-config.md](docs/platform-config.md) for full credential setup and [docs/backlog-setup.md](docs/backlog-setup.md) for how to structure backlog items.
-
----
-
-## Sample Prompt
-
-```text
-/requirement-analysis 42
-```
+See [docs/platform-config.md](docs/platform-config.md) for credentials and [docs/backlog-setup.md](docs/backlog-setup.md) for labels and item structure.
 
 ---
 
@@ -83,82 +96,50 @@ See [docs/platform-config.md](docs/platform-config.md) for full credential setup
 
 | Input | Source | Required | Description |
 |---|---|---|---|
-| Repository URL | Agent rule | Yes | The repository containing the backlog item — provided by the Xianix Agent rule, not typed in the prompt |
-| Issue / Work-item number | Prompt | Yes | The backlog item to elaborate (e.g. `42`) |
+| Repository URL | Agent rule | Yes | Repository containing the backlog item |
+| Issue / work-item number | Prompt | Yes | The item to groom |
 
-The platform (GitHub, Azure DevOps, etc.) is **auto-detected** from `git remote` — you don't need to specify it.
-
----
+Platform is **auto-detected** from `git remote`.
 
 ## Environment Variables
 
-| Variable | Platform | Required | Purpose |
-|---|---|---|---|
-| `GITHUB-TOKEN` | GitHub | Yes | Authenticate `gh` CLI for reading issues and posting comments |
-| `AZURE-DEVOPS-TOKEN` | Azure DevOps | Yes | PAT for REST API calls (read work items, post comments) |
+| Variable | Platform | Purpose |
+|---|---|---|
+| `GITHUB-TOKEN` | GitHub | Read issue + comments, post comments, edit body, swap labels |
+| `AZURE-DEVOPS-TOKEN` | Azure DevOps | Read work item + comments, post comments, patch description / tags |
 
-For CI pipelines, you can also set `PLATFORM`, `REPO_URL`, and `ISSUE_NUMBER` to drive the plugin without interactive input.
-
----
-
-## Output Layout
-
-The plugin posts one comment per section, in this order, preserving the original description:
-
-1. ** Elaboration Summary** — overview, readiness signal, key takeaways
-2. ** Fit with Existing Requirements** — overlaps / dependencies / contradictions / gaps with PRDs, specs, ADRs, feature briefs already in the repo
-3. ** Context** — 5–8 bullets covering intent, journey, personas, domain, and competitor patterns
-4. ** Open Questions & Gaps** — prompts for the next refinement
-5. ** Refined Requirement** — structured requirement spec, always last
-
-A lightweight signal label/tag is also applied:
-
-| Signal | Meaning |
-|---|---|
-| `groomed` | Intent clear; no critical open questions |
-| `needs-clarification` | Worth a short conversation before pickup |
-| `needs-decomposition` | Likely too large — the elaboration suggests how it might split |
-
-Sections with no real findings are **skipped**, never filled with "None identified."
+For CI, `PLATFORM`, `REPO_URL`, and `ISSUE_NUMBER` drive the plugin without interactive input.
 
 ---
 
-## Rule Examples (Tag-Driven Triggering)
+## Rule Examples (Xianix Agent)
 
-Add one (or both) of the execution blocks below to your `rules.json` so the Xianix Agent automatically elaborates backlog items when a webhook fires.
+Two kinds of trigger are needed for the loop to run unattended:
 
-### When does the agent trigger?
-
-The Requirement Analyst is **tag-driven**. It runs when the `ai-dlc/issue/analyze` label (GitHub) or tag (Azure DevOps) is present on an issue / work item and one of the following happens (OR logic across `match-any` entries):
-
-| Scenario | What it covers |
+| Trigger | Purpose |
 |---|---|
-| Tag newly applied | A human (or another rule) adds `ai-dlc/issue/analyze` to an existing issue or work item |
-| Issue / work item created with the tag already present | The item is opened with the tag included from the start |
+| **Label / tag applied** | Starts the conversation (round 1) |
+| **`@xianix` comment on the item** | Continues it — every human reply runs the next turn |
 
-There is no assignee-based trigger. The label or tag is the single source of truth for "elaborate this backlog item."
+The plugin reads the whole thread each time, so the comment trigger does not need to pass the answers in; it only needs to run `/requirement-analysis` on the item.
 
 | Platform | Scenario | Webhook event | Filter rule |
 |---|---|---|---|
-| GitHub | Tag newly applied | `issues` | `action==labeled` and the just-added `label.name=='ai-dlc/issue/analyze'` |
-| GitHub | Issue opened with tag | `issues` | `action==opened` and `ai-dlc/issue/analyze` is in `issue.labels` |
-| Azure DevOps | Tag newly applied | `workitem.updated` | `ai-dlc/issue/analyze` appears in the new `resource.revision.fields["System.Tags"]` value but not in `resource.fields["System.Tags"].oldValue` |
-| Azure DevOps | Work item created with tag | `workitem.created` | `ai-dlc/issue/analyze` is in `resource.fields["System.Tags"]` |
+| GitHub | Label applied | `issues` | `action==labeled` and `label.name=='ai-dlc/issue/analyze'` |
+| GitHub | Issue opened with label | `issues` | `action==opened` and `ai-dlc/issue/analyze` in `issue.labels` |
+| GitHub | Human replies | `issue_comment` | `action==created` and `comment.body` contains `@xianix` and **not** `issue.pull_request?` |
+| Azure DevOps | Tag applied | `workitem.updated` | `ai-dlc/issue/analyze` newly in `System.Tags` |
+| Azure DevOps | Created with tag | `workitem.created` | `ai-dlc/issue/analyze` in `System.Tags` |
+| Azure DevOps | Human replies | `workitem.commented` | `resource.fields.System.History` contains `@xianix` |
 
-### GitHub
+### GitHub — start the conversation
 
 ```json
 {
   "name": "github-issue-requirement-analysis",
   "match-any": [
-    {
-      "name": "github-issue-tag-applied",
-      "rule": "action==labeled&&label.name=='ai-dlc/issue/analyze'"
-    },
-    {
-      "name": "github-issue-opened-with-tag",
-      "rule": "action==opened&&issue.labels.*.name=='ai-dlc/issue/analyze'"
-    }
+    { "name": "github-issue-tag-applied",      "rule": "action==labeled&&label.name=='ai-dlc/issue/analyze'" },
+    { "name": "github-issue-opened-with-tag",  "rule": "action==opened&&issue.labels.*.name=='ai-dlc/issue/analyze'" }
   ],
   "use-inputs": [
     { "name": "issue-number",    "value": "issue.number" },
@@ -168,29 +149,55 @@ There is no assignee-based trigger. The label or tag is the single source of tru
     { "name": "platform",        "value": "github", "constant": true }
   ],
   "use-plugins": [
-    {
-      "plugin-name": "req-analyst@xianix-plugins-official",
-      "marketplace": "xianix-team/plugins-official"
-    }
+    { "plugin-name": "req-analyst@xianix-plugins-official", "marketplace": "xianix-team/plugins-official" }
   ],
-  "execute-prompt": "Issue #{{issue-number}} titled \"{{issue-title}}\" in the repository {{repository-name}} has been tagged with `ai-dlc/issue/analyze` for requirement analysis.\n\nRun /requirement-analysis {{issue-number}} to perform the automated requirement analysis and elaboration."
+  "with-envs": [
+    { "name": "GITHUB-TOKEN", "value": "secrets.GITHUB-TOKEN", "mandatory": true }
+  ],
+  "conversation-key": "issue.number",
+  "execute-prompt": "Issue #{{issue-number}} titled \"{{issue-title}}\" in {{repository-name}} has been tagged with `ai-dlc/issue/analyze`.\n\nRun /requirement-analysis {{issue-number}}. The command reads the full comment thread and takes the next grooming step (round 1 if none exists). You must post the round comment on the issue yourself with `gh issue comment`; your text output alone is not delivered to the user."
 }
 ```
 
-### Azure DevOps
+### GitHub — continue the conversation
+
+```json
+{
+  "name": "github-issue-requirement-analysis-reply",
+  "match-any": [
+    { "name": "github-issue-agent-reply", "rule": "action==created&&comment.body*='@xianix'&&!issue.pull_request?" }
+  ],
+  "use-inputs": [
+    { "name": "issue-number",     "value": "issue.number", "mandatory": true },
+    { "name": "issue-title",      "value": "issue.title" },
+    { "name": "repository-url",   "value": "repository.clone_url" },
+    { "name": "repository-name",  "value": "repository.full_name" },
+    { "name": "comment-author",   "value": "comment.user.login" },
+    { "name": "comment-id",       "value": "comment.id" },
+    { "name": "user-instruction", "value": "comment.body" },
+    { "name": "platform",         "value": "github", "constant": true }
+  ],
+  "use-plugins": [
+    { "plugin-name": "req-analyst@xianix-plugins-official", "marketplace": "xianix-team/plugins-official" }
+  ],
+  "with-envs": [
+    { "name": "GITHUB-TOKEN", "value": "secrets.GITHUB-TOKEN", "mandatory": true }
+  ],
+  "conversation-key": "issue.number",
+  "execute-prompt": "You are @xianix. {{comment-author}} commented on issue #{{issue-number}} (\"{{issue-title}}\") in {{repository-name}}: \"{{user-instruction}}\"\n\nFirst decide whether this comment is addressed to you (an answer to your questions, an instruction like \"go with defaults\" / \"split\" / \"hold\", or a question for you) versus mentioning you in passing. If it is not addressed to you, do nothing and post no reply.\n\nIf it is addressed to you, react to comment {{comment-id}} with `eyes`, then run /requirement-analysis {{issue-number}}. The command reads the full thread — including this comment — and takes the next grooming step: fold the answers into the description and post the next round, or mark the item ready. Post exactly one comment; your text output alone is not delivered to the user."
+}
+```
+
+> **Why the "is it addressed to me?" preamble?** A bare substring match on `@xianix` also fires when someone mentions the agent in passing. The `!issue.pull_request?` guard keeps this rule off PR comments, which other plugins handle.
+
+### Azure DevOps — start the conversation
 
 ```json
 {
   "name": "azuredevops-work-item-requirement-analysis",
   "match-any": [
-    {
-      "name": "azuredevops-workitem-tag-applied",
-      "rule": "eventType==workitem.updated&&resource.revision.fields.\"System.Tags\"*='ai-dlc/issue/analyze'&&resource.fields.\"System.Tags\".oldValue!*='ai-dlc/issue/analyze'"
-    },
-    {
-      "name": "azuredevops-workitem-created-with-tag",
-      "rule": "eventType==workitem.created&&resource.fields.\"System.Tags\"*='ai-dlc/issue/analyze'"
-    }
+    { "name": "azuredevops-workitem-tag-applied",       "rule": "eventType==workitem.updated&&resource.revision.fields.\"System.Tags\"*='ai-dlc/issue/analyze'&&resource.fields.\"System.Tags\".oldValue!*='ai-dlc/issue/analyze'" },
+    { "name": "azuredevops-workitem-created-with-tag",  "rule": "eventType==workitem.created&&resource.fields.\"System.Tags\"*='ai-dlc/issue/analyze'" }
   ],
   "use-inputs": [
     { "name": "workitem-id",     "value": "resource.workItemId" },
@@ -201,16 +208,43 @@ There is no assignee-based trigger. The label or tag is the single source of tru
     { "name": "platform",        "value": "azuredevops", "constant": true }
   ],
   "use-plugins": [
-    {
-      "plugin-name": "req-analyst@xianix-plugins-official",
-      "marketplace": "xianix-team/plugins-official"
-    }
+    { "plugin-name": "req-analyst@xianix-plugins-official", "marketplace": "xianix-team/plugins-official" }
   ],
-  "execute-prompt": "Work item ({{workitem-type}}) #{{workitem-id}} titled \"{{workitem-title}}\" in project {{project-name}} has been tagged with `ai-dlc/issue/analyze` for requirement analysis.\n\nRun /requirement-analysis {{workitem-id}} to perform the automated requirement analysis and elaboration."
+  "with-envs": [
+    { "name": "AZURE-DEVOPS-TOKEN", "value": "secrets.AZURE-DEVOPS-TOKEN", "mandatory": true }
+  ],
+  "conversation-key": "resource.workItemId",
+  "execute-prompt": "Work item ({{workitem-type}}) #{{workitem-id}} titled \"{{workitem-title}}\" in project {{project-name}} has been tagged with `ai-dlc/issue/analyze`.\n\nRun /requirement-analysis {{workitem-id}}. The command reads the full discussion thread and takes the next grooming step (round 1 if none exists). You must post the round comment on the work item yourself via the Work Item Comments REST API; your text output alone is not delivered to the user."
 }
 ```
 
-> These blocks go inside the `executions` array of a rule set. See your Xianix Agent rules-configuration documentation for the full file structure and filter syntax.
+### Azure DevOps — continue the conversation
+
+```json
+{
+  "name": "azuredevops-work-item-requirement-analysis-reply",
+  "match-any": [
+    { "name": "azuredevops-workitem-agent-reply", "rule": "eventType==workitem.commented&&resource.fields.System.History*='@xianix'" }
+  ],
+  "use-inputs": [
+    { "name": "workitem-id",      "value": "resource.id", "mandatory": true },
+    { "name": "workitem-title",   "value": "resource.fields.System.Title" },
+    { "name": "user-instruction", "value": "resource.fields.System.History" },
+    { "name": "repository-url",   "value": "https://org@dev.azure.com/org/Project/_git/Repo", "constant": true },
+    { "name": "platform",         "value": "azuredevops", "constant": true }
+  ],
+  "use-plugins": [
+    { "plugin-name": "req-analyst@xianix-plugins-official", "marketplace": "xianix-team/plugins-official" }
+  ],
+  "with-envs": [
+    { "name": "AZURE-DEVOPS-TOKEN", "value": "secrets.AZURE-DEVOPS-TOKEN", "mandatory": true }
+  ],
+  "conversation-key": "resource.id",
+  "execute-prompt": "You are @xianix. Someone commented on work item #{{workitem-id}} (\"{{workitem-title}}\"): \"{{user-instruction}}\"\n\nFirst decide whether this comment is addressed to you (an answer to your questions, an instruction like \"go with defaults\" / \"split\" / \"hold\", or a question for you) versus mentioning you in passing. If it is not addressed to you, do nothing and post no reply.\n\nIf it is addressed to you, run /requirement-analysis {{workitem-id}}. The command reads the full discussion — including this comment — and takes the next grooming step: fold the answers into the description and post the next round, or mark the item ready. Post exactly one comment via the Work Item Comments REST API; your text output alone is not delivered to the user."
+}
+```
+
+> These blocks go inside the `executions` array of a rule set. `conversation-key` groups all turns on one item into one conversation.
 
 ---
 
@@ -218,10 +252,11 @@ There is no assignee-based trigger. The label or tag is the single source of tru
 
 | Document | Description |
 |---|---|
-| [docs/platform-config.md](docs/platform-config.md) | Platform configuration — GitHub CLI, Azure DevOps PAT, CI env vars |
-| [docs/backlog-setup.md](docs/backlog-setup.md) | Backlog structure, tag-driven triggering, readiness signals |
-| [providers/github.md](providers/github.md) | GitHub-specific fetching and posting |
-| [providers/azure-devops.md](providers/azure-devops.md) | Azure DevOps-specific fetching and posting |
-| [providers/generic.md](providers/generic.md) | Plain text / unknown platform — file-based output |
-| [styles/elaboration.md](styles/elaboration.md) | Tone & section order |
-| [styles/elaboration-template.md](styles/elaboration-template.md) | Compiled elaboration template |
+| [docs/platform-config.md](docs/platform-config.md) | Credentials — GitHub CLI, Azure DevOps PAT, CI env vars |
+| [docs/backlog-setup.md](docs/backlog-setup.md) | Labels, item structure, how to answer |
+| [providers/github.md](providers/github.md) | GitHub — thread fetch, reactions, body edit, label swap |
+| [providers/azure-devops.md](providers/azure-devops.md) | Azure DevOps — comments API, description / AC patch, tag swap |
+| [providers/generic.md](providers/generic.md) | Plain text — file-based conversation |
+| [styles/conversation.md](styles/conversation.md) | Tone and brevity rules |
+| [styles/round-comment-template.md](styles/round-comment-template.md) | The comment variants |
+| [styles/refined-description-template.md](styles/refined-description-template.md) | The description the plugin maintains |

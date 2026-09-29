@@ -54,10 +54,16 @@ You should see your account listed with the `repo` scope.
 
 | Command | Purpose |
 |---|---|
-| `gh issue view` | Fetch issue details (title, body, labels, comments) |
-| `gh issue list` | Find related issues by milestone, label, or keyword |
-| `gh issue comment` | Post each elaboration lens as a comment |
-| `gh issue edit --add-label` | Apply readiness signal label |
+| `gh issue view --json …,comments` | Fetch the issue and the full comment thread |
+| `gh api …/issues/{n}/comments` | Comment ids (for reactions) |
+| `gh api -X POST …/comments/{id}/reactions` | Acknowledge a human reply with `eyes` |
+| `gh issue list` | Related issues (analysis context) |
+| `gh issue comment --body-file` | Post the one round comment per turn |
+| `gh issue edit --body-file` | Rewrite the description with the refined requirement |
+| `gh issue edit --add-label / --remove-label` | Swap the readiness label |
+| `gh issue create` | Child issues — only on a confirmed split |
+
+The token therefore needs `repo` scope (write), not just read.
 
 ---
 
@@ -82,10 +88,13 @@ export AZURE-DEVOPS-TOKEN=<your-pat>
 
 | API | Purpose |
 |---|---|
-| `GET _apis/wit/workitems/{id}` | Fetch work item details (title, description, tags, comments) |
-| `POST _apis/wit/wiql` | Query related work items in the same iteration |
-| `POST _apis/wit/workitems/{id}/comments?format=markdown` | Post each elaboration lens as a comment (Markdown rendered in the UI) |
-| `PATCH _apis/wit/workitems/{id}` | Apply readiness signal tag |
+| `GET _apis/wit/workitems/{id}?$expand=all` | Work item fields, tags, relations |
+| `GET _apis/wit/workItems/{id}/comments` | The full discussion thread (comments are not in the work item payload) |
+| `PUT …/comments/{cid}/reactions/like` | Acknowledge a human reply |
+| `POST _apis/wit/wiql` | Related work items (analysis context) |
+| `POST …/workItems/{id}/comments?format=markdown` | Post the one round comment per turn |
+| `PATCH _apis/wit/workitems/{id}` | Rewrite `System.Description` (HTML), `Microsoft.VSTS.Common.AcceptanceCriteria`, and `System.Tags` |
+| `POST _apis/wit/workitems/${type}` | Child work items — only on a confirmed split |
 
 See `providers/azure-devops.md` for full API details.
 
@@ -100,7 +109,7 @@ curl -s -u ":${AZURE-DEVOPS-TOKEN}" \
 
 ## Plain Text / Unknown Platform
 
-If the git remote does not match GitHub or Azure DevOps — or if there is no repo at all — the plugin runs in **generic** mode. The user can paste the requirement text or point at a local file, and the elaboration is written to `requirement-elaboration-report.md` in the working directory.
+If the git remote does not match GitHub or Azure DevOps — or if there is no repo at all — the plugin runs in **generic** mode. The conversation lives in `requirement-grooming.md` in the working directory: the plugin appends a round, you write your answers under it, and re-run the command. See `providers/generic.md`.
 
 No credentials are required.
 
@@ -114,7 +123,7 @@ For CI pipelines or webhook-driven runs, these variables drive the plugin withou
 |---|---|
 | `PLATFORM` | `github` \| `azuredevops` \| `generic` — overrides remote-URL detection |
 | `REPO_URL` | Full HTTPS URL of the target repository |
-| `ISSUE_NUMBER` | Issue / work item ID to elaborate |
+| `ISSUE_NUMBER` | Issue / work item ID to groom |
 | `GITHUB-TOKEN` | Required when `PLATFORM=github` |
 | `AZURE-DEVOPS-TOKEN` | Required when `PLATFORM=azuredevops` |
 
@@ -122,8 +131,8 @@ For CI pipelines or webhook-driven runs, these variables drive the plugin withou
 
 ## Summary
 
-| Platform | How items are fetched | How elaboration is delivered | Credentials |
+| Platform | Thread | Description edit | Credentials |
 |---|---|---|---|
-| GitHub | `gh` CLI | `gh issue comment` (one comment per lens) | `GITHUB-TOKEN` or `gh auth login` |
-| Azure DevOps | REST API (`curl`) | REST API `wit/comments?format=markdown` | `AZURE-DEVOPS-TOKEN` env var |
-| Generic / plain text | User-provided or local file | Written to `requirement-elaboration-report.md` | — |
+| GitHub | `gh issue view` / `gh issue comment` | `gh issue edit --body-file` | `GITHUB-TOKEN` (`repo` scope) or `gh auth login` |
+| Azure DevOps | `wit/workItems/{id}/comments` | `PATCH wit/workitems/{id}` | `AZURE-DEVOPS-TOKEN` (Work Items Read & Write) |
+| Generic / plain text | `requirement-grooming.md` | Same file | — |

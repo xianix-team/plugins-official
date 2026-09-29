@@ -1,28 +1,23 @@
 ---
 name: analyze-requirement
-description: Run the full requirement elaboration on a backlog item (GitHub Issue, Azure DevOps Work Item, or plain text). Acts as a thinking partner — surrounds the item with fit-with-existing-requirements, intent, domain & competitive context, user journey, persona & adoption, and open questions. Usage: /analyze-requirement [issue-number or work-item-id]
+description: Take the next grooming step on a backlog item (GitHub Issue, Azure DevOps Work Item, or plain text). Reads the comment thread, determines the conversation state, and either posts a short round of clarifying questions, folds the humans' answers into the description, or marks the item ready to proceed. Usage: /analyze-requirement [issue-number or work-item-id]
 argument-hint: [issue-number | work-item-id]
 ---
 
-Elaborate item $ARGUMENTS as a thinking partner for the team — not as a gatekeeper.
+Take one grooming turn on item $ARGUMENTS.
 
-Use the **orchestrator** agent to run the full elaboration. The orchestrator will:
+Use the **orchestrator** agent. It will:
 
-1. Detect the hosting platform from `git remote get-url origin` (or read `PLATFORM` / `REPO_URL` / `ISSUE_NUMBER` env vars in CI)
-2. Fetch item context (`gh` CLI for GitHub, `curl` REST API for Azure DevOps, prompt or local file for plain text)
-3. Index repo documentation — README, `docs/`, `specs/`, `requirements/`, `adr/`, `rfcs/`, PRDs, feature briefs, user stories — and reason about how this item **fits the existing requirements** (overlaps, dependencies, contradictions, gaps) at the **product level, not the code level**
-4. Classify the item (story, task, bug, spike) — used to tune the depth of analysis
-5. Run analysts in sequence (each receives the item content, related items, **and** the documentation summary + Fit note):
+1. Detect the platform from `git remote get-url origin` (or `PLATFORM` / `REPO_URL` / `ISSUE_NUMBER` in CI).
+2. Fetch the item **and every comment**, ordered chronologically.
+3. Determine the state from its own previous comments (footer `req-analyst · round N/3 · status: …`) and the human replies after them:
+   - **NEW** — no previous round → analyse (repo docs, `context-analyst`, `gap-risk-analyst`) and post round 1 with ≤5 numbered questions, each with a default. Label `needs-clarification`.
+   - **ANSWERED** — humans replied (`@xianix …`) → fold answers into the description per `styles/refined-description-template.md`, then post the next round with what is still open, or the *Ready to proceed* comment and label `groomed`.
+   - **AWAITING** — no new replies → re-check the description for answers; otherwise do nothing.
+   - **READY** — item groomed, human asks for a change → update the description and post a one-line *Updated* comment.
+   - **SPLIT-PENDING** — waiting on `@xianix split` → create child items on confirmation.
+4. Post **one** comment per `styles/round-comment-template.md`, swap the readiness label / tag, and output a single status line.
 
-   **Phase 1 — Context (`context-analyst`):**
-   - A single all-in-one pass returning 5–8 bullets covering intent, journey, personas, domain knowledge, and competitive patterns
+Rounds are capped at 3; afterwards the stated defaults apply and the item is marked ready with the assumptions listed.
 
-   **Phase 2 — Gap & Risk (`gap-risk-analyst`):**
-   - Open questions, assumptions to validate, ACs to tighten, dependencies — **framed as prompts for the team, not blockers**
-
-6. Compile into the structured elaboration (see `styles/elaboration-template.md`)
-7. Post as **separate comments** on the issue/work item — the original body is never modified — and apply a lightweight readiness signal label/tag as a triage hint
-
-If an issue/work item number is provided (e.g., `/analyze-requirement 42`), fetch the item details first.
-
-If no argument is given, prompt the user for an item number or paste the requirement text.
+If no argument is given, prompt the user for an item number or the requirement text.

@@ -150,7 +150,7 @@ Lets a human ask for an evaluation ad hoc by mentioning `@xianix` in an issue co
   "match-any": [
     {
       "name": "github-issue-agent-instruction-requested",
-      "rule": "action==created&&comment.body*='@xianix'&&!issue.pull_request?"
+      "rule": "action==created&&comment.body*='@xianix'&&issue.pull_request!?"
     }
   ],
   "use-inputs": [

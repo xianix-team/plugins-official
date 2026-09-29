@@ -165,7 +165,7 @@ The plugin reads the whole thread each time, so the comment trigger does not nee
 {
   "name": "github-issue-requirement-analysis-reply",
   "match-any": [
-    { "name": "github-issue-agent-reply", "rule": "action==created&&comment.body*='@xianix'&&!issue.pull_request?" }
+    { "name": "github-issue-agent-reply", "rule": "action==created&&comment.body*='@xianix'&&issue.pull_request!?" }
   ],
   "use-inputs": [
     { "name": "issue-number",     "value": "issue.number", "mandatory": true },

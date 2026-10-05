@@ -107,16 +107,20 @@ Each plugin follows a standard structure:
 ```
 plugin-name/
 ├── .claude-plugin/
-│   └── plugin.json      # Plugin metadata (required)
+│   └── plugin.json      # Claude / marketplace metadata (required)
+├── .opencode/           # Harness-native OpenCode recipe (commands/agents/skills)
 ├── .mcp.json            # MCP server configuration (optional)
-├── commands/            # Slash commands (optional)
-├── agents/              # Agent definitions (optional)
-├── skills/              # Skill definitions (optional)
+├── commands/            # Claude harness commands (optional)
+├── agents/              # Claude harness agents (optional)
+├── skills/              # Claude harness skills (optional)
 ├── hooks/               # Lifecycle hooks (optional)
-├── providers/           # Provider-specific configuration (optional)
+├── providers/           # Shared provider docs (optional)
+├── scripts/             # Shared scripts used by both harnesses (optional)
 ├── styles/              # Output style definitions (optional)
 └── README.md            # Documentation
 ```
+
+**Multi-harness (initial):** keep a harness-native OpenCode recipe under `.opencode/` alongside the Claude plugin (`commands/` / `agents/` / `skills/`). Shared assets (`scripts/`, `providers/`, etc.) stay common. Control drift with shared versioning and parity checks. Runtime does not translate between harnesses; a generic compatibility/generation layer can come later if plugin or harness count grows.
 
 ---
 

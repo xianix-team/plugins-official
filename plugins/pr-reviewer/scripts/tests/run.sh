@@ -187,6 +187,47 @@ JSON
 assert_eq "Gate A blocks (same sha): forced to carried_over" "yes" "$(bucket_has "$OUT2" carried_over "$FID_REMOVED")"
 assert_eq "Gate A blocks (same sha): fixed bucket stays empty" "no" "$(bucket_has "$OUT2" fixed "$FID_REMOVED")"
 
+echo "=== validate-findings.sh keeps findings inside the PR's files ==="
+# A finding on a file the PR doesn't change (e.g. a caller) must move to the
+# summary — Azure DevOps would otherwise post it on the unchanged file.
+SCOPE="$WORK/scope"
+mkdir -p "$SCOPE/repo"
+(
+  cd "$SCOPE/repo"
+  git init -q .
+  git config user.email t@t; git config user.name t
+  seq 1 50 > caller.py
+  seq 1 20 > changed.py
+  git add . && git commit -qm base
+  echo "new line" >> changed.py
+  git commit -qam pr
+  git diff --name-only HEAD~1 HEAD > "$SCOPE/changed.txt"
+)
+SCOPE_HEAD=$(git -C "$SCOPE/repo" rev-parse HEAD)
+: > "$SCOPE/numbered.patch"  # line numbers are valid at HEAD; the patch isn't needed here
+
+run_validate() {
+  rm -f /tmp/pr_state.env
+  ( cd "$SCOPE/repo" && FINDINGS="$SCOPE/findings.jsonl" NUMBERED="$SCOPE/numbered.patch" \
+      CHANGED="$SCOPE/changed.txt" OUT_OF_SCOPE="$SCOPE/out_of_scope.md" HEAD_SHA="$SCOPE_HEAD" \
+      bash "${SCRIPT_DIR}/validate-findings.sh" >/dev/null )
+}
+
+cat > "$SCOPE/findings.jsonl" <<'JSON'
+{"file": "changed.py", "line": 21, "body": "in-PR finding"}
+{"file": "./caller.py", "line": 30, "body": "<!-- marker -->\nCaller uses the old argument order."}
+JSON
+run_validate
+assert_eq "PR file stays inline" "changed.py" \
+  "$(python3 -c 'import json,sys; print(",".join(json.loads(l)["file"] for l in open(sys.argv[1]) if l.strip()))' "$SCOPE/findings.jsonl")"
+assert_eq "other file moves to summary" "yes" \
+  "$(grep -qF '`./caller.py:30` — Caller uses the old argument order.' "$SCOPE/out_of_scope.md" && echo yes || echo no)"
+
+echo '{"file": "changed.py", "line": 21, "body": "in-PR finding"}' > "$SCOPE/findings.jsonl"
+run_validate
+assert_eq "no summary file when every finding is in the PR" "no" \
+  "$([ -e "$SCOPE/out_of_scope.md" ] && echo yes || echo no)"
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]

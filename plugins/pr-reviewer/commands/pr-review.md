@@ -413,7 +413,7 @@ Read /tmp/pr_full_diff_numbered.patch then /tmp/pr_context.txt (and the EXISTING
 
 ```
 For each finding output exactly:
-FILE: <path>
+FILE: <path — must be a file in the diff; if the problem is in another file, use the changed line that causes it>
 LINE: <the number printed left of the `|` on the flagged line in /tmp/pr_full_diff_numbered.patch — copied verbatim, never computed, never the diff's own line position, never larger than the file>
 SEVERITY: CRITICAL | WARNING | SUGGESTION
 ISSUE: <one sentence>
@@ -486,6 +486,7 @@ In **one assistant turn**, emit one parallel sub-agent invocation per selected r
 - `BASE_SHA` and `HEAD_SHA`
 - The PR title and description (from the platform metadata fetched in step 2)
 - A file-reading constraint: *"When you need full file context, read only the enclosing function/class (±60 lines around each changed hunk). Do not read any file in its entirety if it exceeds 400 lines — use `Bash(sed -n '<start>,<end>p' <file>)` scoped to the changed region instead. Read at most 3 files beyond the diff."*
+- A file-scope rule: *"Only comment on files in this PR (`/tmp/pr_changed_files.txt`). Other files are context only — if the change breaks another file, put the comment on the changed line and name the other file in the text."*
 
 > **Pass-by-value vs path:** if `DIFF_LINES ≤ 300`, paste the contents of `/tmp/pr_full_diff_numbered.patch` **inline** in each prompt (cheaper than each sub-agent re-opening a shared file) — inline the *numbered* diff, not the raw one, so the line numbers travel with it; if `DIFF_LINES > 300`, pass the path `/tmp/pr_full_diff_numbered.patch`.
 
@@ -571,7 +572,7 @@ source /tmp/pr_state.env
 
 | Script | Purpose |
 |---|---|
-| `validate-findings.sh` | Drop or re-anchor findings whose `line` is past EOF or unlocatable in `/tmp/pr_full_diff_numbered.patch` / `HEAD` |
+| `validate-findings.sh` | Move findings on files not in `/tmp/pr_changed_files.txt` to `/tmp/pr_out_of_scope.md` (added to the summary by the post scripts); drop or re-anchor findings whose `line` is past EOF or unlocatable in `/tmp/pr_full_diff_numbered.patch` / `HEAD` |
 | `assign-fids.sh` | `fid = sha1(path\|normalised on-disk snippet\|occurrence-index)[:12]` for every finding missing `fid` |
 | `reconcile-prior-findings.sh` | Compare current vs `/tmp/pr_prior_findings.jsonl` **by `fid`** → `fixed` / `carried_over` / `reopened` / `new`; line±5 dedup against open threads; writes `/tmp/pr_rereview_delta.md` in re-review mode |
 
@@ -586,6 +587,8 @@ source /tmp/pr_state.env
 A `fixed` candidate that fails Gate A or Gate B stays `carried_over` instead — the finder simply didn't reproduce it this pass, which is not evidence the underlying code changed. This is a mechanical check, not an LLM judgment call: `reconcile-prior-findings.sh` performs it directly (same-sha comparison for Gate A, a deterministic re-hash of the file's current lines for Gate B).
 
 Prepend `/tmp/pr_rereview_delta.md` into the report body when present. In **initial mode** the reconcile script treats every finding as New. Keep the summary body's `file:NN` references in sync with the validated JSONL.
+
+If `/tmp/pr_out_of_scope.md` exists, remove every finding it lists from `/tmp/pr_thread_body.md` (findings sections, counts, and verdict reasoning). The post script adds that file to the summary as *Related code outside this PR*, so leaving them in would list each one twice.
 
 A finding whose line cannot be validated must not appear with a made-up number — the validate script drops those.
 

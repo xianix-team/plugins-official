@@ -42,7 +42,8 @@ rm -f /tmp/pr_reconcile.json /tmp/pr_external_reconcile.json /tmp/pr_inline_find
       /tmp/pr_thread_body.md /tmp/pr_rereview_delta.md /tmp/pr_incremental_diff.patch \
       /tmp/pr_inline_failures.log /tmp/pr_resolved.log /tmp/pr_reopened.log \
       /tmp/pr_external_replies.log /tmp/pr_findings_validation.log /tmp/pr_verify.env \
-      /tmp/pr_noop_reply_payload.json /tmp/pr_noop_body.md
+      /tmp/pr_noop_reply_payload.json /tmp/pr_noop_body.md \
+      /tmp/pr_out_of_scope.md
 
 # --- 0. Resolve PLATFORM from origin (authoritative). Never default to github. ---
 REMOTE_URL=$(git remote get-url origin 2>/dev/null || echo "")

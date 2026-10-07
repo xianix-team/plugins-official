@@ -12,6 +12,7 @@
 #   /tmp/pr_state.env              — PLATFORM, PR_NUMBER, HEAD_SHA (optional)
 #   /tmp/pr_thread_body.md         — compiled report (fallback: /tmp/pr_review_body.md, /tmp/pr_review_summary.md)
 #   /tmp/pr_inline_findings.jsonl  — one JSON object per finding
+#   /tmp/pr_out_of_scope.md        — optional; added to the summary (from validate-findings.sh)
 #   VERDICT, REVIEW_MODE           — env vars
 #   gh CLI authenticated
 #   Optional: /tmp/pr_reconcile.json (fixed[]/carried_over[]/reopened[]/new[]), /tmp/pr_external_reconcile.json
@@ -64,6 +65,11 @@ if [ ! -f /tmp/pr_inline_findings.jsonl ] && [ -f /tmp/pr_findings.jsonl ]; then
   cp /tmp/pr_findings.jsonl /tmp/pr_inline_findings.jsonl
 fi
 [ -f /tmp/pr_thread_body.md ] || { echo "ERROR: /tmp/pr_thread_body.md missing" >&2; exit 1; }
+# Add findings on files outside this PR (from validate-findings.sh) to the summary, once.
+if [ -s /tmp/pr_out_of_scope.md ] && ! grep -q 'pr-reviewer:out-of-scope' /tmp/pr_thread_body.md; then
+  printf '\n\n' >> /tmp/pr_thread_body.md
+  cat /tmp/pr_out_of_scope.md >> /tmp/pr_thread_body.md
+fi
 touch /tmp/pr_inline_findings.jsonl
 
 # Normalize pretty-printed / array / concatenated JSON into one-object-per-line JSONL

@@ -11,6 +11,7 @@
 #   /tmp/pr_azure.env              — from starting-comment / parse step (API_BASE, AZURE_REPO, PR_ID, …)
 #   /tmp/pr_thread_body.md         — compiled report (fallback: /tmp/pr_review_summary.md)
 #   /tmp/pr_inline_findings.jsonl  — one JSON object per finding (fallback: /tmp/pr_findings.jsonl)
+#   /tmp/pr_out_of_scope.md        — optional; added to the summary (from validate-findings.sh)
 #   VERDICT, REVIEW_MODE           — env vars
 #   AZURE_DEVOPS_TOKEN             — required
 #
@@ -57,6 +58,11 @@ if [ ! -f /tmp/pr_inline_findings.jsonl ] && [ -f /tmp/pr_findings.jsonl ]; then
   cp /tmp/pr_findings.jsonl /tmp/pr_inline_findings.jsonl
 fi
 [ -f /tmp/pr_thread_body.md ] || { echo "ERROR: /tmp/pr_thread_body.md missing" >&2; exit 1; }
+# Add findings on files outside this PR (from validate-findings.sh) to the summary, once.
+if [ -s /tmp/pr_out_of_scope.md ] && ! grep -q 'pr-reviewer:out-of-scope' /tmp/pr_thread_body.md; then
+  printf '\n\n' >> /tmp/pr_thread_body.md
+  cat /tmp/pr_out_of_scope.md >> /tmp/pr_thread_body.md
+fi
 touch /tmp/pr_inline_findings.jsonl
 # Normalize pretty-printed / array / concatenated JSON into one-object-per-line JSONL
 python3 - <<'PY'
@@ -349,6 +355,14 @@ while IFS= read -r line; do
   [ -z "$line" ] && continue
   INLINE_TOTAL=$((INLINE_TOTAL + 1))
   echo "$line" > /tmp/pr_inline_finding.json
+  # Safety net: Azure DevOps accepts a thread on any file, so never post on a file
+  # this PR doesn't change (validate-findings.sh should already have moved these).
+  F_PATH=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print((d.get("file") or d.get("path") or "").strip().removeprefix("./").lstrip("/"))' /tmp/pr_inline_finding.json 2>/dev/null || true)
+  if [ -s /tmp/pr_changed_files.txt ] && [ -n "$F_PATH" ] && ! grep -qxF "$F_PATH" /tmp/pr_changed_files.txt; then
+    echo "WARN: skipped inline comment on ${F_PATH} — not a file in this PR" >&2
+    INLINE_TOTAL=$((INLINE_TOTAL - 1))
+    continue
+  fi
   if ! HEAD_SHA=$(git rev-parse HEAD) python3 - <<'PY' > /tmp/pr_thread_payload.json 2>>/tmp/pr_inline_failures.log
 import json, os
 f = json.load(open('/tmp/pr_inline_finding.json'))

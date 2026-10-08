@@ -65,6 +65,7 @@ Reviewed [N] new commit(s) since the last review (`[prior sha]`..`[current sha]`
 > Non-blocking but important — strongly recommended before merge
 
 - [ ] `path/to/file.<ext>:87` — [Issue description with suggested fix]
+  **Rule:** R2 — Controllers must not call the database   ← only for findings that break a repo rule (any section)
 
 *(If none: "No warnings found.")*
 
@@ -90,6 +91,11 @@ Reviewed [N] new commit(s) since the last review (`[prior sha]`..`[current sha]`
 
 #### Performance
 [Summary from performance-reviewer: bottlenecks, complexity concerns]
+
+#### Repo Rules
+[Loaded from REVIEW_RULES.md (N lines) | Not found — default checks only]
+[If REVIEW_RULES_TRUNCATED=true: "⚠️ Only the first N lines were used"]
+[If REVIEW_RULES_CHANGED_IN_PR=true: "ℹ️ This PR edits REVIEW_RULES.md — the base branch version was used"]
 
 ---
 

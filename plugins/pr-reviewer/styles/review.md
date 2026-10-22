@@ -36,22 +36,29 @@ Every finding must follow this structure:
 
   **Why:** One sentence explaining the problem or risk.
 
+  <details>
+  <summary>Suggested fix</summary>
+
   **Fix:**
   ```language
   // concrete corrected code
   ```
+
+  </details>
 ```
 
 - File path is always relative to the repo root
 - Line number is always included (`:LINE`)
 - The fix block always uses a fenced code block with the correct language tag
 - If a fix is not a code change (e.g. a config or process issue), use plain text after **Fix:**
+- Keep the issue title and **Why** visible. Put the fix text, code example, or follow-up prompt inside the collapsed section.
+- Keep a blank line after `</summary>` and before `</details>` so Markdown inside the section renders.
 
 ---
 
 ## GitHub Suggestion Blocks
 
-For findings with an exact, drop-in code fix, add a native suggestion block immediately after the `**Fix:**` block. The review lead carries this through to the GitHub PR inline comment as a native "Apply suggestion" / "Commit suggestion" button. Azure DevOps ignores these — there is no equivalent API mechanism.
+For findings with an exact, drop-in code fix, add a native suggestion block after `</details>`. Keep it outside the collapsed section so GitHub can render its "Apply suggestion" / "Commit suggestion" button. Azure DevOps ignores these — there is no equivalent API mechanism.
 
 Format for a **single-line replacement** (replaces only the flagged line):
 

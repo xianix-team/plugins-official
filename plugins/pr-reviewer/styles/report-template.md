@@ -49,6 +49,10 @@ Reviewed [N] new commit(s) since the last review (`[prior sha]`..`[current sha]`
 > Blocking issues that must be resolved before merge
 
 - [ ] `path/to/file.<ext>:42` — [Issue description]
+
+  <details>
+  <summary>Suggested fix</summary>
+
   ```
   // Current (problematic)
   [problematic code in the language of the PR]
@@ -56,6 +60,8 @@ Reviewed [N] new commit(s) since the last review (`[prior sha]`..`[current sha]`
   // Fix
   [corrected code in the language of the PR]
   ```
+
+  </details>
 
 *(If none: "No critical issues found.")*
 

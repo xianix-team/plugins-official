@@ -547,6 +547,7 @@ Aggregate all findings into the structured report format defined in `styles/repo
 
 **Guidelines:**
 - Reference specific file paths and line numbers for every finding
+- Number the final Critical Issues `C1`, `C2`, …, Warnings `W1`, `W2`, …, and Suggestions `S1`, `S2`, … in report order. Restart each type at 1 for each review. Put the same label at the start of each matching inline `body` in `/tmp/pr_inline_findings.jsonl`. Label only findings that survive validation and deduplication; do not change their hidden `fid` values. On re-review, label the complete current report, then post only New inline findings with their matching report labels.
 - Include both the problematic code snippet and a concrete fix example
 - Do not flag non-issues — only real problems and genuine improvements
 - Tag findings that exist in the base branch (not introduced by this PR) as **pre-existing** — they may warrant a WARNING but must not alone drive a `REQUEST CHANGES` verdict
@@ -586,6 +587,8 @@ source /tmp/pr_state.env
 A `fixed` candidate that fails Gate A or Gate B stays `carried_over` instead — the finder simply didn't reproduce it this pass, which is not evidence the underlying code changed. This is a mechanical check, not an LLM judgment call: `reconcile-prior-findings.sh` performs it directly (same-sha comparison for Gate A, a deterministic re-hash of the file's current lines for Gate B).
 
 Prepend `/tmp/pr_rereview_delta.md` into the report body when present. In **initial mode** the reconcile script treats every finding as New. Keep the summary body's `file:NN` references in sync with the validated JSONL.
+
+After validation and reconciliation, update the report and each surviving inline `body` with the matching visible `C`/`W`/`S` label. Remove dropped findings from the report and renumber its remaining findings. For re-reviews, retain labels for carried-over findings in the report, but post inline comments only for New findings. The visible labels may change on a later review; `fid` remains the stable internal identity.
 
 A finding whose line cannot be validated must not appear with a made-up number — the validate script drops those.
 

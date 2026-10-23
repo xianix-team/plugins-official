@@ -29,10 +29,10 @@ Use these labels consistently across all agents:
 
 ## Finding Format
 
-Every finding must follow this structure:
+Every compiled finding must follow this structure (the lead assigns labels after merging agent findings):
 
 ```
-- `path/to/file.ext:LINE` — Short title of the issue
+- **C1** `path/to/file.ext:LINE` — Short title of the critical issue
 
   **Why:** One sentence explaining the problem or risk.
 
@@ -44,6 +44,8 @@ Every finding must follow this structure:
 
 - File path is always relative to the repo root
 - Line number is always included (`:LINE`)
+- In the compiled report, number Critical Issues `C1`, `C2`, …; Warnings `W1`, `W2`, …; and Suggestions `S1`, `S2`, …. Start each type at 1 for every review. Reviewer agents return unnumbered findings.
+- Put the same visible label at the start of the matching inline comment. Each label must identify one finding within that review. Keep the hidden `fid` unchanged for matching findings across reviews.
 - The fix block always uses a fenced code block with the correct language tag
 - If a fix is not a code change (e.g. a config or process issue), use plain text after **Fix:**
 

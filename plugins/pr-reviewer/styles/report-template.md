@@ -48,7 +48,7 @@ Reviewed [N] new commit(s) since the last review (`[prior sha]`..`[current sha]`
 ### Critical Issues (Must Fix)
 > Blocking issues that must be resolved before merge
 
-- [ ] `path/to/file.<ext>:42` — [Issue description]
+- [ ] **C1** `path/to/file.<ext>:42` — [Issue description]
   ```
   // Current (problematic)
   [problematic code in the language of the PR]
@@ -64,7 +64,7 @@ Reviewed [N] new commit(s) since the last review (`[prior sha]`..`[current sha]`
 ### Warnings (Should Fix)
 > Non-blocking but important — strongly recommended before merge
 
-- [ ] `path/to/file.<ext>:87` — [Issue description with suggested fix]
+- [ ] **W1** `path/to/file.<ext>:87` — [Issue description with suggested fix]
 
 *(If none: "No warnings found.")*
 
@@ -73,7 +73,7 @@ Reviewed [N] new commit(s) since the last review (`[prior sha]`..`[current sha]`
 ### Suggestions (Consider Improving)
 > Nice-to-have improvements — address in follow-up if not now
 
-- [ ] `path/to/file.<ext>:120` — [Suggestion]
+- [ ] **S1** `path/to/file.<ext>:120` — [Suggestion]
 
 ---
 

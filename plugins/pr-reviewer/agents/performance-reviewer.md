@@ -110,7 +110,7 @@ If no performance issues are found, explicitly state: "No performance concerns i
 
 ## GitHub Suggestion Blocks
 
-When the fix is a concrete drop-in replacement (sequential async calls → `Promise.all`/`Task.WhenAll`/`asyncio.gather`, `SELECT *` → explicit columns, string concat in a loop → array join, regex literal moved outside a loop), append after the `**Fix:**` block:
+When the fix is a concrete drop-in replacement (sequential async calls → `Promise.all`/`Task.WhenAll`/`asyncio.gather`, `SELECT *` → explicit columns, string concat in a loop → array join, regex literal moved outside a loop), append this block after `**Fix:**`. The review lead wraps the fix and suggestion in `<details><summary>Suggested fix</summary>` before posting:
 
     <!-- suggestion: line NN -->          (or: lines NN-MM for a consecutive block)
     ```suggestion

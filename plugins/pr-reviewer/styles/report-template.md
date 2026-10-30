@@ -70,7 +70,14 @@ Reviewed [N] new commit(s) since the last review (`[prior sha]`..`[current sha]`
 ### Warnings (Should Fix)
 > Non-blocking but important — strongly recommended before merge
 
-- [ ] `path/to/file.<ext>:87` — [Issue description with suggested fix]
+- [ ] `path/to/file.<ext>:87` — [Issue description]
+
+  <details>
+  <summary>Suggested fix</summary>
+
+  [Fix text or code example]
+
+  </details>
 
 *(If none: "No warnings found.")*
 
@@ -80,6 +87,13 @@ Reviewed [N] new commit(s) since the last review (`[prior sha]`..`[current sha]`
 > Nice-to-have improvements — address in follow-up if not now
 
 - [ ] `path/to/file.<ext>:120` — [Suggestion]
+
+  <details>
+  <summary>Suggested fix</summary>
+
+  [Fix text or code example]
+
+  </details>
 
 ---
 

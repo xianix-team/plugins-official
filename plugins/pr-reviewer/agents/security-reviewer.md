@@ -126,7 +126,7 @@ If no security issues are found, explicitly state: "No security vulnerabilities 
 
 ## GitHub Suggestion Blocks
 
-When the fix is a concrete drop-in replacement (hardcoded secret → env var lookup, MD5/SHA1 → bcrypt/argon2, SQL concatenation → parameterized query, wildcard CORS → explicit allowlist), append after the `**Fix:**` block:
+When the fix is a concrete drop-in replacement (hardcoded secret → env var lookup, MD5/SHA1 → bcrypt/argon2, SQL concatenation → parameterized query, wildcard CORS → explicit allowlist), append this block after `**Fix:**`. The review lead wraps the fix and suggestion in `<details><summary>Suggested fix</summary>` before posting:
 
     <!-- suggestion: line NN -->          (or: lines NN-MM for a consecutive block)
     ```suggestion

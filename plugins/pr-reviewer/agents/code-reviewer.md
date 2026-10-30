@@ -85,7 +85,7 @@ Always include at least one positive observation if the code is generally good q
 
 ## GitHub Suggestion Blocks
 
-When the fix is a concrete drop-in replacement (wrong identifier, missing null guard, unused import, dead code, magic number → named constant), append after the `**Fix:**` block:
+When the fix is a concrete drop-in replacement (wrong identifier, missing null guard, unused import, dead code, magic number → named constant), append this block after `**Fix:**`. The review lead wraps the fix and suggestion in `<details><summary>Suggested fix</summary>` before posting:
 
     <!-- suggestion: line NN -->          (or: lines NN-MM for a consecutive block)
     ```suggestion

@@ -128,7 +128,7 @@ Use the language detected in the PR for all code snippets. Do not default to Typ
 
 ## GitHub Suggestion Blocks
 
-When the fix is a concrete drop-in replacement (weak assertion → specific one, floating promise fixed with `await`, brittle hardcoded value → stable fixture, cleanup added in `afterEach`), append after the `**Fix:**` block:
+When the fix is a concrete drop-in replacement (weak assertion → specific one, floating promise fixed with `await`, brittle hardcoded value → stable fixture, cleanup added in `afterEach`), append this block after `**Fix:**`. The review lead wraps the fix and suggestion in `<details><summary>Suggested fix</summary>` before posting:
 
     <!-- suggestion: line NN -->          (or: lines NN-MM for a consecutive block)
     ```suggestion

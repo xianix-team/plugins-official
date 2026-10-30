@@ -58,7 +58,7 @@ Every finding must follow this structure:
 
 ## GitHub Suggestion Blocks
 
-For findings with an exact, drop-in code fix, add a native suggestion block after `</details>`. Keep it outside the collapsed section so GitHub can render its "Apply suggestion" / "Commit suggestion" button. Azure DevOps ignores these — there is no equivalent API mechanism.
+For findings with an exact, drop-in code fix, put the native suggestion block inside the collapsed section, before `</details>`. GitHub renders its "Apply suggestion" button when the section is expanded. Azure DevOps ignores these — there is no equivalent API mechanism.
 
 Format for a **single-line replacement** (replaces only the flagged line):
 

@@ -548,7 +548,7 @@ Aggregate all findings into the structured report format defined in `styles/repo
 **Guidelines:**
 - Reference specific file paths and line numbers for every finding
 - Include both the problematic code snippet and a concrete fix example
-- Keep each finding's title and risk visible. Wrap its fix text, code example, or follow-up prompt in `<details><summary>Suggested fix</summary>` with blank lines around the Markdown content. Leave native GitHub `suggestion` fences outside the collapsed section so the apply button remains usable.
+- Keep each finding's title and risk visible. Wrap its fix text, code example, follow-up prompt, and any native GitHub `suggestion` fence in `<details><summary>Suggested fix</summary>` with blank lines around the Markdown content.
 - Do not flag non-issues — only real problems and genuine improvements
 - Tag findings that exist in the base branch (not introduced by this PR) as **pre-existing** — they may warrant a WARNING but must not alone drive a `REQUEST CHANGES` verdict
 - Consider the PR's stated intent when evaluating trade-offs
@@ -730,7 +730,7 @@ For each finding that contains a suggestion block:
    - `<!-- suggestion: line NN -->` → single-line: `suggestion_start_line = NN`, `suggestion_end_line = NN`
    - `<!-- suggestion: lines NN-MM -->` → multi-line: `suggestion_start_line = NN`, `suggestion_end_line = MM`
 2. Include those values as `suggestion_start_line` / `suggestion_end_line` in the JSONL entry — the posting loop uses them to set `start_line` in the GitHub API call for multi-line suggestions.
-3. Apply the collapsible fix format from `styles/review.md` to the inline finding body. Keep the HTML comment and ` ```suggestion ` block verbatim, outside `</details>`, in the JSONL `body` field. GitHub renders the ` ```suggestion ` block as the "Commit suggestion" button automatically.
+3. Apply the collapsible fix format from `styles/review.md` to the inline finding body. Keep the HTML comment and ` ```suggestion ` block verbatim, inside `<details>` and before `</details>`, in the JSONL `body` field. GitHub renders the ` ```suggestion ` block as the "Apply suggestion" button when expanded.
 
 If a finding has no ` ```suggestion ` block, omit `suggestion_start_line` and `suggestion_end_line`. Apply the same collapsible fix format to its inline body.
 

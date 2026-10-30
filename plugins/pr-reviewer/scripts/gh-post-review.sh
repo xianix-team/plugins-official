@@ -271,18 +271,28 @@ while IFS= read -r line; do
 
   # One python call extracts every field AND writes the body file
   eval "$(printf '%s' "$line" | python3 -c "
-import sys, json, shlex
+import sys, json, shlex, re
 d = json.load(sys.stdin)
-open('/tmp/pr_inline_body.md', 'w').write(d.get('body') or d.get('comment') or '')
+body = d.get('body') or d.get('comment') or ''
+open('/tmp/pr_inline_body.md', 'w').write(body)
 print('F_PATH=' + shlex.quote(str(d.get('file') or d.get('path') or '')))
 print('F_LINE=' + shlex.quote(str(d.get('line') or d.get('line_number') or '')))
 print('F_FID=' + shlex.quote(str(d.get('fid', ''))))
 print('F_SUGGEST_START=' + shlex.quote(str(d.get('suggestion_start_line', ''))))
+expected = (str(d.get('suggestion_start_line') or d.get('line') or d.get('line_number') or ''), str(d.get('line') or d.get('line_number') or ''))
+ranges = [(a, b or a) for a, b in re.findall(r'<!-- suggestion: lines? (\d+)(?:-(\d+))? -->', body)]
+print('F_SUGGEST_MISMATCH=' + shlex.quote(str(any(r != expected for r in ranges))))
 ")"
 
   if [ -z "$F_PATH" ] || [ -z "$F_LINE" ]; then
     INLINE_FAIL=$((INLINE_FAIL + 1))
     { echo "---"; echo "finding: $line"; echo "missing file/line"; } >> /tmp/pr_inline_failures.log
+    continue
+  fi
+
+  if [ "$F_SUGGEST_MISMATCH" = True ]; then
+    INLINE_FAIL=$((INLINE_FAIL + 1))
+    { echo "---"; echo "finding: $line"; echo "suggestion range differs from comment anchor"; } >> /tmp/pr_inline_failures.log
     continue
   fi
 

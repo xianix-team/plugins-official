@@ -376,7 +376,7 @@ Run **exactly one** of the two paths below, chosen by `REVIEW_TIER` from step 5.
 
 - A reminder: *"Do not re-fetch git data; the annotated diff at /tmp/pr_full_diff_numbered.patch is authoritative. Return findings only."*
 - A line-number constraint: *"Every `path/to/file.ext:NN` reference must be the POST-CHANGE file line number, and you must READ it — never compute it. In /tmp/pr_full_diff_numbered.patch every context and added (`+`) line is prefixed with `<lineno> |`; `NN` is exactly that number for the flagged line. Copy it verbatim. Never do hunk-header arithmetic, never report the diff's own line position, and never emit a number larger than the file. Findings on deleted (`-`) lines (marked `- |`) have no post-change line — reference the nearest surviving numbered line instead."*
-- A suggestion constraint: *"For findings where the fix is a concrete, drop-in replacement (wrong identifier, missing null guard, insecure call swapped for safe equivalent, etc.), add a native GitHub suggestion block immediately after the `**Fix:**` block. Prefix it with an HTML comment that carries the line range, then a ` ```suggestion ` fenced block containing the verbatim replacement lines with indentation preserved. Example for a single-line fix: `<!-- suggestion: line NN -->` on its own line, then ` ```suggestion `, then the replacement line, then ` ``` `. For multi-line: `<!-- suggestion: lines NN-MM -->`. Do not include this for architectural improvements or fixes requiring author judgment."*
+- A suggestion constraint: *"For findings where the fix is a concrete, drop-in replacement (wrong identifier, missing null guard, insecure call swapped for safe equivalent, etc.), add a native GitHub suggestion block immediately after the `**Fix:**` block. Prefix it with an HTML comment that carries the line range, then a ` ```suggestion ` fenced block containing the verbatim replacement lines with indentation preserved. Example for a single-line fix: `<!-- suggestion: line NN -->` on its own line, then ` ```suggestion `, then the replacement line, then ` ``` `. For multi-line: `<!-- suggestion: lines NN-MM -->`. You may offer multiple alternative replacements for the same line range, each with its own marker and suggestion fence. For fixes on different lines, return separate findings so the lead can post separate inline comments. Do not include suggestions for architectural improvements or fixes requiring author judgment. The review lead will wrap each alternative in its own `<details>` section before posting."*
 - An open-threads constraint (include only when `/tmp/pr_open_threads.jsonl` is non-empty): *"Also read /tmp/pr_open_threads.jsonl — existing open inline review comments on this PR (humans, bots, prior plugin runs). Do not re-report issues already substantially covered by an open thread on the same file (same concern, or within ±5 lines of the same area). Prefer leaving those to the existing thread over inventing a duplicate finding."*
 
 > **Diff size (used by both paths):**
@@ -549,6 +549,7 @@ Aggregate all findings into the structured report format defined in `styles/repo
 - Reference specific file paths and line numbers for every finding
 - Number the final Critical Issues `C1`, `C2`, …, Warnings `W1`, `W2`, …, and Suggestions `S1`, `S2`, … in report order. Restart each type at 1 for each review. Put the same label at the start of each matching inline `body` in `/tmp/pr_inline_findings.jsonl`. Label only findings that survive validation and deduplication; do not change their hidden `fid` values. On re-review, label the complete current report, then post only New inline findings with their matching report labels.
 - Include both the problematic code snippet and a concrete fix example
+- Keep each finding's title and risk visible. Wrap its fix text, code example, follow-up prompt, and any native GitHub `suggestion` fence in `<details><summary>Suggested fix</summary>` with blank lines around the Markdown content. For alternative fixes to the same line range, use one collapsed section per alternative and number the summaries.
 - Do not flag non-issues — only real problems and genuine improvements
 - Tag findings that exist in the base branch (not introduced by this PR) as **pre-existing** — they may warrant a WARNING but must not alone drive a `REQUEST CHANGES` verdict
 - Consider the PR's stated intent when evaluating trade-offs
@@ -726,15 +727,15 @@ In most cases the number is already correct and validated — it was read from t
 
 Sub-agents emit ` ```suggestion ` blocks directly in their finding output (prefixed with an `<!-- suggestion: line NN -->` or `<!-- suggestion: lines NN-MM -->` HTML comment). Include the finding body **verbatim** in the JSONL — the ` ```suggestion ` block is already in the right format for GitHub and no text transformation is needed.
 
-For each finding that contains a suggestion block:
+For each finding that contains one or more suggestion blocks:
 
-1. Parse the line range from the HTML comment immediately before the ` ```suggestion ` fence:
+1. Parse the line range from the HTML comment immediately before each ` ```suggestion ` fence. All ranges in one comment must match:
    - `<!-- suggestion: line NN -->` → single-line: `suggestion_start_line = NN`, `suggestion_end_line = NN`
    - `<!-- suggestion: lines NN-MM -->` → multi-line: `suggestion_start_line = NN`, `suggestion_end_line = MM`
-2. Include those values as `suggestion_start_line` / `suggestion_end_line` in the JSONL entry — the posting loop uses them to set `start_line` in the GitHub API call for multi-line suggestions.
-3. Copy the **entire finding body verbatim** (including the HTML comment and the ` ```suggestion ` block) into the JSONL `body` field. **Do not strip or transform it.** GitHub renders the ` ```suggestion ` block as the "Commit suggestion" button automatically.
+2. Include the shared range as `suggestion_start_line` / `suggestion_end_line` in the JSONL entry — the posting loop uses it to anchor the entire comment. If proposed fixes target different lines, create separate JSONL findings/comments; changing a later HTML marker does not retarget its GitHub suggestion.
+3. Apply the collapsible fix format from `styles/review.md` to the inline finding body. For alternatives, put each fix, HTML marker, and ` ```suggestion ` fence in its own `<details>` section, with numbered summaries. Keep the fences at column 0 to preserve replacement indentation. GitHub renders each fence as a "Suggested change" when expanded.
 
-If a finding has no ` ```suggestion ` block, omit `suggestion_start_line` and `suggestion_end_line`. The body is still copied verbatim.
+If a finding has no ` ```suggestion ` block, omit `suggestion_start_line` and `suggestion_end_line`. Apply the same collapsible fix format to its inline body.
 
 The reviewers were already instructed (step 6) to return post-change line numbers, but verify here — a wrong line number is the single most common cause of silently dropped inline comments.
 

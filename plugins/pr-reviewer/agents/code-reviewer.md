@@ -93,3 +93,5 @@ When the fix is a concrete drop-in replacement (wrong identifier, missing null g
     ```
 
 `NN`/`MM` are post-change file line numbers; the HTML comment lets the review lead set `start_line`/`line` in the GitHub API call and renders invisibly. Skip the block when the fix needs a design decision by the author, spans non-consecutive lines, or is architectural ("extract this into a service").
+
+For alternative replacements of the same line range, provide each option with its own `**Fix:**`, line marker, and `suggestion` fence. The lead makes each option a separate collapsed section in one comment. For changes to different lines, return separate findings so GitHub can anchor each suggestion to its own line.

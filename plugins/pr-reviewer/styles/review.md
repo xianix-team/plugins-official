@@ -31,7 +31,7 @@ Use these labels consistently across all agents:
 
 Every finding must follow this structure:
 
-```
+````markdown
 - `path/to/file.ext:LINE` — Short title of the issue
 
   **Why:** One sentence explaining the problem or risk.
@@ -45,7 +45,7 @@ Every finding must follow this structure:
   ```
 
   </details>
-```
+````
 
 - File path is always relative to the repo root
 - Line number is always included (`:LINE`)
@@ -53,6 +53,7 @@ Every finding must follow this structure:
 - If a fix is not a code change (e.g. a config or process issue), use plain text after **Fix:**
 - Keep the issue title and **Why** visible. Put the fix text, code example, or follow-up prompt inside the collapsed section.
 - Keep a blank line after `</summary>` and before `</details>` so Markdown inside the section renders.
+- If a finding offers alternative replacements for the same line range, use a separate `<details>` section and `suggestion` fence for each option. Name the summaries `Suggested fix 1 of 2`, `Suggested fix 2 of 2`, and so on.
 
 ---
 
@@ -74,11 +75,11 @@ Format for a **multi-line replacement** (replaces a consecutive block of lines):
     [exact verbatim lines replacing NN through MM, indentation preserved]
     ```
 
-The HTML comment carries the line range (the posting loop parses it to set `start_line`/`line` in the GitHub API call); the ` ```suggestion ` fence is what GitHub renders as the button. This format must stay in sync with the agent files and `commands/pr-review.md`.
+The HTML comment carries the line range (the posting loop parses it to set `start_line`/`line` in the GitHub API call); the ` ```suggestion ` fence is what GitHub renders as the button. In one comment, every native suggestion must target the same anchored line range. For fixes on different lines, post separate inline comments; the HTML marker alone cannot retarget a suggestion. This format must stay in sync with the agent files and `commands/pr-review.md`.
 
 **Include** when the fix is a concrete, unambiguous swap: wrong identifier, missing null guard, insecure function replaced by its safe equivalent, N+1 query replaced by a batched call, sequential async calls made parallel, etc.
 
-**Do not include** when: the fix is architectural or design-level, requires author judgment, involves non-consecutive lines, or spans more than ~10 lines.
+**Do not include** when: the fix is architectural or design-level, requires author judgment, or spans more than ~10 lines. Use separate comments for fixes on non-consecutive lines.
 
 The suggestion code is applied **verbatim** by GitHub — indentation must exactly match the file (tabs or spaces, correct nesting level).
 

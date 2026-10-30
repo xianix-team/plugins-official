@@ -134,3 +134,5 @@ When the fix is a concrete drop-in replacement (hardcoded secret → env var loo
     ```
 
 `NN`/`MM` are post-change file line numbers; the HTML comment lets the review lead set `start_line`/`line` in the GitHub API call and renders invisibly. Skip the block when the fix needs a new library/dependency, spans non-consecutive lines, is architectural (e.g. "add a rate-limiter middleware"), or requires the author's judgment on acceptable risk.
+
+For alternative replacements of the same line range, provide each option with its own `**Fix:**`, line marker, and `suggestion` fence. The lead makes each option a separate collapsed section in one comment. For changes to different lines, return separate findings so GitHub can anchor each suggestion to its own line.

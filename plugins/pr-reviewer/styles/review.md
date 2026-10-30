@@ -81,7 +81,7 @@ The HTML comment carries the line range (the posting loop parses it to set `star
 
 **Do not include** when: the fix is architectural or design-level, requires author judgment, or spans more than ~10 lines. Use separate comments for fixes on non-consecutive lines.
 
-The suggestion code is applied **verbatim** by GitHub — indentation must exactly match the file (tabs or spaces, correct nesting level).
+In inline comments, start `<details>`, the HTML marker, and the `suggestion` fence at column 0. GitHub applies suggestion code **verbatim**, so preserve the file's indentation inside the fence.
 
 ---
 

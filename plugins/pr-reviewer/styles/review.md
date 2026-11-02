@@ -29,10 +29,10 @@ Use these labels consistently across all agents:
 
 ## Finding Format
 
-Every finding must follow this structure:
+Every compiled finding must follow this structure (the lead assigns labels after merging agent findings):
 
 ````markdown
-- `path/to/file.ext:LINE` — Short title of the issue
+- **C1** `path/to/file.ext:LINE` — Short title of the critical issue
 
   **Why:** One sentence explaining the problem or risk.
 
@@ -49,6 +49,8 @@ Every finding must follow this structure:
 
 - File path is always relative to the repo root
 - Line number is always included (`:LINE`)
+- In the compiled report, use the stable visible labels from `/tmp/pr_visible_ids.json`. New findings get the next unused number for their severity. Reviewer agents return unnumbered findings.
+- Put the same visible label at the start of the matching inline comment. Keep both the label and hidden `fid` for matching findings across reviews, even when severity changes.
 - The fix block always uses a fenced code block with the correct language tag
 - If a fix is not a code change (e.g. a config or process issue), use plain text after **Fix:**
 - Keep the issue title and **Why** visible. Put the fix text, code example, or follow-up prompt inside the collapsed section.

@@ -99,6 +99,7 @@ for page in pages:
     threads += nodes or []
 
 pat = re.compile(r"<!--\s*pr-reviewer:v1\.2\s+kind=finding\s+fid=(\S+)\s+sha=(\S+)\s*-->")
+label_pat = re.compile(r"^\s*(?:\*\*)?([CWS]\d+)(?:\*\*)?(?=\s|[—:-]|$)")
 prior = open("/tmp/pr_prior_findings.jsonl", "w")
 open_threads = open("/tmp/pr_open_threads.jsonl", "w")
 for t in threads:
@@ -109,8 +110,10 @@ for t in threads:
     m = pat.search(body)
     is_plugin = bool(m)
     if m:
+        label = label_pat.match(body)
         prior.write(json.dumps({
             "fid": m.group(1),
+            "visible_id": label.group(1) if label else None,
             "file": t.get("path") or "",
             "line": t.get("line"),
             "status": "resolved" if t["isResolved"] else "open",

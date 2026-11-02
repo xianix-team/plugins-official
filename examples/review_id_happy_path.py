@@ -2,12 +2,7 @@
 
 
 def average_duration(durations):
-    durations = list(durations)
-    if not durations:
-        return 0
-    total = sum(durations)
-    return total / len(durations)
-
+    return sum(durations) / len(durations)
 
 def newest_event(events):
     return events[-1]

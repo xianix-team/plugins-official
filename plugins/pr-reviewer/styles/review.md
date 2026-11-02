@@ -49,8 +49,8 @@ Every compiled finding must follow this structure (the lead assigns labels after
 
 - File path is always relative to the repo root
 - Line number is always included (`:LINE`)
-- In the compiled report, number Critical Issues `C1`, `C2`, …; Warnings `W1`, `W2`, …; and Suggestions `S1`, `S2`, …. Start each type at 1 for every review. Reviewer agents return unnumbered findings.
-- Put the same visible label at the start of the matching inline comment. Each label must identify one finding within that review. Keep the hidden `fid` unchanged for matching findings across reviews.
+- In the compiled report, use the stable visible labels from `/tmp/pr_visible_ids.json`. New findings get the next unused number for their severity. Reviewer agents return unnumbered findings.
+- Put the same visible label at the start of the matching inline comment. Keep both the label and hidden `fid` for matching findings across reviews, even when severity changes.
 - The fix block always uses a fenced code block with the correct language tag
 - If a fix is not a code change (e.g. a config or process issue), use plain text after **Fix:**
 - Keep the issue title and **Why** visible. Put the fix text, code example, or follow-up prompt inside the collapsed section.

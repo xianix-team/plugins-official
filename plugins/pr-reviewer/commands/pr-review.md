@@ -547,7 +547,7 @@ Aggregate all findings into the structured report format defined in `styles/repo
 
 **Guidelines:**
 - Reference specific file paths and line numbers for every finding
-- Number the final Critical Issues `C1`, `C2`, …, Warnings `W1`, `W2`, …, and Suggestions `S1`, `S2`, … in report order. Restart each type at 1 for each review. Put the same label at the start of each matching inline `body` in `/tmp/pr_inline_findings.jsonl`. Label only findings that survive validation and deduplication; do not change their hidden `fid` values. On re-review, label the complete current report, then post only New inline findings with their matching report labels.
+- Give each validated finding a visible `C`/`W`/`S` label. Reuse its prior label on re-review, including when severity changes or a resolved finding reappears. Give new findings the next unused number for their severity. The script below assigns labels after deduplication; use its output in the final report.
 - Include both the problematic code snippet and a concrete fix example
 - Keep each finding's title and risk visible. Wrap its fix text, code example, follow-up prompt, and any native GitHub `suggestion` fence in `<details><summary>Suggested fix</summary>` with blank lines around the Markdown content. For alternative fixes to the same line range, use one collapsed section per alternative and number the summaries.
 - Do not flag non-issues — only real problems and genuine improvements
@@ -565,6 +565,7 @@ After writing `/tmp/pr_inline_findings.jsonl` (and the summary body), run these 
 bash "$CLAUDE_PLUGIN_ROOT/scripts/validate-findings.sh"        # re-anchor / drop bad lines FIRST
 bash "$CLAUDE_PLUGIN_ROOT/scripts/assign-fids.sh"              # fill missing fid from the now-correct line
 bash "$CLAUDE_PLUGIN_ROOT/scripts/reconcile-prior-findings.sh" # fid buckets + Gate A/B + dedup
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/assign-visible-ids.py"  # stable labels for report and new inline findings
 # shellcheck disable=SC1091
 source /tmp/pr_state.env
 ```
@@ -576,6 +577,7 @@ source /tmp/pr_state.env
 | `validate-findings.sh` | Drop or re-anchor findings whose `line` is past EOF or unlocatable in `/tmp/pr_full_diff_numbered.patch` / `HEAD` |
 | `assign-fids.sh` | `fid = sha1(path\|normalised on-disk snippet\|occurrence-index)[:12]` for every finding missing `fid` |
 | `reconcile-prior-findings.sh` | Compare current vs `/tmp/pr_prior_findings.jsonl` **by `fid`** → `fixed` / `carried_over` / `reopened` / `new`; line±5 dedup against open threads; writes `/tmp/pr_rereview_delta.md` in re-review mode |
+| `assign-visible-ids.py` | Reuse prior labels and assign the next unused label to new findings; writes `/tmp/pr_visible_ids.json` and labels new inline bodies |
 
 | Bucket (re-review) | Condition | Posting action |
 |---|---|---|
@@ -589,7 +591,7 @@ A `fixed` candidate that fails Gate A or Gate B stays `carried_over` instead —
 
 Prepend `/tmp/pr_rereview_delta.md` into the report body when present. In **initial mode** the reconcile script treats every finding as New. Keep the summary body's `file:NN` references in sync with the validated JSONL.
 
-After validation and reconciliation, update the report and each surviving inline `body` with the matching visible `C`/`W`/`S` label. Remove dropped findings from the report and renumber its remaining findings. For re-reviews, retain labels for carried-over findings in the report, but post inline comments only for New findings. The visible labels may change on a later review; `fid` remains the stable internal identity.
+After validation and reconciliation, use `/tmp/pr_visible_ids.json` and the `visible_id` fields in `/tmp/pr_reconcile.json` to update the report. Remove dropped findings from the report. Keep each prior finding's full label in the report, including fixed, carried-over, and reopened findings. Post inline comments only for New findings; their bodies already have the matching label. Never renumber a prior label.
 
 A finding whose line cannot be validated must not appear with a made-up number — the validate script drops those.
 

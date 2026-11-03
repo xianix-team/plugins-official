@@ -1,0 +1,10 @@
+Test: pr-reviewer regression suite
+Command: bash plugins/pr-reviewer/scripts/tests/run.sh
+Output:
+=== compute-fid.sh ===
+=== fixture repo ===
+=== assign-fids.sh mirrors compute-fid.sh exactly ===
+=== reconcile-prior-findings.sh classification ===
+
+Results: 15 passed, 0 failed
+Exit status: 0

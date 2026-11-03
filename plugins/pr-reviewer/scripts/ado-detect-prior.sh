@@ -35,10 +35,10 @@ fi
 
 # --- 1. Load API targets ---
 # shellcheck disable=SC1091
-[ -f /tmp/pr_azure.env ] && source /tmp/pr_azure.env
+[ -f ${PR_STATE_DIR:-/tmp}/pr_azure.env ] && source ${PR_STATE_DIR:-/tmp}/pr_azure.env
 PR_ID="${PR_ID:-${PR_NUMBER:-}}"
 [ -n "$PR_ID" ] && [ -n "${API_BASE:-}" ] && [ -n "${AZURE_REPO:-}" ] || {
-  echo "ERROR: detect prior review needs /tmp/pr_azure.env (API_BASE, AZURE_REPO, PR_ID)" >&2
+  echo "ERROR: detect prior review needs ${PR_STATE_DIR:-/tmp}/pr_azure.env (API_BASE, AZURE_REPO, PR_ID)" >&2
   echo "Run scripts/ado-start-comment.sh first (or parse the remote via lib-azure-remote.sh)." >&2
   exit 1
 }
@@ -47,7 +47,7 @@ echo "Detecting prior review on ${API_BASE}/_git/${AZURE_REPO}/pullrequest/${PR_
 echo "AZURE_DEVOPS_TOKEN=${AZURE_DEVOPS_TOKEN:+yes}"
 
 # --- 2. Paginated thread listing (follow x-ms-continuationtoken) ---
-: > /tmp/pr_threads_pages.jsonl
+: > ${PR_STATE_DIR:-/tmp}/pr_threads_pages.jsonl
 CONTINUATION=""
 PAGE=0
 while :; do
@@ -70,7 +70,7 @@ while :; do
         echo "If only dashed AZURE-DEVOPS-TOKEN exists: export AZURE_DEVOPS_TOKEN=\"\$(printenv AZURE-DEVOPS-TOKEN)\"" >&2
         ;;
       404)
-        echo "Check API_BASE / AZURE_REPO / PR_ID from /tmp/pr_azure.env" >&2
+        echo "Check API_BASE / AZURE_REPO / PR_ID from ${PR_STATE_DIR:-/tmp}/pr_azure.env" >&2
         ;;
     esac
     [ -n "$SNIP" ] && echo "Body snippet: ${SNIP}" >&2
@@ -87,8 +87,8 @@ while :; do
   fi
 
   # One JSON object per line for the merge step
-  tr -d '\n' < "$BODY_FILE" >> /tmp/pr_threads_pages.jsonl
-  printf '\n' >> /tmp/pr_threads_pages.jsonl
+  tr -d '\n' < "$BODY_FILE" >> ${PR_STATE_DIR:-/tmp}/pr_threads_pages.jsonl
+  printf '\n' >> ${PR_STATE_DIR:-/tmp}/pr_threads_pages.jsonl
   CONTINUATION=$(grep -i '^x-ms-continuationtoken:' "$HEADERS" | cut -d' ' -f2- | tr -d '\r' || true)
   rm -f "$HEADERS" "$BODY_FILE"
   [ -n "$CONTINUATION" ] || break
@@ -96,9 +96,10 @@ done
 
 # --- 3. Merge pages → /tmp/pr_threads.json ---
 python3 - <<'PY'
+import os
 import json, sys
 threads = []
-for line in open("/tmp/pr_threads_pages.jsonl"):
+for line in open(os.environ.get("PR_STATE_DIR", "/tmp") + "/pr_threads_pages.jsonl"):
     line = line.strip()
     if not line:
         continue
@@ -111,14 +112,15 @@ for line in open("/tmp/pr_threads_pages.jsonl"):
         print("ERROR: unexpected threads payload (missing 'value') — refuse to invent a parser", file=sys.stderr)
         sys.exit(1)
     threads.extend(data.get("value") or [])
-json.dump({"value": threads}, open("/tmp/pr_threads.json", "w"))
+json.dump({"value": threads}, open(os.environ.get("PR_STATE_DIR", "/tmp") + "/pr_threads.json", "w"))
 print(f"Loaded {len(threads)} thread(s)")
 PY
 
 # --- 4. Prior plugin findings + all open inline threads ---
 python3 - <<'PY'
+import os
 import json, re
-data = json.load(open("/tmp/pr_threads.json"))
+data = json.load(open(os.environ.get("PR_STATE_DIR", "/tmp") + "/pr_threads.json"))
 
 def prop(props, key):
     v = (props or {}).get(key)
@@ -127,8 +129,8 @@ def prop(props, key):
     return v
 
 RESOLVED = ("fixed", "closed", "wontFix", "byDesign")
-prior = open("/tmp/pr_prior_findings.jsonl", "w")
-open_threads = open("/tmp/pr_open_threads.jsonl", "w")
+prior = open(os.environ.get("PR_STATE_DIR", "/tmp") + "/pr_prior_findings.jsonl", "w")
+open_threads = open(os.environ.get("PR_STATE_DIR", "/tmp") + "/pr_open_threads.jsonl", "w")
 for t in data.get("value", []):
     props = t.get("properties") or {}
     comments = t.get("comments") or []
@@ -181,8 +183,9 @@ PY
 
 # --- 5. Most-recent summary marker sha → /tmp/pr_prior.env ---
 PRIOR_SUMMARY_SHA=$(python3 - <<'PY'
+import os
 import json, re
-data = json.load(open("/tmp/pr_threads.json"))
+data = json.load(open(os.environ.get("PR_STATE_DIR", "/tmp") + "/pr_threads.json"))
 
 def prop(props, key):
     v = (props or {}).get(key)
@@ -207,9 +210,9 @@ PY
 
 {
   printf 'PRIOR_SUMMARY_SHA=%q\n' "${PRIOR_SUMMARY_SHA}"
-} > /tmp/pr_prior.env
+} > ${PR_STATE_DIR:-/tmp}/pr_prior.env
 
-PRIOR_COUNT=$(wc -l < /tmp/pr_prior_findings.jsonl | tr -d ' ')
-OPEN_COUNT=$(wc -l < /tmp/pr_open_threads.jsonl | tr -d ' ')
+PRIOR_COUNT=$(wc -l < ${PR_STATE_DIR:-/tmp}/pr_prior_findings.jsonl | tr -d ' ')
+OPEN_COUNT=$(wc -l < ${PR_STATE_DIR:-/tmp}/pr_open_threads.jsonl | tr -d ' ')
 echo "Prior plugin findings: ${PRIOR_COUNT}  |  open inline threads: ${OPEN_COUNT}  |  PRIOR_SUMMARY_SHA=${PRIOR_SUMMARY_SHA:-none}"
-echo "Wrote /tmp/pr_prior_findings.jsonl /tmp/pr_open_threads.jsonl /tmp/pr_prior.env"
+echo "Wrote ${PR_STATE_DIR:-/tmp}/pr_prior_findings.jsonl ${PR_STATE_DIR:-/tmp}/pr_open_threads.jsonl ${PR_STATE_DIR:-/tmp}/pr_prior.env"

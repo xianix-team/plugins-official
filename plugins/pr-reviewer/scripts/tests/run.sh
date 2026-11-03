@@ -15,7 +15,7 @@
 #   None — builds its own scratch git repo and JSONL fixtures under a temp dir.
 #   Backs up and restores any pre-existing /tmp/pr_state.env / /tmp/pr_prior.env
 #   for the duration of the run, since reconcile-prior-findings.sh and
-#   assign-fids.sh read those fixed paths rather than an injectable location.
+#   assign-fids.sh read them from the default state dir (PR_STATE_DIR unset → /tmp).
 #
 # Outputs:
 #   Prints PASS/FAIL per assertion group and a final count.
@@ -186,6 +186,51 @@ JSON
 
 assert_eq "Gate A blocks (same sha): forced to carried_over" "yes" "$(bucket_has "$OUT2" carried_over "$FID_REMOVED")"
 assert_eq "Gate A blocks (same sha): fixed bucket stays empty" "no" "$(bucket_has "$OUT2" fixed "$FID_REMOVED")"
+
+echo "=== PR_STATE_DIR isolates run state per PR ==="
+
+# Two repos with a local bare origin each (generic platform, no API), reviewed
+# by branch into two separate state dirs — as /pr-group-review does per member.
+make_member() {  # make_member <name> <file> <base-content> <branch-content>
+  local name="$1" file="$2" base="$3" change="$4" dir="$WORK/$1"
+  git init -q --bare "$WORK/$name.git"
+  git clone -q "$WORK/$name.git" "$dir" 2>/dev/null
+  git -C "$dir" config user.email "test@example.com"
+  git -C "$dir" config user.name "Test"
+  printf '%s\n' "$base" > "$dir/$file"
+  git -C "$dir" add -A && git -C "$dir" commit -q -m base && git -C "$dir" push -q origin HEAD:main
+  git -C "$dir" symbolic-ref HEAD refs/heads/main 2>/dev/null || true
+  git -C "$WORK/$name.git" symbolic-ref HEAD refs/heads/main
+  git -C "$dir" checkout -q -b feature/x
+  printf '%s\n' "$change" > "$dir/$file"
+  git -C "$dir" commit -q -am change && git -C "$dir" push -q origin feature/x
+}
+make_member api OrderDto.cs 'public record OrderDto(decimal TotalAmount);' 'public record OrderDto(decimal Total);'
+make_member web orders.ts   'export const t = (o) => o.totalAmount;' 'export const t = (o) => o.totalAmount ?? 0;'
+
+# Earlier sections run with the default state dir (/tmp); start this one clean.
+rm -f /tmp/pr_state.env /tmp/pr_changed_files.txt /tmp/pr_full_diff.patch
+
+for m in api web; do
+  mkdir -p "$WORK/state/$m"
+  ( cd "$WORK/$m" && PR_STATE_DIR="$WORK/state/$m" BRANCH_ARG=feature/x PLATFORM= \
+      bash "${SCRIPT_DIR}/pr-setup.sh" >/dev/null 2>&1 )
+done
+
+assert_eq "api state written to its own dir" "yes" "$([ -f "$WORK/state/api/pr_state.env" ] && echo yes || echo no)"
+assert_eq "web state written to its own dir" "yes" "$([ -f "$WORK/state/web/pr_state.env" ] && echo yes || echo no)"
+assert_eq "nothing written to /tmp/pr_state.env" "no" "$([ -f /tmp/pr_state.env ] && echo yes || echo no)"
+assert_eq "api diff only touches api" "OrderDto.cs" "$(cat "$WORK/state/api/pr_changed_files.txt" 2>/dev/null)"
+assert_eq "web diff only touches web" "orders.ts" "$(cat "$WORK/state/web/pr_changed_files.txt" 2>/dev/null)"
+API_HEAD=$(grep '^HEAD_SHA=' "$WORK/state/api/pr_state.env" 2>/dev/null | cut -d= -f2)
+assert_eq "api HEAD_SHA is api's feature tip" "$(git -C "$WORK/api" rev-parse feature/x)" "$API_HEAD"
+
+# Scripts with embedded python read the state dir from the environment too.
+printf '{"file": "OrderDto.cs", "line": 1, "body": "renamed field"}\n' > "$WORK/state/api/pr_inline_findings.jsonl"
+( cd "$WORK/api" && PR_STATE_DIR="$WORK/state/api" bash "${SCRIPT_DIR}/assign-fids.sh" >/dev/null 2>&1 )
+API_FID=$(python3 -c "import json,sys; print(json.loads(open(sys.argv[1]).readline()).get('fid',''))" "$WORK/state/api/pr_inline_findings.jsonl")
+assert_eq "assign-fids.sh honours PR_STATE_DIR" "$(fid "OrderDto.cs" "public record OrderDto(decimal Total);" "1")" "$API_FID"
+assert_eq "web findings untouched" "no" "$([ -f "$WORK/state/web/pr_inline_findings.jsonl" ] && echo yes || echo no)"
 
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"

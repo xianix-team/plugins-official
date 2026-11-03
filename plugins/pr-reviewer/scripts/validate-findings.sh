@@ -24,12 +24,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck disable=SC1091
-[ -f /tmp/pr_state.env ] && source /tmp/pr_state.env
+[ -f ${PR_STATE_DIR:-/tmp}/pr_state.env ] && source ${PR_STATE_DIR:-/tmp}/pr_state.env
 
-FINDINGS="${FINDINGS:-/tmp/pr_inline_findings.jsonl}"
-NUMBERED="${NUMBERED:-/tmp/pr_full_diff_numbered.patch}"
+FINDINGS="${FINDINGS:-${PR_STATE_DIR:-/tmp}/pr_inline_findings.jsonl}"
+NUMBERED="${NUMBERED:-${PR_STATE_DIR:-/tmp}/pr_full_diff_numbered.patch}"
 HEAD_SHA="${HEAD_SHA:-$(git rev-parse HEAD 2>/dev/null || true)}"
-LOG=/tmp/pr_findings_validation.log
+LOG=${PR_STATE_DIR:-/tmp}/pr_findings_validation.log
 
 if [ ! -f "$FINDINGS" ]; then
   echo "ERROR: findings file missing: $FINDINGS" >&2

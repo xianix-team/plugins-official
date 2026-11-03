@@ -18,15 +18,15 @@
 set -euo pipefail
 
 # shellcheck disable=SC1091
-[ -f /tmp/pr_state.env ] && source /tmp/pr_state.env
+[ -f ${PR_STATE_DIR:-/tmp}/pr_state.env ] && source ${PR_STATE_DIR:-/tmp}/pr_state.env
 
-if [ ! -f /tmp/pr_changed_files.txt ]; then
-  echo "ERROR: need /tmp/pr_changed_files.txt (run pr-setup.sh first)" >&2
+if [ ! -f ${PR_STATE_DIR:-/tmp}/pr_changed_files.txt ]; then
+  echo "ERROR: need ${PR_STATE_DIR:-/tmp}/pr_changed_files.txt (run pr-setup.sh first)" >&2
   exit 1
 fi
 
-FILES=/tmp/pr_changed_files.txt
-DIFF=/tmp/pr_full_diff.patch
+FILES=${PR_STATE_DIR:-/tmp}/pr_changed_files.txt
+DIFF=${PR_STATE_DIR:-/tmp}/pr_full_diff.patch
 
 has_path() { grep -qiE "$1" "$FILES"; }
 non_matching_paths() { grep -vE "$1" "$FILES" | grep -q .; }
@@ -93,14 +93,14 @@ fi
   echo "export RUN_TEST=$(printf %q "$RUN_TEST")"
   echo "export RUN_SECURITY=$(printf %q "$RUN_SECURITY")"
   echo "export RUN_PERFORMANCE=$(printf %q "$RUN_PERFORMANCE")"
-} | tee /tmp/pr_reviewers.env
+} | tee ${PR_STATE_DIR:-/tmp}/pr_reviewers.env
 
-if [ -f /tmp/pr_state.env ]; then
-  grep -vE '^export RUN_(CODE|TEST|SECURITY|PERFORMANCE)=' /tmp/pr_state.env > /tmp/pr_state.env.tmp || true
-  cat /tmp/pr_reviewers.env >> /tmp/pr_state.env.tmp
-  mv /tmp/pr_state.env.tmp /tmp/pr_state.env
+if [ -f ${PR_STATE_DIR:-/tmp}/pr_state.env ]; then
+  grep -vE '^export RUN_(CODE|TEST|SECURITY|PERFORMANCE)=' ${PR_STATE_DIR:-/tmp}/pr_state.env > ${PR_STATE_DIR:-/tmp}/pr_state.env.tmp || true
+  cat ${PR_STATE_DIR:-/tmp}/pr_reviewers.env >> ${PR_STATE_DIR:-/tmp}/pr_state.env.tmp
+  mv ${PR_STATE_DIR:-/tmp}/pr_state.env.tmp ${PR_STATE_DIR:-/tmp}/pr_state.env
 else
-  cp /tmp/pr_reviewers.env /tmp/pr_state.env
+  cp ${PR_STATE_DIR:-/tmp}/pr_reviewers.env ${PR_STATE_DIR:-/tmp}/pr_state.env
 fi
 
 SELECTED=1

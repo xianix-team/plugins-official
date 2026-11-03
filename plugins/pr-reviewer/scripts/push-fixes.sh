@@ -21,7 +21,7 @@
 set -euo pipefail
 
 # shellcheck disable=SC1091
-[ -f /tmp/pr_state.env ] && source /tmp/pr_state.env
+[ -f ${PR_STATE_DIR:-/tmp}/pr_state.env ] && source ${PR_STATE_DIR:-/tmp}/pr_state.env
 
 REMOTE_URL=$(git remote get-url origin 2>/dev/null || echo "")
 [ -n "$REMOTE_URL" ] || { echo "ERROR: no git remote origin" >&2; exit 1; }

@@ -45,14 +45,14 @@
 set -euo pipefail
 
 # shellcheck disable=SC1091
-[ -f /tmp/pr_state.env ] && source /tmp/pr_state.env
+[ -f ${PR_STATE_DIR:-/tmp}/pr_state.env ] && source ${PR_STATE_DIR:-/tmp}/pr_state.env
 # shellcheck disable=SC1091
-[ -f /tmp/pr_prior.env ] && source /tmp/pr_prior.env
+[ -f ${PR_STATE_DIR:-/tmp}/pr_prior.env ] && source ${PR_STATE_DIR:-/tmp}/pr_prior.env
 
-CURRENT="${CURRENT:-/tmp/pr_inline_findings.jsonl}"
-PRIOR="${PRIOR:-/tmp/pr_prior_findings.jsonl}"
-OPEN="${OPEN:-/tmp/pr_open_threads.jsonl}"
-OUT="${OUT:-/tmp/pr_reconcile.json}"
+CURRENT="${CURRENT:-${PR_STATE_DIR:-/tmp}/pr_inline_findings.jsonl}"
+PRIOR="${PRIOR:-${PR_STATE_DIR:-/tmp}/pr_prior_findings.jsonl}"
+OPEN="${OPEN:-${PR_STATE_DIR:-/tmp}/pr_open_threads.jsonl}"
+OUT="${OUT:-${PR_STATE_DIR:-/tmp}/pr_reconcile.json}"
 REVIEW_MODE="${REVIEW_MODE:-initial}"
 HEAD_SHA="${HEAD_SHA:-$(git rev-parse HEAD 2>/dev/null || true)}"
 RANGE_BASE="${RANGE_BASE:-}"
@@ -288,7 +288,7 @@ DEDUP_SUPPRESSED=$(python3 -c "import json; d=json.load(open('$OUT')); print(d.g
   echo "export REOPENED_COUNT=$(printf %q "$REOPENED_COUNT")"
   echo "export NEW_COUNT=$(printf %q "$NEW_COUNT")"
   echo "export DEDUP_SUPPRESSED=$(printf %q "$DEDUP_SUPPRESSED")"
-} >> /tmp/pr_state.env
+} >> ${PR_STATE_DIR:-/tmp}/pr_state.env
 
 # Optional re-review delta stub for the report body
 if [ "$REVIEW_MODE" = "rereview" ]; then
@@ -305,7 +305,7 @@ if [ "$REVIEW_MODE" = "rereview" ]; then
   else
     DELTA_HEADLINE="Reviewed ${COMMIT_COUNT} new commit(s) since the last review (\`${RANGE_BASE}\`..\`${HEAD_SHA}\`)."
   fi
-  cat > /tmp/pr_rereview_delta.md <<EOF
+  cat > ${PR_STATE_DIR:-/tmp}/pr_rereview_delta.md <<EOF
 ### Re-review delta
 ${DELTA_HEADLINE}
 - ✅ Fixed: ${FIXED_COUNT} previously-flagged issue(s) resolved
@@ -315,9 +315,9 @@ EOF
   # Regression signal — only ever shown when non-zero, never clutters an
   # ordinary re-review with a zero-count line.
   if [ "${REOPENED_COUNT:-0}" -gt 0 ]; then
-    echo "- 🔴 Reopened: ${REOPENED_COUNT} previously-fixed issue(s) still reproduce — regression" >> /tmp/pr_rereview_delta.md
+    echo "- 🔴 Reopened: ${REOPENED_COUNT} previously-fixed issue(s) still reproduce — regression" >> ${PR_STATE_DIR:-/tmp}/pr_rereview_delta.md
   fi
-  echo "Wrote /tmp/pr_rereview_delta.md"
+  echo "Wrote ${PR_STATE_DIR:-/tmp}/pr_rereview_delta.md"
 fi
 
 exit 0

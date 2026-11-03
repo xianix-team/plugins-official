@@ -25,7 +25,7 @@ set -euo pipefail
 : "${REVIEW_MODE:=initial}"
 
 # shellcheck disable=SC1091
-[ -f /tmp/pr_state.env ] && source /tmp/pr_state.env
+[ -f ${PR_STATE_DIR:-/tmp}/pr_state.env ] && source ${PR_STATE_DIR:-/tmp}/pr_state.env
 
 if ! command -v gh >/dev/null 2>&1; then
   echo "ERROR: gh CLI not found — required for GitHub posting" >&2
@@ -53,26 +53,27 @@ REPO=$(echo "$REMOTE_CLEAN"  | sed 's|https://github.com/||;s|git@github.com:||;
 echo "Posting to https://github.com/${OWNER}/${REPO}/pull/${PR_NUMBER}"
 
 # --- Normalize input files ---
-if [ ! -f /tmp/pr_thread_body.md ]; then
-  if [ -f /tmp/pr_review_body.md ]; then
-    cp /tmp/pr_review_body.md /tmp/pr_thread_body.md
-  elif [ -f /tmp/pr_review_summary.md ]; then
-    cp /tmp/pr_review_summary.md /tmp/pr_thread_body.md
+if [ ! -f ${PR_STATE_DIR:-/tmp}/pr_thread_body.md ]; then
+  if [ -f ${PR_STATE_DIR:-/tmp}/pr_review_body.md ]; then
+    cp ${PR_STATE_DIR:-/tmp}/pr_review_body.md ${PR_STATE_DIR:-/tmp}/pr_thread_body.md
+  elif [ -f ${PR_STATE_DIR:-/tmp}/pr_review_summary.md ]; then
+    cp ${PR_STATE_DIR:-/tmp}/pr_review_summary.md ${PR_STATE_DIR:-/tmp}/pr_thread_body.md
   fi
 fi
-if [ ! -f /tmp/pr_inline_findings.jsonl ] && [ -f /tmp/pr_findings.jsonl ]; then
-  cp /tmp/pr_findings.jsonl /tmp/pr_inline_findings.jsonl
+if [ ! -f ${PR_STATE_DIR:-/tmp}/pr_inline_findings.jsonl ] && [ -f ${PR_STATE_DIR:-/tmp}/pr_findings.jsonl ]; then
+  cp ${PR_STATE_DIR:-/tmp}/pr_findings.jsonl ${PR_STATE_DIR:-/tmp}/pr_inline_findings.jsonl
 fi
-[ -f /tmp/pr_thread_body.md ] || { echo "ERROR: /tmp/pr_thread_body.md missing" >&2; exit 1; }
-touch /tmp/pr_inline_findings.jsonl
+[ -f ${PR_STATE_DIR:-/tmp}/pr_thread_body.md ] || { echo "ERROR: ${PR_STATE_DIR:-/tmp}/pr_thread_body.md missing" >&2; exit 1; }
+touch ${PR_STATE_DIR:-/tmp}/pr_inline_findings.jsonl
 
 # Normalize pretty-printed / array / concatenated JSON into one-object-per-line JSONL
 python3 - <<'PY'
+import os
 import json
 from pathlib import Path
-src = Path('/tmp/pr_inline_findings.jsonl')
+src = Path(os.environ.get('PR_STATE_DIR', '/tmp') + '/pr_inline_findings.jsonl')
 text = src.read_text().strip()
-out = Path('/tmp/pr_inline_findings.normalized.jsonl')
+out = Path(os.environ.get('PR_STATE_DIR', '/tmp') + '/pr_inline_findings.normalized.jsonl')
 findings = []
 if text:
     try:
@@ -97,7 +98,7 @@ with out.open('w') as f:
         f.write(json.dumps(item) + '\n')
 print(f"Normalized {len(findings)} finding(s) for inline posting")
 PY
-mv /tmp/pr_inline_findings.normalized.jsonl /tmp/pr_inline_findings.jsonl
+mv ${PR_STATE_DIR:-/tmp}/pr_inline_findings.normalized.jsonl ${PR_STATE_DIR:-/tmp}/pr_inline_findings.jsonl
 
 # --- Map verdict → gh flag ---
 case "${VERDICT}" in
@@ -145,8 +146,8 @@ case "${VERDICT}" in
 esac
 
 HEAD_SHA="${HEAD_SHA:-$(git rev-parse HEAD)}"
-if ! grep -q 'pr-reviewer:v1.2 kind=summary' /tmp/pr_thread_body.md; then
-  printf '\n\n<!-- pr-reviewer:v1.2 kind=summary sha=%s -->\n' "$HEAD_SHA" >> /tmp/pr_thread_body.md
+if ! grep -q 'pr-reviewer:v1.2 kind=summary' ${PR_STATE_DIR:-/tmp}/pr_thread_body.md; then
+  printf '\n\n<!-- pr-reviewer:v1.2 kind=summary sha=%s -->\n' "$HEAD_SHA" >> ${PR_STATE_DIR:-/tmp}/pr_thread_body.md
 fi
 
 # --- Cast verdict + post summary ---
@@ -154,11 +155,11 @@ fi
 # response isn't easily inspected for the posted body, unlike the per-finding
 # REST POSTs below, which return the created comment and are checked for real.
 MARKER_VERIFY_FAILED=0
-if ! gh pr review "$PR_NUMBER" $REVIEW_FLAG --body "$(cat /tmp/pr_thread_body.md)" 2>/tmp/pr_review_err.txt; then
-  echo "WARN: gh pr review failed: $(cat /tmp/pr_review_err.txt)" >&2
+if ! gh pr review "$PR_NUMBER" $REVIEW_FLAG --body "$(cat ${PR_STATE_DIR:-/tmp}/pr_thread_body.md)" 2>${PR_STATE_DIR:-/tmp}/pr_review_err.txt; then
+  echo "WARN: gh pr review failed: $(cat ${PR_STATE_DIR:-/tmp}/pr_review_err.txt)" >&2
   echo "WARN: falling back to gh pr comment for the summary body" >&2
-  gh pr comment "$PR_NUMBER" --body "$(cat /tmp/pr_thread_body.md)" || {
-    echo "ERROR: could not post review summary — see /tmp/pr_review_err.txt" >&2
+  gh pr comment "$PR_NUMBER" --body "$(cat ${PR_STATE_DIR:-/tmp}/pr_thread_body.md)" || {
+    echo "ERROR: could not post review summary — see ${PR_STATE_DIR:-/tmp}/pr_review_err.txt" >&2
     exit 1
   }
 fi
@@ -167,32 +168,32 @@ echo "Summary review posted (flag=${REVIEW_FLAG})"
 # --- Sub-step R: reconcile fixed prior findings ---
 RESOLVED_OK=0
 RESOLVED_FAIL=0
-: > /tmp/pr_resolved.log
-if [ "${REVIEW_MODE}" = "rereview" ] && [ -f /tmp/pr_reconcile.json ]; then
-  python3 -c "import json; [print(json.dumps(x)) for x in json.load(open('/tmp/pr_reconcile.json')).get('fixed',[])]" \
+: > ${PR_STATE_DIR:-/tmp}/pr_resolved.log
+if [ "${REVIEW_MODE}" = "rereview" ] && [ -f ${PR_STATE_DIR:-/tmp}/pr_reconcile.json ]; then
+  python3 -c "import json; [print(json.dumps(x)) for x in json.load(open('${PR_STATE_DIR:-/tmp}/pr_reconcile.json')).get('fixed',[])]" \
   | while IFS= read -r f; do
     [ -z "$f" ] && continue
     COMMENT_ID=$(echo "$f" | python3 -c "import sys,json; print(json.load(sys.stdin).get('comment_ref') or '')")
     THREAD_ID=$(echo  "$f" | python3 -c "import sys,json; print(json.load(sys.stdin).get('thread_ref') or '')")
-    [ -n "$COMMENT_ID" ] && [ -n "$THREAD_ID" ] || { echo "fail missing refs" >> /tmp/pr_resolved.log; continue; }
+    [ -n "$COMMENT_ID" ] && [ -n "$THREAD_ID" ] || { echo "fail missing refs" >> ${PR_STATE_DIR:-/tmp}/pr_resolved.log; continue; }
 
     gh api "repos/${OWNER}/${REPO}/pulls/${PR_NUMBER}/comments/${COMMENT_ID}/replies" \
       --method POST \
       --field body="✅ Resolved as of \`${HEAD_SHA}\`. This finding no longer reproduces against the current head.
 
 <!-- pr-reviewer:v1.2 kind=resolve sha=${HEAD_SHA} -->" \
-      >/dev/null 2>/tmp/pr_resolve_err.txt || true
+      >/dev/null 2>${PR_STATE_DIR:-/tmp}/pr_resolve_err.txt || true
 
     if gh api graphql -f query='
         mutation($id:ID!) { resolveReviewThread(input:{threadId:$id}) { thread { isResolved } } }' \
-        -F id="$THREAD_ID" >/dev/null 2>>/tmp/pr_resolve_err.txt; then
-      echo ok >> /tmp/pr_resolved.log
+        -F id="$THREAD_ID" >/dev/null 2>>${PR_STATE_DIR:-/tmp}/pr_resolve_err.txt; then
+      echo ok >> ${PR_STATE_DIR:-/tmp}/pr_resolved.log
     else
-      echo "fail $THREAD_ID" >> /tmp/pr_resolved.log
+      echo "fail $THREAD_ID" >> ${PR_STATE_DIR:-/tmp}/pr_resolved.log
     fi
   done
-  RESOLVED_OK=$(grep -c '^ok' /tmp/pr_resolved.log 2>/dev/null || true); RESOLVED_OK=${RESOLVED_OK:-0}
-  RESOLVED_FAIL=$(grep -c '^fail' /tmp/pr_resolved.log 2>/dev/null || true); RESOLVED_FAIL=${RESOLVED_FAIL:-0}
+  RESOLVED_OK=$(grep -c '^ok' ${PR_STATE_DIR:-/tmp}/pr_resolved.log 2>/dev/null || true); RESOLVED_OK=${RESOLVED_OK:-0}
+  RESOLVED_FAIL=$(grep -c '^fail' ${PR_STATE_DIR:-/tmp}/pr_resolved.log 2>/dev/null || true); RESOLVED_FAIL=${RESOLVED_FAIL:-0}
   export RESOLVED_OK RESOLVED_FAIL
   echo "Reconciled: ${RESOLVED_OK} prior finding(s) resolved (${RESOLVED_FAIL} failed)"
 fi
@@ -200,32 +201,32 @@ fi
 # --- Sub-step R2: reactivate reopened prior findings (regression signal) ---
 REOPENED_OK=0
 REOPENED_FAIL=0
-: > /tmp/pr_reopened.log
-if [ "${REVIEW_MODE}" = "rereview" ] && [ -f /tmp/pr_reconcile.json ]; then
-  python3 -c "import json; [print(json.dumps(x)) for x in json.load(open('/tmp/pr_reconcile.json')).get('reopened',[])]" \
+: > ${PR_STATE_DIR:-/tmp}/pr_reopened.log
+if [ "${REVIEW_MODE}" = "rereview" ] && [ -f ${PR_STATE_DIR:-/tmp}/pr_reconcile.json ]; then
+  python3 -c "import json; [print(json.dumps(x)) for x in json.load(open('${PR_STATE_DIR:-/tmp}/pr_reconcile.json')).get('reopened',[])]" \
   | while IFS= read -r f; do
     [ -z "$f" ] && continue
     COMMENT_ID=$(echo "$f" | python3 -c "import sys,json; print(json.load(sys.stdin).get('comment_ref') or '')")
     THREAD_ID=$(echo  "$f" | python3 -c "import sys,json; print(json.load(sys.stdin).get('thread_ref') or '')")
-    [ -n "$COMMENT_ID" ] && [ -n "$THREAD_ID" ] || { echo "fail missing refs" >> /tmp/pr_reopened.log; continue; }
+    [ -n "$COMMENT_ID" ] && [ -n "$THREAD_ID" ] || { echo "fail missing refs" >> ${PR_STATE_DIR:-/tmp}/pr_reopened.log; continue; }
 
     gh api "repos/${OWNER}/${REPO}/pulls/${PR_NUMBER}/comments/${COMMENT_ID}/replies" \
       --method POST \
       --field body="⚠️ This finding still reproduces as of \`${HEAD_SHA}\` despite being marked resolved. Reactivating.
 
 <!-- pr-reviewer:v1.2 kind=reopen sha=${HEAD_SHA} -->" \
-      >/dev/null 2>/tmp/pr_reopen_err.txt || true
+      >/dev/null 2>${PR_STATE_DIR:-/tmp}/pr_reopen_err.txt || true
 
     if gh api graphql -f query='
         mutation($id:ID!) { unresolveReviewThread(input:{threadId:$id}) { thread { isResolved } } }' \
-        -F id="$THREAD_ID" >/dev/null 2>>/tmp/pr_reopen_err.txt; then
-      echo ok >> /tmp/pr_reopened.log
+        -F id="$THREAD_ID" >/dev/null 2>>${PR_STATE_DIR:-/tmp}/pr_reopen_err.txt; then
+      echo ok >> ${PR_STATE_DIR:-/tmp}/pr_reopened.log
     else
-      echo "fail $THREAD_ID" >> /tmp/pr_reopened.log
+      echo "fail $THREAD_ID" >> ${PR_STATE_DIR:-/tmp}/pr_reopened.log
     fi
   done
-  REOPENED_OK=$(grep -c '^ok' /tmp/pr_reopened.log 2>/dev/null || true); REOPENED_OK=${REOPENED_OK:-0}
-  REOPENED_FAIL=$(grep -c '^fail' /tmp/pr_reopened.log 2>/dev/null || true); REOPENED_FAIL=${REOPENED_FAIL:-0}
+  REOPENED_OK=$(grep -c '^ok' ${PR_STATE_DIR:-/tmp}/pr_reopened.log 2>/dev/null || true); REOPENED_OK=${REOPENED_OK:-0}
+  REOPENED_FAIL=$(grep -c '^fail' ${PR_STATE_DIR:-/tmp}/pr_reopened.log 2>/dev/null || true); REOPENED_FAIL=${REOPENED_FAIL:-0}
   export REOPENED_OK REOPENED_FAIL
   # A reopened finding is a regression signal and expected to be rare — surface
   # it whenever non-zero rather than folding it silently into ordinary counts.
@@ -235,25 +236,25 @@ fi
 # --- Sub-step E: reply on addressed external threads — never resolve ---
 EXTERNAL_REPLY_OK=0
 EXTERNAL_REPLY_FAIL=0
-: > /tmp/pr_external_replies.log
-if [ -f /tmp/pr_external_reconcile.json ]; then
-  python3 -c "import json; [print(json.dumps(x)) for x in json.load(open('/tmp/pr_external_reconcile.json')).get('addressed',[])]" \
+: > ${PR_STATE_DIR:-/tmp}/pr_external_replies.log
+if [ -f ${PR_STATE_DIR:-/tmp}/pr_external_reconcile.json ]; then
+  python3 -c "import json; [print(json.dumps(x)) for x in json.load(open('${PR_STATE_DIR:-/tmp}/pr_external_reconcile.json')).get('addressed',[])]" \
   | while IFS= read -r f; do
     [ -z "$f" ] && continue
     COMMENT_ID=$(echo "$f" | python3 -c "import sys,json; print(json.load(sys.stdin).get('comment_ref') or '')")
-    [ -n "$COMMENT_ID" ] || { echo "fail missing comment_ref" >> /tmp/pr_external_replies.log; continue; }
+    [ -n "$COMMENT_ID" ] || { echo "fail missing comment_ref" >> ${PR_STATE_DIR:-/tmp}/pr_external_replies.log; continue; }
 
     gh api "repos/${OWNER}/${REPO}/pulls/${PR_NUMBER}/comments/${COMMENT_ID}/replies" \
       --method POST \
       --field body="Looks addressed as of \`${HEAD_SHA}\` — leaving this thread open for the original author to resolve.
 
 <!-- pr-reviewer:v1.2 kind=external-ack sha=${HEAD_SHA} -->" \
-      >/dev/null 2>/tmp/pr_external_reply_err.txt \
-      && echo ok >> /tmp/pr_external_replies.log \
-      || echo "fail $COMMENT_ID" >> /tmp/pr_external_replies.log
+      >/dev/null 2>${PR_STATE_DIR:-/tmp}/pr_external_reply_err.txt \
+      && echo ok >> ${PR_STATE_DIR:-/tmp}/pr_external_replies.log \
+      || echo "fail $COMMENT_ID" >> ${PR_STATE_DIR:-/tmp}/pr_external_replies.log
   done
-  EXTERNAL_REPLY_OK=$(grep -c '^ok' /tmp/pr_external_replies.log 2>/dev/null || true); EXTERNAL_REPLY_OK=${EXTERNAL_REPLY_OK:-0}
-  EXTERNAL_REPLY_FAIL=$(grep -c '^fail' /tmp/pr_external_replies.log 2>/dev/null || true); EXTERNAL_REPLY_FAIL=${EXTERNAL_REPLY_FAIL:-0}
+  EXTERNAL_REPLY_OK=$(grep -c '^ok' ${PR_STATE_DIR:-/tmp}/pr_external_replies.log 2>/dev/null || true); EXTERNAL_REPLY_OK=${EXTERNAL_REPLY_OK:-0}
+  EXTERNAL_REPLY_FAIL=$(grep -c '^fail' ${PR_STATE_DIR:-/tmp}/pr_external_replies.log 2>/dev/null || true); EXTERNAL_REPLY_FAIL=${EXTERNAL_REPLY_FAIL:-0}
 fi
 export EXTERNAL_REPLY_OK EXTERNAL_REPLY_FAIL
 echo "External replies: ${EXTERNAL_REPLY_OK} addressed thread(s) acknowledged (${EXTERNAL_REPLY_FAIL} failed) — threads left open"
@@ -263,7 +264,7 @@ COMMIT_ID=$(git rev-parse HEAD)
 INLINE_TOTAL=0
 INLINE_OK=0
 INLINE_FAIL=0
-: > /tmp/pr_inline_failures.log
+: > ${PR_STATE_DIR:-/tmp}/pr_inline_failures.log
 
 while IFS= read -r line; do
   [ -z "$line" ] && continue
@@ -273,7 +274,7 @@ while IFS= read -r line; do
   eval "$(printf '%s' "$line" | python3 -c "
 import sys, json, shlex
 d = json.load(sys.stdin)
-open('/tmp/pr_inline_body.md', 'w').write(d.get('body') or d.get('comment') or '')
+open('${PR_STATE_DIR:-/tmp}/pr_inline_body.md', 'w').write(d.get('body') or d.get('comment') or '')
 print('F_PATH=' + shlex.quote(str(d.get('file') or d.get('path') or '')))
 print('F_LINE=' + shlex.quote(str(d.get('line') or d.get('line_number') or '')))
 print('F_FID=' + shlex.quote(str(d.get('fid', ''))))
@@ -282,12 +283,12 @@ print('F_SUGGEST_START=' + shlex.quote(str(d.get('suggestion_start_line', ''))))
 
   if [ -z "$F_PATH" ] || [ -z "$F_LINE" ]; then
     INLINE_FAIL=$((INLINE_FAIL + 1))
-    { echo "---"; echo "finding: $line"; echo "missing file/line"; } >> /tmp/pr_inline_failures.log
+    { echo "---"; echo "finding: $line"; echo "missing file/line"; } >> ${PR_STATE_DIR:-/tmp}/pr_inline_failures.log
     continue
   fi
 
-  if [ -n "$F_FID" ] && ! grep -q 'pr-reviewer:v1.2 kind=finding' /tmp/pr_inline_body.md; then
-    printf '\n\n<!-- pr-reviewer:v1.2 kind=finding fid=%s sha=%s -->\n' "$F_FID" "$COMMIT_ID" >> /tmp/pr_inline_body.md
+  if [ -n "$F_FID" ] && ! grep -q 'pr-reviewer:v1.2 kind=finding' ${PR_STATE_DIR:-/tmp}/pr_inline_body.md; then
+    printf '\n\n<!-- pr-reviewer:v1.2 kind=finding fid=%s sha=%s -->\n' "$F_FID" "$COMMIT_ID" >> ${PR_STATE_DIR:-/tmp}/pr_inline_body.md
   fi
 
   # Build optional suggestion-range args without tripping `set -u` on empty arrays.
@@ -304,15 +305,15 @@ print('F_SUGGEST_START=' + shlex.quote(str(d.get('suggestion_start_line', ''))))
     --field side="RIGHT" \
     --field commit_id="$COMMIT_ID" \
     "$@" \
-    --field body="$(cat /tmp/pr_inline_body.md)" \
-    >/tmp/pr_inline_resp.json 2>/tmp/pr_inline_err.txt; then
+    --field body="$(cat ${PR_STATE_DIR:-/tmp}/pr_inline_body.md)" \
+    >${PR_STATE_DIR:-/tmp}/pr_inline_resp.json 2>${PR_STATE_DIR:-/tmp}/pr_inline_err.txt; then
     INLINE_OK=$((INLINE_OK + 1))
     # Post-POST marker verification (audit trail): re-inspect the created
     # comment's own response body for the marker we sent. GitHub echoes the
     # persisted body back on create, so this is a real round-trip check, not
     # just an HTTP-status assumption — see gh-detect-prior.sh's marker regex,
     # which is what actually depends on this having landed.
-    if [ -n "$F_FID" ] && ! grep -q 'pr-reviewer:v1.2.*kind=finding' /tmp/pr_inline_resp.json; then
+    if [ -n "$F_FID" ] && ! grep -q 'pr-reviewer:v1.2.*kind=finding' ${PR_STATE_DIR:-/tmp}/pr_inline_resp.json; then
       echo "ERROR: posted inline comment is missing its expected marker in the response body — re-review detection for this finding will fail on the next run." >&2
       MARKER_VERIFY_FAILED=$((MARKER_VERIFY_FAILED + 1))
     fi
@@ -321,15 +322,15 @@ print('F_SUGGEST_START=' + shlex.quote(str(d.get('suggestion_start_line', ''))))
     {
       echo "---"
       echo "finding: $line"
-      cat /tmp/pr_inline_err.txt
-    } >> /tmp/pr_inline_failures.log
+      cat ${PR_STATE_DIR:-/tmp}/pr_inline_err.txt
+    } >> ${PR_STATE_DIR:-/tmp}/pr_inline_failures.log
   fi
-done < /tmp/pr_inline_findings.jsonl
+done < ${PR_STATE_DIR:-/tmp}/pr_inline_findings.jsonl
 
 echo "Inline comments: ${INLINE_OK}/${INLINE_TOTAL} posted (${INLINE_FAIL} failed)"
 if [ "$INLINE_FAIL" -gt 0 ]; then
-  echo "WARN: see /tmp/pr_inline_failures.log for failure details" >&2
-  head -40 /tmp/pr_inline_failures.log >&2
+  echo "WARN: see ${PR_STATE_DIR:-/tmp}/pr_inline_failures.log for failure details" >&2
+  head -40 ${PR_STATE_DIR:-/tmp}/pr_inline_failures.log >&2
 fi
 if [ "$MARKER_VERIFY_FAILED" -gt 0 ]; then
   echo "ERROR: ${MARKER_VERIFY_FAILED} posted comment(s) failed marker verification — see warnings above" >&2

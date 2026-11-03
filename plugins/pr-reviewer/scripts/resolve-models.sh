@@ -45,14 +45,14 @@ echo "Reviewer models — quality: ${QUALITY_SLUG:-inherit} | risk: ${RISK_SLUG:
 {
   echo "export QUALITY_SLUG=$(printf %q "$QUALITY_SLUG")"
   echo "export RISK_SLUG=$(printf %q "$RISK_SLUG")"
-} | tee /tmp/pr_models.env
+} | tee ${PR_STATE_DIR:-/tmp}/pr_models.env
 
-if [ -f /tmp/pr_state.env ]; then
-  grep -vE '^export (QUALITY_SLUG|RISK_SLUG)=' /tmp/pr_state.env > /tmp/pr_state.env.tmp 2>/dev/null || cp /tmp/pr_state.env /tmp/pr_state.env.tmp
-  cat /tmp/pr_models.env >> /tmp/pr_state.env.tmp
-  mv /tmp/pr_state.env.tmp /tmp/pr_state.env
+if [ -f ${PR_STATE_DIR:-/tmp}/pr_state.env ]; then
+  grep -vE '^export (QUALITY_SLUG|RISK_SLUG)=' ${PR_STATE_DIR:-/tmp}/pr_state.env > ${PR_STATE_DIR:-/tmp}/pr_state.env.tmp 2>/dev/null || cp ${PR_STATE_DIR:-/tmp}/pr_state.env ${PR_STATE_DIR:-/tmp}/pr_state.env.tmp
+  cat ${PR_STATE_DIR:-/tmp}/pr_models.env >> ${PR_STATE_DIR:-/tmp}/pr_state.env.tmp
+  mv ${PR_STATE_DIR:-/tmp}/pr_state.env.tmp ${PR_STATE_DIR:-/tmp}/pr_state.env
 else
-  cp /tmp/pr_models.env /tmp/pr_state.env
+  cp ${PR_STATE_DIR:-/tmp}/pr_models.env ${PR_STATE_DIR:-/tmp}/pr_state.env
 fi
 
 exit 0

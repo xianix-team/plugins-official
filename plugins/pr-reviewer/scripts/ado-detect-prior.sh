@@ -154,8 +154,10 @@ for t in data.get("value", []):
             line = loc["line"]
             break
     if is_plugin:
+        label = re.match(r"^\s*(?:\*\*)?([CWS]\d+)(?:\*\*)?(?=\s|[—:-]|$)", body)
         prior.write(json.dumps({
             "fid": fid,
+            "visible_id": label.group(1) if label else None,
             "file": file_path,
             "line": line,
             "status": "resolved" if resolved else "open",

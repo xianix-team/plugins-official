@@ -7,6 +7,9 @@
 # Inputs:
 #   PR_NUMBER             — required (or resolvable via gh for current branch)
 #   gh CLI authenticated
+#
+# Outputs:
+#   /tmp/pr_progress_comment.env — PROGRESS_PR, PROGRESS_COMMENT_ID (read by report-failure.sh)
 
 set -euo pipefail
 
@@ -39,15 +42,26 @@ PLUGIN_VERSION=$(grep -hom1 '"version"[^,}]*' \
   | cut -d'"' -f4 || true)
 PLUGIN_VERSION=${PLUGIN_VERSION:-unknown}
 
-if gh pr comment "$PR_NUMBER" --body "$(cat <<EOF
+# A new run starts here: drop the previous run's progress comment and failure guard.
+rm -f /tmp/pr_progress_comment.env /tmp/pr_failure_reported
+
+if COMMENT_URL=$(gh pr comment "$PR_NUMBER" --body "$(cat <<EOF
 🔍 PR Review in Progress
 
 Claude Code is analyzing this pull request. The review will be posted here shortly.
 
 PR Reviewer (${PLUGIN_VERSION})
 EOF
-)"; then
+)"); then
   echo "Review-in-progress comment posted on PR #${PR_NUMBER}"
+  # Remember the comment so report-failure.sh can edit it instead of leaving it stuck.
+  COMMENT_ID="${COMMENT_URL##*#issuecomment-}"
+  if [ "$COMMENT_ID" != "$COMMENT_URL" ]; then
+    {
+      echo "export PROGRESS_PR=$(printf %q "$PR_NUMBER")"
+      echo "export PROGRESS_COMMENT_ID=$(printf %q "$COMMENT_ID")"
+    } > /tmp/pr_progress_comment.env
+  fi
 else
   echo "WARN: review-in-progress comment failed — continuing" >&2
 fi

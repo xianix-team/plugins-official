@@ -246,6 +246,12 @@ Use the platform-appropriate **plugin script** as one `Bash` call — do not inv
 # shellcheck disable=SC1091
 [ -f /tmp/pr_plugin.env ] && source /tmp/pr_plugin.env
 export PR_NUMBER=…   # from the invocation
+# New run: clear the previous run's failure guard, then stop early if the PR is not open
+# (verify-pr.sh posts a "review skipped" comment itself when the PR is merged/closed/abandoned).
+rm -f /tmp/pr_failure_reported
+if [ -n "${PR_NUMBER:-}" ] && [ "$PLATFORM" != generic ]; then
+  bash "$CLAUDE_PLUGIN_ROOT/scripts/verify-pr.sh" || exit 1
+fi
 case "$PLATFORM" in
   github) bash "$CLAUDE_PLUGIN_ROOT/scripts/gh-start-comment.sh" ;;
   azure)  bash "$CLAUDE_PLUGIN_ROOT/scripts/ado-start-comment.sh" ;;
@@ -260,6 +266,12 @@ esac
 If `CLAUDE_PLUGIN_ROOT` is missing, re-run the step 0 resolver — **do not** hand-roll a starting-comment `curl`.
 
 If posting the starting comment fails, output a single warning line and continue — do not stop the review.
+
+If `verify-pr.sh` exits non-zero, **stop the review** — the PR is missing or no longer open. Do not post anything else; when the PR is merged/closed/abandoned the script has already posted the "⏭️ PR Review skipped" comment.
+
+### Failure comments (`scripts/report-failure.sh`)
+
+When the review stops on an error, the PR must say so — never leave the "🔍 PR Review in Progress" comment stuck. `scripts/report-failure.sh <stage> "<reason>"` logs `ERROR: [pr-review] <stage>: <reason>`, redacts secrets from the reason, and edits the progress comment into a ❌ / ⏭️ comment (or posts a new one). It posts at most once per run and always exits 0. Scripts call it from their own failure paths; currently wired: `verify-pr.sh` (stage `pr-not-open`).
 
 ## 3. Gather PR Context (do this BEFORE indexing the codebase)
 

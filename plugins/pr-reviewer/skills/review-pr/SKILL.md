@@ -10,7 +10,7 @@ Perform a comprehensive review of the pull request $ARGUMENTS.
 This skill is a thin alias for the `/pr-review` command. Run the full procedure documented in `commands/pr-review.md` **yourself, in the top-level context** — do not delegate it to an `orchestrator` sub-agent. A sub-agent cannot spawn the four reviewer sub-agents, so the parallel review only works when you run it directly. Prefer the plugin scripts for all deterministic steps. The procedure will:
 
 1. Detect the hosting platform from `git remote get-url origin` first (hard gate — do not open the GitHub provider or call `gh` until this completes). If the executor injected `PLATFORM=azuredevops`, normalize it to canonical `azure` and still verify against the remote; never default to GitHub.
-2. Run `scripts/check-permissions.sh` (hard gate — stop if auth/scopes fail). Then post a "review in progress" comment via `scripts/gh-start-comment.sh` / `scripts/ado-start-comment.sh`.
+2. Run `scripts/check-permissions.sh` (hard gate — stop if auth/scopes fail). Then, when a PR number is given, run `scripts/verify-pr.sh` (stop if the PR is not open — it posts a "review skipped" comment itself) and post a "review in progress" comment via `scripts/gh-start-comment.sh` / `scripts/ado-start-comment.sh`.
 3. Run `scripts/pr-setup.sh` to check out the PR head, resolve the real target branch, and gather diffs. Then `scripts/detect-review-mode.sh` for prior-review / open-thread awareness.
 4. Run `scripts/index-codebase.sh` (skipped automatically on small PRs).
 5. Run `scripts/review-tier.sh`, then (when escalated) `scripts/select-reviewers.sh` + `scripts/resolve-models.sh`. Launch the applicable specialist sub-agents **in parallel** with `subagent_type` set:

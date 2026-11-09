@@ -13,6 +13,8 @@
 # Outputs:
 #   /tmp/pr_verify.env — PR_STATE, PR_TITLE, PR_HEAD_BRANCH, …
 #   Exit 0 if open/active; exit 1 if missing, merged, completed, or abandoned.
+#   Merged / closed / completed / abandoned also posts a "review skipped" PR
+#   comment via report-failure.sh (stage: pr-not-open).
 
 set -euo pipefail
 
@@ -50,7 +52,10 @@ case "$PLATFORM" in
     PR_URL=$(echo "$META" | jq -r '.url')
     case "$STATE" in
       OPEN|open) ;;
-      *) fail_closed "PR #${PR_NUMBER} is ${STATE} — not open; refusing to post" ;;
+      *)
+        bash "${SCRIPT_DIR}/report-failure.sh" pr-not-open "PR #${PR_NUMBER} is ${STATE}" || true
+        fail_closed "PR #${PR_NUMBER} is ${STATE} — not open; refusing to post"
+        ;;
     esac
     echo "OK: PR #${PR_NUMBER} open: ${PR_TITLE}"
     ;;
@@ -77,7 +82,10 @@ case "$PLATFORM" in
     rm -f "$BODY"
     case "$STATE" in
       active|Active) ;;
-      *) fail_closed "PR #${PR_ID} is ${STATE} — not active; refusing to post" ;;
+      *)
+        PR_NUMBER="$PR_ID" bash "${SCRIPT_DIR}/report-failure.sh" pr-not-open "PR #${PR_ID} is ${STATE}" || true
+        fail_closed "PR #${PR_ID} is ${STATE} — not active; refusing to post"
+        ;;
     esac
     echo "OK: PR #${PR_ID} active: ${PR_TITLE}"
     ;;

@@ -14,6 +14,8 @@
 #
 # Outputs:
 #   /tmp/pr_azure.env       — API_BASE, AZURE_REPO, PR_ID, …
+#   /tmp/pr_progress_comment.env — PROGRESS_PR, PROGRESS_THREAD_ID, PROGRESS_COMMENT_ID
+#                             (read by report-failure.sh)
 
 set -euo pipefail
 
@@ -93,6 +95,9 @@ print(json.dumps({
 }))
 PY
 
+# A new run starts here: drop the previous run's progress comment and failure guard.
+rm -f /tmp/pr_progress_comment.env /tmp/pr_failure_reported
+
 RESP=$(curl -sS -w "\nHTTP_STATUS:%{http_code}" \
   -H "Content-Type: application/json" \
   -u ":${AZURE_DEVOPS_TOKEN}" \
@@ -102,6 +107,18 @@ RESP=$(curl -sS -w "\nHTTP_STATUS:%{http_code}" \
 STATUS=$(echo "$RESP" | sed -n 's/^HTTP_STATUS://p')
 if echo "${STATUS:-}" | grep -qE '^2'; then
   echo "Review-in-progress comment posted on PR #${PR_ID} (HTTP $STATUS)"
+  # Remember the thread/comment so report-failure.sh can edit it instead of leaving it stuck.
+  echo "$RESP" | sed '$d' | python3 -c "
+import json, shlex, sys
+try:
+    d = json.load(sys.stdin)
+    tid, cid = d['id'], d['comments'][0]['id']
+except Exception:
+    sys.exit(0)
+print('export PROGRESS_PR=' + shlex.quote(sys.argv[1]))
+print('export PROGRESS_THREAD_ID=' + shlex.quote(str(tid)))
+print('export PROGRESS_COMMENT_ID=' + shlex.quote(str(cid)))
+" "$PR_ID" > /tmp/pr_progress_comment.env || true
 else
   echo "WARN: review-in-progress comment failed HTTP ${STATUS:-curl-error} — body: $(echo "$RESP" | sed '$d')" >&2
 fi

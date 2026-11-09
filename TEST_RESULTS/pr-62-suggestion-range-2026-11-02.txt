@@ -1,0 +1,6 @@
+Test: suggestion range extraction and fallback
+Command: python3 - (inline harness extracting the embedded python3 -c block from plugins/pr-reviewer/scripts/gh-post-review.sh)
+Output:
+PASS: multi-line
+PASS: re-anchored mismatch
+Exit status: 0

@@ -110,7 +110,7 @@ If no performance issues are found, explicitly state: "No performance concerns i
 
 ## GitHub Suggestion Blocks
 
-When the fix is a concrete drop-in replacement (sequential async calls → `Promise.all`/`Task.WhenAll`/`asyncio.gather`, `SELECT *` → explicit columns, string concat in a loop → array join, regex literal moved outside a loop), append after the `**Fix:**` block:
+When the fix is a concrete drop-in replacement (sequential async calls → `Promise.all`/`Task.WhenAll`/`asyncio.gather`, `SELECT *` → explicit columns, string concat in a loop → array join, regex literal moved outside a loop), append this block after `**Fix:**`. The review lead wraps the fix and suggestion in `<details><summary>Suggested fix</summary>` before posting:
 
     <!-- suggestion: line NN -->          (or: lines NN-MM for a consecutive block)
     ```suggestion
@@ -118,3 +118,5 @@ When the fix is a concrete drop-in replacement (sequential async calls → `Prom
     ```
 
 `NN`/`MM` are post-change file line numbers; the HTML comment lets the review lead set `start_line`/`line` in the GitHub API call and renders invisibly. Skip the block when the fix requires adding a DB index, introducing a caching layer, refactoring a data-access layer, or spans non-consecutive lines.
+
+For alternative replacements of the same line range, provide each option with its own `**Fix:**`, line marker, and `suggestion` fence. The lead makes each option a separate collapsed section in one comment. For changes to different lines, return separate findings so GitHub can anchor each suggestion to its own line.

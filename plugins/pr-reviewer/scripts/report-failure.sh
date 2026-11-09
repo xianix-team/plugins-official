@@ -3,9 +3,15 @@
 #
 # Usage:
 #   bash "${CLAUDE_PLUGIN_ROOT}/scripts/report-failure.sh" "<what failed>"
+#   bash "${CLAUDE_PLUGIN_ROOT}/scripts/report-failure.sh" --hook   # StopFailure hook (hooks/hooks.json)
 #
 # Inputs:
 #   PR_NUMBER / PR_ID  — or read from /tmp/pr_state.env
+#   --hook: StopFailure JSON on stdin (error, error_details, transcript_path).
+#           Fires when the run ends on a Claude API error (e.g. billing_error when
+#           credits run out), so Claude itself cannot report it. The PR number is
+#           read from the "/pr-review <n>" prompt in the transcript; runs that are
+#           not a PR review are ignored.
 #   gh CLI (GitHub) · AZURE_DEVOPS_TOKEN + curl (Azure DevOps)
 #
 # Always exits 0 so it never hides the original error.
@@ -13,10 +19,36 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CALLER_PR="${PR_NUMBER:-${PR_ID:-}}"
+
+if [ "${1:-}" = "--hook" ]; then
+  # Prints "<pr number>\t<message>", or nothing when this run is not a PR review.
+  HOOK_RESULT=$(python3 -c '
+import json, re, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+pr = ""
+try:
+    m = re.search(r"/(?:pr-review|review-pr)\s+#?(\d+)", open(d.get("transcript_path") or "").read())
+    pr = m.group(1) if m else ""
+except Exception:
+    pass
+if pr:
+    msg = "Claude API error (%s)" % (d.get("error") or "unknown")
+    if d.get("error_details"):
+        msg += ": %s" % d["error_details"]
+    print("%s\t%s" % (pr, " ".join(msg.split())))
+' 2>/dev/null)
+  [ -n "$HOOK_RESULT" ] || exit 0
+  CALLER_PR="${HOOK_RESULT%%$'\t'*}"
+  set -- "${HOOK_RESULT#*$'\t'}"
+fi
+
 # Strip credentials from URLs before the message goes on the PR.
 ERROR_MSG=$(printf '%s' "${1:-unknown error}" | sed -E 's#(https?://)[^/@[:space:]]+@#\1***@#g')
 
-CALLER_PR="${PR_NUMBER:-${PR_ID:-}}"
 # shellcheck disable=SC1091
 [ -f /tmp/pr_state.env ] && source /tmp/pr_state.env
 PR="${CALLER_PR:-${PR_NUMBER:-}}"

@@ -282,7 +282,7 @@ ranges = [(a, b or a) for a, b in re.findall(r'<!-- suggestion: lines? (\d+)(?:-
 mismatch = any(r != expected for r in ranges) or bool(ranges and str(d.get('line') or d.get('line_number') or '') not in expected)
 if mismatch:
     body = re.sub(r'<!-- suggestion: lines? \d+(?:-\d+)? -->\n?', '', body)
-    body = re.sub(r'^```suggestion\s*$', '```text', body, flags=re.M)
+    body = re.sub(r'^\x60{3}suggestion\s*$', '\x60\x60\x60text', body, flags=re.M)
     anchor = str(d.get('line') or d.get('line_number') or '')
     start = ''
 open('${PR_STATE_DIR:-/tmp}/pr_inline_body.md', 'w').write(body)
@@ -304,7 +304,7 @@ print('F_SUGGEST_MISMATCH=' + shlex.quote(str(mismatch)))
   fi
 
   if [ -n "$F_FID" ] && ! grep -q 'pr-reviewer:v1.2 kind=finding' ${PR_STATE_DIR:-/tmp}/pr_inline_body.md; then
-    printf '\n\n<!-- pr-reviewer:v1.2 kind=finding fid=%s sha=%s -->\n' "$F_FID" "$COMMIT_ID" >> ${PR_STATE_DIR:-/tmp}/tmp/pr_inline_body.md
+    printf '\n\n<!-- pr-reviewer:v1.2 kind=finding fid=%s sha=%s -->\n' "$F_FID" "$COMMIT_ID" >> ${PR_STATE_DIR:-/tmp}/pr_inline_body.md
   fi
 
   # Build optional suggestion-range args without tripping `set -u` on empty arrays.

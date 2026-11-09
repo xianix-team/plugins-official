@@ -10,7 +10,7 @@
 #   --hook: StopFailure JSON on stdin (error, error_details, transcript_path).
 #           Fires when the run ends on a Claude API error (e.g. billing_error when
 #           credits run out), so Claude itself cannot report it. The PR number is
-#           read from the "/pr-review <n>" prompt in the transcript; runs that are
+#           read from the latest user prompt ("/pr-review <n>") in the transcript; runs that are
 #           not a PR review are ignored. The comment is posted in the background
 #           because Claude Code kills StopFailure hooks as it exits.
 #   gh CLI (GitHub) · AZURE_DEVOPS_TOKEN + curl (Azure DevOps)
@@ -31,12 +31,27 @@ try:
     d = json.load(sys.stdin)
 except Exception:
     sys.exit(0)
-pr = ""
+# Only the latest prompt the user typed counts: tool results (file contents, diffs)
+# and earlier prompts in the session may mention other PR numbers.
+prompt = ""
 try:
-    m = re.search(r"/(?:pr-review|review-pr)\s+#?(\d+)", open(d.get("transcript_path") or "").read())
-    pr = m.group(1) if m else ""
+    for line in open(d.get("transcript_path") or ""):
+        e = json.loads(line)
+        if e.get("type") != "user" or e.get("isMeta"):
+            continue
+        c = (e.get("message") or {}).get("content")
+        if isinstance(c, list):
+            if any(isinstance(b, dict) and b.get("type") == "tool_result" for b in c):
+                continue
+            c = " ".join(b.get("text", "") for b in c if isinstance(b, dict))
+        if isinstance(c, str) and c.strip():
+            prompt = c
 except Exception:
     pass
+cmd = r"/(?:[\w-]+:)?(?:pr-review|review-pr)"
+m = (re.search(cmd + r"\s+#?(\d+)\b", prompt)
+     or re.search(cmd + r"</command-name>.*?<command-args>\s*#?(\d+)\b", prompt, re.S))
+pr = m.group(1) if m else ""
 if not pr:
     sys.exit(0)
 ADMIN = "Ask your Xianix admin to %s, then re-trigger the review."

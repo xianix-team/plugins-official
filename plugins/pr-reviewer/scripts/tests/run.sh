@@ -272,7 +272,7 @@ case "$1 $2" in
     case "$*" in
       *"--json headRefName --jq"*) echo "${FAKE_HEAD_BRANCH:-}" ;;
       *"--json commits"*) echo "${FAKE_COMMITS:-1}" ;;
-      *baseRefName*) echo "{\"baseRefName\":\"main\",\"headRefName\":\"feature\",\"headRefOid\":\"${FAKE_HEAD_OID:-}\",\"title\":\"t\",\"body\":\"\",\"author\":{\"login\":\"me\"}}" ;;
+      *baseRefName*) echo "{\"baseRefName\":\"${FAKE_BASE:-main}\",\"headRefName\":\"feature\",\"headRefOid\":\"${FAKE_HEAD_OID:-}\",\"title\":\"t\",\"body\":\"\",\"author\":{\"login\":\"me\"}}" ;;
       *) echo "{\"state\":\"${FAKE_PR_STATE:-OPEN}\",\"title\":\"t\",\"headRefName\":\"b\",\"url\":\"u\"}" ;;
     esac ;;
 esac
@@ -493,6 +493,36 @@ run_setup "$CLONE" FAKE_HEAD_OID="$PR_HEAD_OID" FAKE_COMMITS=1
 assert_eq "checkout OK: pr-setup.sh succeeds" "0" "$?"
 assert_eq "checkout OK: posts nothing" "0" "$(calls_matching 'pr comment')"
 assert_eq "checkout OK: no failure body written" "no" "$([ -f /tmp/pr_failure_body.md ] && echo yes || echo no)"
+
+# --- Unit 3: pr-setup.sh base-branch failures ---
+# An unrelated-history branch on origin, for the "no common history" case.
+git -C "$SETUP_SRC" checkout -q --orphan unrelated
+echo other > "$SETUP_SRC/b.txt"; git -C "$SETUP_SRC" add -A; git -C "$SETUP_SRC" commit -q -m unrelated
+git -C "$SETUP_SRC" push -q "$SETUP_ORIGIN" unrelated
+git -C "$SETUP_SRC" checkout -q -f "$PR_HEAD_OID"
+
+reset_failure_state
+CLONE=$(setup_clone yes)
+run_setup "$CLONE" FAKE_HEAD_OID="$PR_HEAD_OID" FAKE_BASE=deleted-base
+assert_eq "base (branch deleted): exits non-zero" "1" "$?"
+assert_eq "base (branch deleted): posts a comment" "1" "$(calls_matching 'pr comment 7')"
+assert_eq "base (branch deleted): base message" "yes" "$(has /tmp/pr_failure_body.md "Couldn't compare this pull request with its base branch")"
+assert_eq "base (branch deleted): stage named" "yes" "$(has /tmp/pr_failure_body.md '`base`')"
+assert_eq "base (branch deleted): reason names the branch" "yes" "$(has /tmp/pr_failure_body.md "could not resolve base branch 'deleted-base'")"
+
+reset_failure_state
+CLONE=$(setup_clone yes)
+run_setup "$CLONE" FAKE_HEAD_OID="$PR_HEAD_OID" FAKE_BASE=unrelated
+assert_eq "base (no common history): exits non-zero" "1" "$?"
+assert_eq "base (no common history): posts a comment" "1" "$(calls_matching 'pr comment 7')"
+assert_eq "base (no common history): reason" "yes" "$(has /tmp/pr_failure_body.md "no common history between base branch 'unrelated'")"
+
+reset_failure_state
+CLONE=$(setup_clone yes)
+run_setup "$CLONE" FAKE_HEAD_OID="$PR_HEAD_OID" FAKE_COMMITS=0
+assert_eq "base (stale, git has more commits): exits non-zero" "1" "$?"
+assert_eq "base (stale): posts a comment" "1" "$(calls_matching 'pr comment 7')"
+assert_eq "base (stale): reason" "yes" "$(has /tmp/pr_failure_body.md "base 'main' is stale")"
 
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"

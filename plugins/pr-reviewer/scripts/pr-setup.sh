@@ -208,6 +208,8 @@ if [ -n "${PR_NUMBER:-}" ] && [ -n "${EXPECTED_HEAD:-}" ] && [ "$HEAD_SHA" != "$
   die "checked-out HEAD ($HEAD_SHA) does not match PR headRefOid ($EXPECTED_HEAD) — checkout failed"
 fi
 
+SETUP_STAGE=base
+
 if git fetch origin "refs/heads/${BASE}" 2>/dev/null; then
   BASE_TIP=$(git rev-parse FETCH_HEAD)
 else
@@ -217,9 +219,10 @@ else
     git show-ref --verify --quiet "$candidate" && { BASE_TIP=$(git rev-parse "$candidate"); break; }
   done
 fi
-[ -n "$BASE_TIP" ] || { echo "ERROR: could not resolve base branch '${BASE}'" >&2; exit 1; }
+[ -n "$BASE_TIP" ] || die "could not resolve base branch '${BASE}'"
 
-BASE_SHA=$(git merge-base "$BASE_TIP" "$HEAD_SHA")
+BASE_SHA=$(git merge-base "$BASE_TIP" "$HEAD_SHA") \
+  || die "no common history between base branch '${BASE}' and the PR head"
 echo "Base: $BASE (tip $BASE_TIP -> merge-base $BASE_SHA)"
 echo "Head: $HEAD_SHA"
 
@@ -230,11 +233,11 @@ if [ -n "${PR_NUMBER:-}" ] && [ "$PLATFORM" = "github" ]; then
   echo "Git commit count: $GIT_COMMIT_COUNT"
   echo "GitHub commit count: $GH_COMMIT_COUNT"
   if [ "$GIT_COMMIT_COUNT" -gt "$GH_COMMIT_COUNT" ]; then
-    echo "ERROR: git reports more commits than GitHub — base is stale; re-fetch origin/${BASE} and retry" >&2
-    exit 1
+    die "git reports more commits than GitHub (git=${GIT_COMMIT_COUNT}, github=${GH_COMMIT_COUNT}) — base '${BASE}' is stale"
   fi
   echo "✓ Commit count OK (git=$GIT_COMMIT_COUNT, github=$GH_COMMIT_COUNT)"
 fi
+SETUP_STAGE=""
 
 # --- 5. Generate diffs and metadata ---
 git log --oneline "${BASE_SHA}..${HEAD_SHA}"

@@ -70,6 +70,10 @@ case "$STAGE" in
     TITLE="❌ PR Review failed"
     MESSAGE="Couldn't check out the latest commit of this pull request. If new commits were pushed while the review was starting, please re-trigger the review."
     ;;
+  base)
+    TITLE="❌ PR Review failed"
+    MESSAGE="Couldn't compare this pull request with its base branch. Check that the base branch still exists and shares history with this branch, then re-trigger the review."
+    ;;
   *)
     TITLE="❌ PR Review failed"
     MESSAGE="The review stopped during the **${STAGE}** step. Please re-trigger the review. If it keeps failing, contact your Xianix admin."

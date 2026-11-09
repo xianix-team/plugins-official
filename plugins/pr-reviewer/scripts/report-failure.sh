@@ -66,6 +66,10 @@ case "$STAGE" in
     TITLE="⏭️ PR Review skipped"
     MESSAGE="This pull request is no longer open, so the review was not run."
     ;;
+  checkout)
+    TITLE="❌ PR Review failed"
+    MESSAGE="Couldn't check out the latest commit of this pull request. If new commits were pushed while the review was starting, please re-trigger the review."
+    ;;
   *)
     TITLE="❌ PR Review failed"
     MESSAGE="The review stopped during the **${STAGE}** step. Please re-trigger the review. If it keeps failing, contact your Xianix admin."

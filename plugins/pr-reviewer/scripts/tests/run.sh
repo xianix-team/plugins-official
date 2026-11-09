@@ -269,7 +269,12 @@ case "$1 $2" in
   "api -X")
     [ "${FAKE_GH_FAIL:-0}" = 1 ] || [ "${FAKE_GH_PATCH_FAIL:-0}" = 1 ] && exit 1 ;;
   "pr view")
-    echo "{\"state\":\"${FAKE_PR_STATE:-OPEN}\",\"title\":\"t\",\"headRefName\":\"b\",\"url\":\"u\"}" ;;
+    case "$*" in
+      *"--json headRefName --jq"*) echo "${FAKE_HEAD_BRANCH:-}" ;;
+      *"--json commits"*) echo "${FAKE_COMMITS:-1}" ;;
+      *baseRefName*) echo "{\"baseRefName\":\"main\",\"headRefName\":\"feature\",\"headRefOid\":\"${FAKE_HEAD_OID:-}\",\"title\":\"t\",\"body\":\"\",\"author\":{\"login\":\"me\"}}" ;;
+      *) echo "{\"state\":\"${FAKE_PR_STATE:-OPEN}\",\"title\":\"t\",\"headRefName\":\"b\",\"url\":\"u\"}" ;;
+    esac ;;
 esac
 exit 0
 SH
@@ -429,6 +434,65 @@ reset_failure_state
     bash "${SCRIPT_DIR}/verify-pr.sh" >/dev/null 2>&1 )
 assert_eq "verify-pr (azure abandoned): exits non-zero" "1" "$?"
 assert_eq "verify-pr (azure abandoned): posts the skipped comment" "1" "$(calls_matching '-X POST .*/pullRequests/7/threads')"
+
+# --- Unit 2: pr-setup.sh checkout failures ---
+# Local bare repo whose path contains "github.com" so pr-setup.sh detects GitHub
+# without touching the network.
+SETUP_ORIGIN="$WORK/github.com/acme/demo.git"
+SETUP_SRC="$WORK/setup_src"
+mkdir -p "$(dirname "$SETUP_ORIGIN")"
+git init -q --bare "$SETUP_ORIGIN"
+git init -q -b main "$SETUP_SRC"
+git -C "$SETUP_SRC" config user.email "test@example.com"
+git -C "$SETUP_SRC" config user.name "Test"
+echo base > "$SETUP_SRC/a.txt"; git -C "$SETUP_SRC" add -A; git -C "$SETUP_SRC" commit -q -m base
+git -C "$SETUP_SRC" push -q "$SETUP_ORIGIN" main
+echo change >> "$SETUP_SRC/a.txt"; git -C "$SETUP_SRC" commit -q -am change
+PR_HEAD_OID=$(git -C "$SETUP_SRC" rev-parse HEAD)
+
+setup_clone() {  # setup_clone <with_pr_ref:yes|no> -> path of a fresh clone
+  local dir="$WORK/setup_clone_$RANDOM"
+  git -C "$SETUP_SRC" push -q -f "$SETUP_ORIGIN" ":refs/pull/7/head" 2>/dev/null || true
+  [ "$1" = yes ] && git -C "$SETUP_SRC" push -q -f "$SETUP_ORIGIN" "HEAD:refs/pull/7/head"
+  git clone -q "$SETUP_ORIGIN" "$dir"
+  echo "$dir"
+}
+
+run_setup() {  # run_setup <clone> [VAR=val ...] -> exit code
+  local dir="$1"; shift
+  ( cd "$dir" && env PATH="$FAKE_BIN:$PATH" FAKE_LOG="$FAKE_LOG" PR_NUMBER=7 "$@" \
+      bash "${SCRIPT_DIR}/pr-setup.sh" >/dev/null 2>"$WORK/setup.err" )
+}
+
+reset_failure_state
+CLONE=$(setup_clone no)
+run_setup "$CLONE" FAKE_HEAD_BRANCH=""
+assert_eq "checkout (no PR ref, no source branch): exits non-zero" "1" "$?"
+assert_eq "checkout (no PR ref, no source branch): posts a comment" "1" "$(calls_matching 'pr comment 7')"
+assert_eq "checkout (no PR ref, no source branch): checkout message" "yes" "$(has /tmp/pr_failure_body.md "Couldn't check out the latest commit")"
+assert_eq "checkout (no PR ref, no source branch): stage named" "yes" "$(has /tmp/pr_failure_body.md '`checkout`')"
+
+reset_failure_state
+CLONE=$(setup_clone no)
+run_setup "$CLONE" FAKE_HEAD_BRANCH="branch-that-does-not-exist"
+assert_eq "checkout (source branch missing on origin): exits non-zero" "1" "$([ $? -ne 0 ] && echo 1 || echo 0)"
+assert_eq "checkout (source branch missing on origin): posts a comment" "1" "$(calls_matching 'pr comment 7')"
+assert_eq "checkout (source branch missing on origin): reason is the failed command" "yes" "$(has /tmp/pr_failure_body.md 'command failed')"
+
+reset_failure_state
+printf 'export PROGRESS_PR=7\nexport PROGRESS_COMMENT_ID=555\n' > /tmp/pr_progress_comment.env
+CLONE=$(setup_clone yes)
+run_setup "$CLONE" FAKE_HEAD_OID=0000000000000000000000000000000000000000
+assert_eq "checkout (HEAD mismatch): exits non-zero" "1" "$?"
+assert_eq "checkout (HEAD mismatch): edits the progress comment" "1" "$(calls_matching 'api -X PATCH repos/{owner}/{repo}/issues/comments/555')"
+assert_eq "checkout (HEAD mismatch): reason names the mismatch" "yes" "$(has /tmp/pr_failure_body.md 'does not match PR headRefOid')"
+
+reset_failure_state
+CLONE=$(setup_clone yes)
+run_setup "$CLONE" FAKE_HEAD_OID="$PR_HEAD_OID" FAKE_COMMITS=1
+assert_eq "checkout OK: pr-setup.sh succeeds" "0" "$?"
+assert_eq "checkout OK: posts nothing" "0" "$(calls_matching 'pr comment')"
+assert_eq "checkout OK: no failure body written" "no" "$([ -f /tmp/pr_failure_body.md ] && echo yes || echo no)"
 
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"

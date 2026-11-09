@@ -23,12 +23,31 @@
 #   /tmp/pr_full_diff_numbered.patch
 #   Also removes stale run-scoped /tmp/pr_* state left by a prior invocation
 #   in a reused container/session (see the cleanup block below).
+#   On failure inside a reported stage (SETUP_STAGE), posts a failure PR
+#   comment via report-failure.sh before exiting.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib-azure-remote.sh"
+
+# --- Failure reporting: a non-zero exit while SETUP_STAGE is set posts a PR comment ---
+SETUP_STAGE=""
+SETUP_REASON=""
+die() {  # die <reason> — log, remember the reason for the PR comment, exit 1
+  SETUP_REASON="$1"
+  echo "ERROR: $1" >&2
+  exit 1
+}
+trap 'rc=$?; [ -z "$SETUP_REASON" ] && SETUP_REASON="command failed (exit ${rc}): ${BASH_COMMAND}"' ERR
+on_exit() {
+  local rc=$?
+  if [ "$rc" -ne 0 ] && [ -n "$SETUP_STAGE" ]; then
+    bash "${SCRIPT_DIR}/report-failure.sh" "$SETUP_STAGE" "${SETUP_REASON:-pr-setup.sh exited ${rc}}" || true
+  fi
+}
+trap on_exit EXIT
 
 # --- Clean up run-scoped state from a prior invocation in this container/session ---
 # These are per-run artifacts produced later in the pipeline by the *orchestrating
@@ -70,6 +89,7 @@ echo "PLATFORM=${PLATFORM} (from origin; env hint was '${PLATFORM_HINT_RAW:-unse
 CHECKED_OUT=""
 
 # --- 1. Checkout the revision under review ---
+SETUP_STAGE=checkout
 if [ -n "${PR_NUMBER:-}" ]; then
   case "$PLATFORM" in
     azure*) CANDIDATE_REFS="refs/pull/${PR_NUMBER}/merge refs/pull/${PR_NUMBER}/head" ;;
@@ -95,23 +115,22 @@ if [ -n "${PR_NUMBER:-}" ]; then
         fi
         PR_ID="${PR_ID:-${PR_NUMBER:-}}"
         if [ -z "$PR_ID" ] || [ -z "${API_BASE:-}" ] || [ -z "${AZURE_REPO:-}" ]; then
-          echo "ERROR: Azure checkout fallback needs PR_NUMBER and a parsed API_BASE/AZURE_REPO" >&2
-          exit 1
+          die "Azure checkout fallback needs PR_NUMBER and a parsed API_BASE/AZURE_REPO"
         fi
         if [ -z "${AZURE_DEVOPS_TOKEN:-}" ]; then
-          echo "ERROR: AZURE_DEVOPS_TOKEN unset — cannot resolve Azure PR source branch" >&2
-          exit 1
+          die "AZURE_DEVOPS_TOKEN unset — cannot resolve Azure PR source branch"
         fi
         SRC=$(curl -sS -u ":${AZURE_DEVOPS_TOKEN}" \
           "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullrequests/${PR_ID}?api-version=7.1" \
           | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('sourceRefName','').replace('refs/heads/',''))")
-        [ -n "$SRC" ] || { echo "ERROR: could not resolve Azure PR source branch for PR #${PR_ID}" >&2; exit 1; }
+        [ -n "$SRC" ] || die "could not resolve Azure PR source branch for PR #${PR_ID}"
         git fetch origin "refs/heads/${SRC}"
         git checkout --detach FETCH_HEAD
         CHECKED_OUT="refs/heads/${SRC}"
         ;;
       *)
         SRC=$(gh pr view "$PR_NUMBER" --json headRefName --jq '.headRefName')
+        [ -n "$SRC" ] || die "could not resolve the source branch of PR #${PR_NUMBER}"
         git fetch origin "refs/heads/${SRC}"
         git checkout --detach FETCH_HEAD
         CHECKED_OUT="refs/heads/${SRC}"
@@ -125,6 +144,7 @@ elif [ -n "${BRANCH_ARG:-}" ]; then
   CHECKED_OUT="refs/heads/${BRANCH_ARG}"
   echo "Checked out branch ${BRANCH_ARG} at $(git rev-parse HEAD)"
 fi
+SETUP_STAGE=""
 
 # --- 2. Resolve target branch name ---
 if [ -n "${PR_NUMBER:-}" ]; then
@@ -184,8 +204,8 @@ else
 fi
 
 if [ -n "${PR_NUMBER:-}" ] && [ -n "${EXPECTED_HEAD:-}" ] && [ "$HEAD_SHA" != "$EXPECTED_HEAD" ]; then
-  echo "ERROR: checked-out HEAD ($HEAD_SHA) does not match PR headRefOid ($EXPECTED_HEAD) — checkout failed" >&2
-  exit 1
+  SETUP_STAGE=checkout
+  die "checked-out HEAD ($HEAD_SHA) does not match PR headRefOid ($EXPECTED_HEAD) — checkout failed"
 fi
 
 if git fetch origin "refs/heads/${BASE}" 2>/dev/null; then

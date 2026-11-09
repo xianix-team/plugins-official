@@ -271,7 +271,7 @@ If `verify-pr.sh` exits non-zero, **stop the review** — the PR is missing or n
 
 ### Failure comments (`scripts/report-failure.sh`)
 
-When the review stops on an error, the PR must say so — never leave the "🔍 PR Review in Progress" comment stuck. `scripts/report-failure.sh <stage> "<reason>"` logs `ERROR: [pr-review] <stage>: <reason>`, redacts secrets from the reason, and edits the progress comment into a ❌ / ⏭️ comment (or posts a new one). It posts at most once per run and always exits 0. Scripts call it from their own failure paths; currently wired: `verify-pr.sh` (stage `pr-not-open`).
+When the review stops on an error, the PR must say so — never leave the "🔍 PR Review in Progress" comment stuck. `scripts/report-failure.sh <stage> "<reason>"` logs `ERROR: [pr-review] <stage>: <reason>`, redacts secrets from the reason, and edits the progress comment into a ❌ / ⏭️ comment (or posts a new one). It posts at most once per run and always exits 0. Scripts call it from their own failure paths; currently wired: `verify-pr.sh` (stage `pr-not-open`), `pr-setup.sh` (stage `checkout`).
 
 ## 3. Gather PR Context (do this BEFORE indexing the codebase)
 

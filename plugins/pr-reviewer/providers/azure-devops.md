@@ -641,7 +641,7 @@ The verdict string in the report MUST be exactly one of the four values below â€
 |---|---|---|
 | `APPROVE` | `10` | Approved |
 | `APPROVE WITH SUGGESTIONS` | `5` | Approved with suggestions (non-blocking) |
-| `REQUEST CHANGES` | `-10` | Rejected *(see `PR_REVIEWER_BLOCK_ON_CRITICAL` below)* |
+| `REQUEST CHANGES` | `-5` (default) / `-10` | Waiting for author by default; Rejected only with `PR_REVIEWER_BLOCK_ON_CRITICAL=true` *(see below)* |
 | `NEEDS DISCUSSION` | `-5` | Waiting for author |
 
 If the report contains a non-conforming verdict (e.g. `APPROVED WITH SUGGESTIONS`, `LGTM`, `NEEDS WORK`), normalize it to the closest match before mapping:

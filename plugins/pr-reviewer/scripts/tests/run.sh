@@ -243,6 +243,56 @@ JSON
 assert_eq "Gate A blocks (same sha): forced to carried_over" "yes" "$(bucket_has "$OUT2" carried_over "$FID_REMOVED")"
 assert_eq "Gate A blocks (same sha): fixed bucket stays empty" "no" "$(bucket_has "$OUT2" fixed "$FID_REMOVED")"
 
+# --- ado-post-review.sh: vote override + stale thread closing (stub curl) ---
+# Re-review with zero open findings must cast vote 10 even if the verdict says
+# REQUEST CHANGES, and must close the plugin's own in-progress/old summary threads.
+STUB="$WORK/stubbin"; mkdir -p "$STUB"; CALLS="$WORK/curl_calls.log"; : > "$CALLS"
+cat > "$STUB/curl" <<'STUBSH'
+#!/usr/bin/env bash
+args="$*"; echo "$args" >> "$CALLS_LOG"
+case "$args" in
+  *connectionData*) echo '{"authenticatedUser":{"id":"me-id"}}' ;;
+  *"-X PUT"*"/reviewers/"*) printf '{}\nHTTP_STATUS:200' ;;
+  *"-X PATCH"*) printf '200' ;;
+  *"-X POST"*"/threads?"*) printf '{"id":99}\nHTTP_STATUS:200' ;;
+  *"/threads?api-version"*) echo '{"value":[
+    {"id":1,"status":"active","comments":[{"author":{"id":"me-id"},"content":"PR Review in Progress"}]},
+    {"id":2,"status":"active","comments":[{"author":{"id":"me-id"},"content":"old <!-- pr-reviewer:v1.2 kind=summary sha=abc -->"}]},
+    {"id":3,"status":"active","comments":[{"author":{"id":"someone"},"content":"PR Review in Progress"}]},
+    {"id":99,"status":"active","comments":[{"author":{"id":"me-id"},"content":"new <!-- pr-reviewer:v1.2 kind=summary sha=def -->"}]}]}' ;;
+  *) echo '{}' ;;
+esac
+STUBSH
+chmod +x "$STUB/curl"
+ADO_BACKUP="$WORK/ado_tmp_backup"; mkdir -p "$ADO_BACKUP"
+for f in pr_azure.env pr_thread_body.md pr_inline_findings.jsonl pr_reconcile.json; do
+  [ -f "/tmp/$f" ] && cp "/tmp/$f" "$ADO_BACKUP/$f"
+done
+printf 'API_BASE=https://dev.azure.com/o/p\nAZURE_REPO=r\nAZURE_ORG=o\nPR_ID=7\n' > /tmp/pr_azure.env
+echo "body" > /tmp/pr_thread_body.md; : > /tmp/pr_inline_findings.jsonl
+echo '{"fixed":[{"thread_ref":"5"}],"carried_over":[],"reopened":[],"new":[]}' > /tmp/pr_reconcile.json
+ADO_OUT=$(cd "$REPO" && PATH="$STUB:$PATH" CALLS_LOG="$CALLS" AZURE_DEVOPS_TOKEN=x \
+  VERDICT="REQUEST CHANGES" REVIEW_MODE=rereview bash "${SCRIPT_DIR}/ado-post-review.sh" 2>&1 || true)
+assert_eq "rereview with no open findings casts vote 10" "yes" \
+  "$(grep -q '"vote": 10' "$CALLS" && echo yes || echo no)"
+assert_eq "stale in-progress thread 1 closed" "yes" \
+  "$(grep -q 'threads/1?api-version.*\|-X PATCH.*closed.*threads/1?' "$CALLS" && echo yes || echo no)"
+assert_eq "stale summary thread 2 closed" "yes" \
+  "$(grep -q 'closed.*threads/2?' "$CALLS" && echo yes || echo no)"
+assert_eq "other author's thread 3 untouched" "no" \
+  "$(grep -q 'closed.*threads/3?' "$CALLS" && echo yes || echo no)"
+assert_eq "newly posted summary thread 99 kept" "no" \
+  "$(grep -q 'closed.*threads/99?' "$CALLS" && echo yes || echo no)"
+: > "$CALLS"
+echo '{"fixed":[],"carried_over":[{"fid":"a"}],"reopened":[],"new":[]}' > /tmp/pr_reconcile.json
+(cd "$REPO" && PATH="$STUB:$PATH" CALLS_LOG="$CALLS" AZURE_DEVOPS_TOKEN=x \
+  VERDICT="REQUEST CHANGES" REVIEW_MODE=rereview bash "${SCRIPT_DIR}/ado-post-review.sh" >/dev/null 2>&1 || true)
+assert_eq "rereview with open findings keeps -5 vote" "yes" \
+  "$(grep -q '"vote": -5' "$CALLS" && echo yes || echo no)"
+for f in pr_azure.env pr_thread_body.md pr_inline_findings.jsonl pr_reconcile.json; do
+  if [ -f "$ADO_BACKUP/$f" ]; then cp "$ADO_BACKUP/$f" "/tmp/$f"; else rm -f "/tmp/$f"; fi
+done
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]

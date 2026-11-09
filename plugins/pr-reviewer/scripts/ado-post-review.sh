@@ -102,6 +102,28 @@ case "${PR_REVIEWER_BLOCK_ON_CRITICAL:-false}" in
   true|True|TRUE|1|yes|Yes|YES) BLOCK_ON_CRITICAL=true ;;
   *)                              BLOCK_ON_CRITICAL=false ;;
 esac
+# Re-review safeguard: if every prior finding is fixed and nothing is carried over,
+# reopened, or new, the PR has no open plugin findings. Never leave a stale blocking
+# vote (-5/-10) in that case — a required-reviewer branch policy would keep the PR
+# blocked ("<agent> must approve") even though all comments were resolved.
+if [ "${REVIEW_MODE}" = "rereview" ] && [ -f /tmp/pr_reconcile.json ]; then
+  OPEN_FINDINGS=$(python3 -c "
+import json
+try:
+    d = json.load(open('/tmp/pr_reconcile.json'))
+    print(sum(len(d.get(k) or []) for k in ('carried_over', 'reopened', 'new')))
+except Exception:
+    print(-1)" 2>/dev/null || echo -1)
+  if [ "${OPEN_FINDINGS}" = "0" ]; then
+    case "${VERDICT}" in
+      "APPROVE"|"APPROVE WITH SUGGESTIONS") ;;
+      *)
+        echo "Re-review: no open findings remain — overriding verdict '${VERDICT}' to APPROVE so a stale blocking vote is cleared"
+        VERDICT="APPROVE"
+        ;;
+    esac
+  fi
+fi
 case "${VERDICT}" in
   "APPROVE")                     VOTE=10  ;;
   "APPROVE WITH SUGGESTIONS")    VOTE=5   ;;
@@ -114,6 +136,7 @@ esac
 
 # --- 4. Cast vote (never abort posting on vote failure) ---
 REVIEWER_ID=""
+VOTE_FAILED=0
 if [ -n "${AZURE_ORG:-}" ]; then
   REVIEWER_ID=$(curl -sS -u ":${AZURE_DEVOPS_TOKEN}" \
     "https://dev.azure.com/${AZURE_ORG}/_apis/connectionData?api-version=7.1-preview.1" \
@@ -134,7 +157,8 @@ except Exception:
   print('')" 2>/dev/null || true)
 fi
 if [ -z "$REVIEWER_ID" ]; then
-  echo "WARN: could not resolve reviewer ID — vote will not be cast; continuing with summary + inline" >&2
+  VOTE_FAILED=1
+  echo "ERROR: could not resolve reviewer ID — vote ${VOTE} NOT cast; a previous blocking vote (or a required-reviewer policy) will keep the PR blocked. Continuing with summary + inline." >&2
 else
   VOTE_BODY=$(printf '{"vote": %s, "id": "%s"}' "$VOTE" "$REVIEWER_ID")
   VOTE_RESP=$(curl -sS -w "\nHTTP_STATUS:%{http_code}" \
@@ -153,12 +177,14 @@ else
     if echo "${ADD_STATUS:-}" | grep -qE '^2'; then
       echo "Vote ${VOTE} cast via reviewer add (HTTP $ADD_STATUS)"
     else
-      echo "WARN: vote failed PUT HTTP ${VOTE_STATUS:-?} and POST HTTP ${ADD_STATUS:-?} — continuing" >&2
+      VOTE_FAILED=1
+      echo "ERROR: vote ${VOTE} NOT cast (PUT HTTP ${VOTE_STATUS:-?}, POST HTTP ${ADD_STATUS:-?}) — any previous vote on this PR is unchanged and a required-reviewer policy may keep blocking it. The token's account must be allowed to vote (Code Read & Write; a real user, not a service principal). Continuing with summary + inline." >&2
     fi
   else
     echo "Vote ${VOTE} cast (HTTP $VOTE_STATUS)"
   fi
 fi
+export VOTE_FAILED
 
 # --- 5. Post summary thread ---
 # Azure PropertiesCollection expects {"$type","$value"} wrappers. Bare custom strings
@@ -179,6 +205,7 @@ if "pr-reviewer:v1.2 kind=summary" not in body:
 PY
 
 MARKER_VERIFY_FAILED=0
+NEW_SUMMARY_THREAD_ID=""
 
 # Seed first payload (full PropertiesCollection form), then retry in bash if needed
 python3 - <<'PY' > /tmp/pr_thread_payload.json
@@ -210,6 +237,11 @@ post_summary() {
     # stripped on create (that's exactly why the markdown/bare fallbacks
     # above exist) — re-inspect the response body for the marker we sent.
     SUM_RESP_BODY=$(echo "$SUM_RESP" | sed '$d')
+    NEW_SUMMARY_THREAD_ID=$(echo "$SUM_RESP_BODY" | python3 -c "import sys,json
+try:
+  print(json.load(sys.stdin).get('id',''))
+except Exception:
+  print('')" 2>/dev/null || true)
     if ! echo "$SUM_RESP_BODY" | grep -q 'pr-reviewer:v1\.2.*kind=summary'; then
       echo "ERROR: posted summary thread is missing its expected marker in the response body — re-review detection will fail on the next run." >&2
       MARKER_VERIFY_FAILED=$((MARKER_VERIFY_FAILED + 1))
@@ -243,6 +275,49 @@ print(json.dumps({
 PY
     post_summary bare || true
   fi
+fi
+
+# --- 5a. Close plugin-owned bookkeeping threads that are now stale ---
+# The "Review in Progress" thread and superseded summary threads are created Active and
+# were never closed, so a "Comment requirements" branch policy kept blocking completion
+# after the author resolved every real comment. Only threads authored by THIS token's
+# account are touched; the summary just posted is kept. Detection ignores thread status,
+# so closing them does not affect re-review reconciliation. Warn-only on any failure.
+STALE_CLOSED=0
+if [ -n "${REVIEWER_ID:-}" ] && [ -n "${NEW_SUMMARY_THREAD_ID:-}" ] && [ "${PR_REVIEWER_CLOSE_STALE_THREADS:-true}" != "false" ]; then
+  STALE_IDS=$(curl -sS -u ":${AZURE_DEVOPS_TOKEN}" \
+    "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads?api-version=7.1" \
+    | KEEP_ID="${NEW_SUMMARY_THREAD_ID}" ME="${REVIEWER_ID}" python3 -c "
+import sys, json, os, re
+keep, me = os.environ.get('KEEP_ID', ''), os.environ.get('ME', '').lower()
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for t in data.get('value', []):
+    if t.get('isDeleted') or str(t.get('id')) == keep or t.get('status', 'active') not in ('active', 'pending'):
+        continue
+    if t.get('threadContext'):
+        continue  # inline finding threads are handled by reconciliation
+    comments = t.get('comments') or []
+    first = comments[0] if comments else {}
+    if (first.get('author') or {}).get('id', '').lower() != me:
+        continue
+    body = first.get('content') or ''
+    if 'PR Review in Progress' in body or re.search(r'pr-reviewer:v1\.2\s+kind=summary', body):
+        print(t['id'])
+" 2>/dev/null || true)
+  for TID in $STALE_IDS; do
+    CODE=$(curl -sS -o /dev/null -w "%{http_code}" -H "Content-Type: application/json" \
+      -u ":${AZURE_DEVOPS_TOKEN}" -X PATCH -d '{"status":"closed"}' \
+      "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads/${TID}?api-version=7.1" || true)
+    if echo "${CODE:-}" | grep -qE '^2'; then
+      STALE_CLOSED=$((STALE_CLOSED + 1))
+    else
+      echo "WARN: could not close stale thread ${TID} (HTTP ${CODE:-?})" >&2
+    fi
+  done
+  echo "Closed ${STALE_CLOSED} stale plugin thread(s) (in-progress / superseded summaries)"
 fi
 
 # --- 5b. Re-review: reconcile fixed findings ---

@@ -2,7 +2,7 @@
 # report-failure.sh — post a "PR Review failed" comment when the review stops on an error.
 #
 # Usage:
-#   bash "${CLAUDE_PLUGIN_ROOT}/scripts/report-failure.sh" "<what failed>"
+#   bash "${CLAUDE_PLUGIN_ROOT}/scripts/report-failure.sh" "<what failed>" ["<what to do>"] ["<error code>"]
 #   bash "${CLAUDE_PLUGIN_ROOT}/scripts/report-failure.sh" --hook   # StopFailure hook (hooks/hooks.json)
 #
 # Inputs:
@@ -11,7 +11,8 @@
 #           Fires when the run ends on a Claude API error (e.g. billing_error when
 #           credits run out), so Claude itself cannot report it. The PR number is
 #           read from the "/pr-review <n>" prompt in the transcript; runs that are
-#           not a PR review are ignored.
+#           not a PR review are ignored. The comment is posted in the background
+#           because Claude Code kills StopFailure hooks as it exits.
 #   gh CLI (GitHub) · AZURE_DEVOPS_TOKEN + curl (Azure DevOps)
 #
 # Always exits 0 so it never hides the original error.
@@ -22,7 +23,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CALLER_PR="${PR_NUMBER:-${PR_ID:-}}"
 
 if [ "${1:-}" = "--hook" ]; then
-  # Prints "<pr number>\t<message>", or nothing when this run is not a PR review.
+  # Prints "<pr number>\t<what happened>\t<what to do>\t<error code>", or nothing
+  # when this run is not a PR review.
   HOOK_RESULT=$(python3 -c '
 import json, re, sys
 try:
@@ -35,15 +37,34 @@ try:
     pr = m.group(1) if m else ""
 except Exception:
     pass
-if pr:
-    msg = "Claude API error (%s)" % (d.get("error") or "unknown")
-    if d.get("error_details"):
-        msg += ": %s" % d["error_details"]
-    print("%s\t%s" % (pr, " ".join(msg.split())))
+if not pr:
+    sys.exit(0)
+ADMIN = "Ask your Xianix admin to %s, then re-trigger the review."
+WAIT = "Wait a few minutes, then re-trigger the review."
+plain = {
+    "billing_error":          ("The Claude API account has run out of credits.", ADMIN % "add credits"),
+    "authentication_failed":  ("The Claude API key is invalid or has expired.", ADMIN % "update the Claude API key"),
+    "account_on_hold":        ("The Claude API account is on hold.", ADMIN % "check the Claude account"),
+    "oauth_org_not_allowed":  ("This Claude account is not allowed to run the review.", ADMIN % "check the Claude account"),
+    "cloud_credential_error": ("The cloud credentials for Claude are not working.", ADMIN % "check the cloud credentials"),
+    "model_not_found":        ("The Claude model set for the review is not available.", ADMIN % "check the model setting"),
+    "rate_limit":             ("Too many requests were sent to the Claude API at once.", WAIT),
+    "overloaded":             ("The Claude API is busy right now.", WAIT),
+    "server_error":           ("The Claude API had a temporary problem.", WAIT),
+}
+code = d.get("error") or "unknown"
+what, todo = plain.get(code, ("The Claude API returned an error.",
+                              "Please re-trigger the review. If it keeps failing, contact your Xianix admin."))
+print("\t".join([pr, what, todo, code]))
 ' 2>/dev/null)
   [ -n "$HOOK_RESULT" ] || exit 0
-  CALLER_PR="${HOOK_RESULT%%$'\t'*}"
-  set -- "${HOOK_RESULT#*$'\t'}"
+  IFS=$'\t' read -r HOOK_PR HOOK_WHAT HOOK_TODO HOOK_CODE <<< "$HOOK_RESULT"
+  # Claude Code exits right after StopFailure and kills its hooks before a comment
+  # can be posted, so post from a background copy of this script and return now.
+  PR_NUMBER="$HOOK_PR" nohup bash "${BASH_SOURCE[0]}" \
+    "$HOOK_WHAT The review could not run." "$HOOK_TODO" "$HOOK_CODE" \
+    </dev/null >/dev/null 2>&1 &
+  exit 0
 fi
 
 # Strip credentials from URLs before the message goes on the PR.
@@ -54,11 +75,15 @@ ERROR_MSG=$(printf '%s' "${1:-unknown error}" | sed -E 's#(https?://)[^/@[:space
 PR="${CALLER_PR:-${PR_NUMBER:-}}"
 [ -n "$PR" ] || { echo "WARN: no PR number — cannot post failure comment" >&2; exit 0; }
 
+NEXT_STEP="${2:-Please re-trigger the review. If it keeps failing, contact your Xianix admin.}"
 BODY="❌ PR Review failed
 
 ${ERROR_MSG}
 
-Please re-trigger the review. If it keeps failing, contact your Xianix admin."
+**What to do:** ${NEXT_STEP}"
+[ -n "${3:-}" ] && BODY="${BODY}
+
+<sub>Error code: \`${3}\`</sub>"
 
 echo "ERROR: [pr-review] ${ERROR_MSG}" >&2
 

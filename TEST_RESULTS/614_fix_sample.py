@@ -3,7 +3,7 @@
 
 def is_adult(age):
     """Return True if age is 18 or older."""
-    return age > 18
+    return age >= 18
 
 
 def average(values):

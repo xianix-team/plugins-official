@@ -418,6 +418,52 @@ set_world '{"issues": {"acme/planning#3": {"body": "API only now"}}, "comments":
 OUT=$(PRG_WS="$WORK/ws11" bash "$SCRIPT_DIR/group-discover.sh" --work-item acme/planning#3 2>/dev/null)
 assert_eq "links removed from the issue -> too-small" "too-small" "$(value_of STATUS "$OUT")"
 
+echo "=== --from-event: one agent rule per platform ==="
+
+EVENTS=$(cd "$SCRIPT_DIR" && python3 - <<'PY'
+import group_platform as g
+gh = {"platform": "github", "repository-url": "https://github.com/acme/web.git", "work-item-repository": "acme/planning"}
+cases = [
+    {**gh, "action": "synchronize", "pr-number": 7},
+    {**gh, "action": "labeled", "issue-number": 1},
+    {**gh, "action": "created", "issue-number": 7, "issue-is-pr": "u", "comment-body": "@xianix review group"},
+    {**gh, "action": "created", "issue-number": 7, "issue-is-pr": "u", "comment-body": "@xianix review group <!-- xianix:group-follow-up -->"},
+    {**gh, "action": "created", "issue-number": 7, "issue-is-pr": "u", "comment-body": "thanks"},
+    {"platform": "azuredevops", "event-type": "workitem.updated", "work-item-url": "https://dev.azure.com/o/_apis/wit/workItems/5/updates/2"},
+    {"platform": "azuredevops", "event-type": "git.pullrequest.updated", "pr-number": 12, "pr-repo-url": "https://dev.azure.com/o/p/_git/r"},
+    {"platform": "azuredevops", "event-type": "ms.vss-code.git-pullrequest-comment-event", "comment-pr-number": 12,
+     "comment-pr-repo-url": "https://dev.azure.com/o/p/_git/r", "comment-body": "@xianix review group"},
+    {"platform": "azuredevops", "event-type": "git.pullrequest.merged"},
+    {},
+]
+for c in cases:
+    args, settle, skip = g.event_args(c)
+    print(skip if skip else f"{' '.join(args)} | {settle}")
+PY
+)
+assert_eq "GitHub push -> --pr with the repo, quiet period" "--pr 7 --repo https://github.com/acme/web.git | 180" "$(sed -n 1p <<< "$EVENTS")"
+assert_eq "GitHub label -> --work-item" "--work-item acme/planning#1 | 0" "$(sed -n 2p <<< "$EVENTS")"
+assert_eq "GitHub review request -> --force" "--pr 7 --repo https://github.com/acme/web.git --force | 0" "$(sed -n 3p <<< "$EVENTS")"
+assert_eq "GitHub follow-up -> no --force" "--pr 7 --repo https://github.com/acme/web.git | 0" "$(sed -n 4p <<< "$EVENTS")"
+assert_eq "GitHub other PR comment -> skipped" "the comment is not a group review request" "$(sed -n 5p <<< "$EVENTS")"
+assert_eq "ADO work item update -> --work-item" "--work-item https://dev.azure.com/o/_apis/wit/workItems/5/updates/2 | 0" "$(sed -n 6p <<< "$EVENTS")"
+assert_eq "ADO push -> --pr with the repo, quiet period" "--pr 12 --repo https://dev.azure.com/o/p/_git/r | 180" "$(sed -n 7p <<< "$EVENTS")"
+assert_eq "ADO review request -> --force" "--pr 12 --repo https://dev.azure.com/o/p/_git/r --force | 0" "$(sed -n 8p <<< "$EVENTS")"
+assert_eq "ADO other event -> skipped" "event 'git.pullrequest.merged' is not a group event" "$(sed -n 9p <<< "$EVENTS")"
+assert_eq "no event -> skipped" "no pull request or work item in the event" "$(sed -n 10p <<< "$EVENTS")"
+
+# End to end through group-discover.sh, from a folder that is not a checkout of the PR's repo.
+OUT=$(cd "$WORK" && PRG_WS="$WORK/ws20" XIANIX_INPUTS='{"platform":"github","action":"synchronize","pr-number":7,"repository-url":"https://github.com/acme/web.git"}' \
+  PR_GROUP_PUSH_SETTLE_SECONDS=0 bash "$SCRIPT_DIR/group-discover.sh" --from-event 2>/dev/null)
+assert_eq "--from-event push finds the group (repo from the event)" "group wi:github:acme/planning#1 true" \
+  "$(value_of STATUS "$OUT") $(value_of GROUP_KEY "$OUT") $(value_of TRIGGER_MEMBER "$OUT")"
+OUT=$(PRG_WS="$WORK/ws20" XIANIX_INPUTS='{"platform":"github","action":"labeled","issue-number":1,"work-item-repository":"acme/planning"}' \
+  bash "$SCRIPT_DIR/group-discover.sh" --from-event 2>/dev/null)
+assert_eq "--from-event label -> work item group" "group" "$(value_of STATUS "$OUT")"
+OUT=$(PRG_WS="$WORK/ws20" XIANIX_INPUTS='{"platform":"github","action":"created","issue-number":7,"issue-is-pr":"u","comment-body":"nice"}' \
+  bash "$SCRIPT_DIR/group-discover.sh" --from-event 2>/dev/null)
+assert_eq "--from-event non-group comment -> skipped" "skipped" "$(value_of STATUS "$OUT")"
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]

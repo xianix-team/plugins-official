@@ -7,7 +7,8 @@ starts, and without help from the agent that started the container. Doing this i
 tested file keeps the bash scripts and the command playbook small.
 
 Called by the group-*.sh scripts, not directly:
-  group_platform.py discover   --work-item REF | --pr N   [--force]
+  group_platform.py discover   --work-item REF | --pr N [--repo URL]   [--force]
+  group_platform.py event      — turn the webhook event (XIANIX_INPUTS) into discover arguments
   group_platform.py announce
   group_platform.py lock acquire | heartbeat | release | next
 
@@ -31,6 +32,8 @@ Settings (env, all optional):
   PR_GROUP_STATE_STORE      auto auto | ref | comment
   PR_GROUP_TIME_LIMIT_SECONDS 1500 time this container may spend; another pass only if it fits
   PR_GROUP_MAX_PASSES       2    reviews in one container before handing over to a new run
+  PR_GROUP_PUSH_SETTLE_SECONDS 180 quiet period for PR events (opened, pushed, edited)
+  XIANIX_INPUTS             the agent's rule inputs (JSON), read by `event`
   GITHUB_TOKEN / AZURE_DEVOPS_TOKEN
   GITHUB_API_URL (https://api.github.com), GITHUB_GRAPHQL_URL ({api}/graphql) — for tests
 """
@@ -58,6 +61,7 @@ LOCK_VERIFY = float(os.environ.get("PR_GROUP_LOCK_VERIFY_SECONDS", "3") or 3)
 STATE_STORE = os.environ.get("PR_GROUP_STATE_STORE", "auto").strip().lower()
 TIME_LIMIT = int(os.environ.get("PR_GROUP_TIME_LIMIT_SECONDS", "1500") or 1500)
 MAX_PASSES = max(1, int(os.environ.get("PR_GROUP_MAX_PASSES", "2") or 2))
+PUSH_SETTLE = int(os.environ.get("PR_GROUP_PUSH_SETTLE_SECONDS", "180") or 180)
 GH_API = os.environ.get("GITHUB_API_URL", "https://api.github.com").rstrip("/")
 GH_GRAPHQL = os.environ.get("GITHUB_GRAPHQL_URL", GH_API + "/graphql")
 MAX_WORK_ITEMS_PER_PR = 5
@@ -67,6 +71,7 @@ MAX_ISSUE_PR_LINKS = 20  # PR links read from the issue description and comments
 STATE_MARKER = "xianix:pr-group-state"
 FOLLOW_UP_MARKER = "xianix:group-follow-up"
 MEMBER_MARKER = "xianix:group-member"  # on the note that tells a PR it is in a group
+REVIEW_REQUEST = "@xianix review group"
 OWN_MARKER = "xianix:"  # every comment the plugin writes carries one; such comments are not links
 
 GITHUB, AZURE = "github", "azure"
@@ -734,7 +739,7 @@ def work_item_labelled(d):
 
 def build_group(args):
     """Discovers the group for --work-item / --pr. Returns (discovery, flags); writes nothing."""
-    work_item = pr = None
+    work_item = pr = repo_url = None
     force = False
     it = iter(args)
     for a in it:
@@ -742,10 +747,12 @@ def build_group(args):
             work_item = next(it, "")
         elif a == "--pr":
             pr = next(it, "").lstrip("#")
+        elif a == "--repo":
+            repo_url = next(it, "")
         elif a == "--force":
             force = True
         else:
-            sys.exit(f"ERROR: unknown argument {a!r} (expected --work-item REF | --pr N, --force)")
+            sys.exit(f"ERROR: unknown argument {a!r} (expected --work-item REF | --pr N [--repo URL], --force)")
     if not work_item and not pr:
         sys.exit("ERROR: pass --work-item <owner/repo#N | Azure DevOps work item URL> or --pr <N>")
 
@@ -761,7 +768,7 @@ def build_group(args):
     else:
         if not pr.isdigit():
             sys.exit(f"ERROR: --pr needs a number, got {pr!r}")
-        origin = git_origin()
+        origin = repo_url or git_origin()
         if parse_github_repo(origin):
             d = gh_discover_from_pr(int(pr), origin)
         elif parse_ado_repo(origin):
@@ -783,6 +790,60 @@ def build_group(args):
     d["newest-push-at"] = iso(max(pushes)) if pushes else ""
     d["args"] = list(args)
     return d, {"force": force}
+
+
+def event_args(inputs):
+    """Which discover arguments a webhook event means. One rule per platform passes every
+    event here, so this decides --work-item / --pr / --force and the quiet period.
+    Returns (args, settle_seconds, skip_reason)."""
+    g = lambda k: str(inputs.get(k) if inputs.get(k) is not None else "").strip()
+    body = g("comment-body")
+
+    def review_request(number, repo):
+        if REVIEW_REQUEST not in body.lower():
+            return None, 0, "the comment is not a group review request"
+        args = ["--pr", number] + (["--repo", repo] if repo else [])
+        # a follow-up comment from a run that ran out of time continues normally; a person's request re-reviews all
+        return (args if FOLLOW_UP_MARKER in body else args + ["--force"]), 0, ""
+
+    event_type = g("event-type")
+    if event_type:  # Azure DevOps
+        if event_type.startswith("workitem."):
+            url = g("work-item-url")
+            return (["--work-item", url], 0, "") if url else (None, 0, "no work item URL in the event")
+        if event_type in ("git.pullrequest.created", "git.pullrequest.updated"):
+            if not g("pr-number"):
+                return None, 0, "no pull request number in the event"
+            repo = g("pr-repo-url")
+            return ["--pr", g("pr-number")] + (["--repo", repo] if repo else []), PUSH_SETTLE, ""
+        if "comment" in event_type and g("comment-pr-number"):
+            return review_request(g("comment-pr-number"), g("comment-pr-repo-url"))
+        return None, 0, f"event {event_type!r} is not a group event"
+
+    repo = g("repository-url")  # GitHub
+    if g("pr-number"):
+        return ["--pr", g("pr-number")] + (["--repo", repo] if repo else []), PUSH_SETTLE, ""
+    if g("issue-number"):
+        if g("issue-is-pr"):
+            return review_request(g("issue-number"), repo)
+        if not g("work-item-repository"):
+            return None, 0, "no repository for the issue"
+        return ["--work-item", f"{g('work-item-repository')}#{g('issue-number')}"], 0, ""
+    return None, 0, "no pull request or work item in the event"
+
+
+def event(_args):
+    try:
+        inputs = json.loads(os.environ.get("XIANIX_INPUTS") or "{}")
+    except ValueError:
+        inputs = {}
+    args, settle, skip = event_args(inputs if isinstance(inputs, dict) else {})
+    if skip:
+        print(f"EVENT_SKIP={skip}")
+        return
+    print(f"EVENT_SETTLE={settle}")
+    for a in args:
+        print(f"EVENT_ARG={a}")
 
 
 def discover(args):
@@ -1136,6 +1197,8 @@ def main():
     try:
         if cmd == "discover":
             discover(args)
+        elif cmd == "event":
+            event(args)
         elif cmd == "announce":
             announce(args)
         elif cmd == "lock":

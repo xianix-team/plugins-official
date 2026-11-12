@@ -1,7 +1,7 @@
 ---
 name: pr-group-review
-description: Review a GROUP of related pull requests (one feature split across several repositories, linked to one labelled work item) in one run — each PR gets its normal review plus cross-repo findings and a shared group summary. Usage: /pr-group-review --work-item <owner/repo#N | Azure DevOps work item URL> | --pr <N> [--force] | <PR URL | repo#n | repo@branch …>
-argument-hint: --work-item <ref> | --pr <n> [--force] | <pr-url | repo#n | repo@branch ...>
+description: Review a GROUP of related pull requests (one feature split across several repositories, linked to one labelled work item) in one run — each PR gets its normal review plus cross-repo findings and a shared group summary. Usage: /pr-group-review --from-event | --work-item <owner/repo#N | Azure DevOps work item URL> | --pr <N> [--force] | <PR URL | repo#n | repo@branch …>
+argument-hint: --from-event | --work-item <ref> | --pr <n> [--force] | <pr-url | repo#n | repo@branch ...>
 ---
 
 Run a unified review of the pull-request group for $ARGUMENTS.
@@ -22,7 +22,7 @@ Execute every step autonomously and in order, without asking for confirmation. I
 
 Never run the single-PR scripts (`pr-setup.sh`, `gh-post-review.sh`, …) yourself during a group review, and never read or write `/tmp/pr_*` — use the `group-*.sh` scripts below.
 
-**Arguments.** `--work-item <ref>` (the label was added to that work item, or its PR links changed), `--pr <N>` (a PR in the current repository was opened or pushed, or someone asked for a group review on it), `--force` (review every member, even unchanged ones). PR URLs / `repo#n` / `repo@branch` without `--work-item`/`--pr` are a **local run**: skip D1–D3, D5 and every lock call; start at G1 with those members.
+**Arguments.** `--from-event` (what the Xianix agent passes: the script reads the webhook event from `XIANIX_INPUTS` and picks one of the modes below itself), `--work-item <ref>` (the label was added to that work item, or its PR links changed), `--pr <N>` (a PR in the current repository was opened or pushed, or someone asked for a group review on it), `--force` (review every member, even unchanged ones). PR URLs / `repo#n` / `repo@branch` without `--from-event`/`--work-item`/`--pr` are a **local run**: skip D1–D3, D5 and every lock call; start at G1 with those members.
 
 **The lock.** Once D2 says `LOCK=acquired`, this run owns the group. If you stop for **any** reason after that — a failed step included — run `group-lock.sh release` before stopping, so the next push is not blocked. If any lock call prints `LOCK=lost`, another run took the group over (this one was too slow): stop at once without posting and without releasing.
 
@@ -66,7 +66,7 @@ If the scripts cannot be resolved, **stop**. Do not hand-roll replacements.
 
 ## D1. Discover the group (one Bash call)
 
-Pass `--work-item …` / `--pr …` / `--force` exactly as given in `$ARGUMENTS`:
+Pass `--from-event` / `--work-item …` / `--pr …` / `--force` exactly as given in `$ARGUMENTS`:
 
 ```bash
 source /tmp/prg_plugin.env
@@ -81,6 +81,7 @@ The script reads the work item, its label and the linked PRs, waits for the quie
 | `not-labelled` | Print `Group review: <WORK_ITEM> does not have the group-review label — nothing to do` and stop. |
 | `too-small` | Print `Group review: <WORK_ITEM> has fewer than 2 open PRs — nothing to do` and stop. |
 | `no-work-item` | Print `Group review: PR #<n> is not linked to a labelled work item — nothing to do` and stop. |
+| `skipped` | (`--from-event` only) the event is not a group event. Print `Group review: <REASON> — nothing to do` and stop. |
 
 None of these stop cases is a failure.
 

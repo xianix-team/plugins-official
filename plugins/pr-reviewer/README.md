@@ -121,7 +121,7 @@ Besides the comprehensive `/pr-review`, the plugin ships standalone commands for
 - a `cross-repo-reviewer` pass for defects **between** the PRs — contract drift, missing counterpart changes, merge/deploy ordering hazards, inconsistencies, duplicated logic. Each such finding is posted inline on the PR that should change, with a link to the counterpart;
 - the same **group section** appended to every member's summary: members, per-PR verdicts, cross-repo findings and an *advisory* merge order.
 
-Works on **GitHub** and **Azure DevOps** (one platform per group). Everything — finding the group, fetching the other repos, coordinating runs — happens inside the plugin; the Xianix agent only needs the rules in its `rules.json`.
+Works on **GitHub** and **Azure DevOps** (one platform per group). Everything — finding the group, fetching the other repos, coordinating runs — happens inside the plugin; the Xianix agent only needs **one rule per platform** in its `rules.json`. That rule passes every group-related event to `/pr-group-review --from-event`, and the plugin reads the event (`XIANIX_INPUTS`) and decides what to do.
 
 ### How a group is formed
 
@@ -140,7 +140,7 @@ All **open** PRs linked to it, from repositories of the same owner (GitHub) / or
 | A link added or removed: issue description or comment, PR description, Azure DevOps work item link | The group is read again at once. A new PR is reviewed; after a removal nothing is posted until a remaining PR changes. |
 | Label removed from the work item | Pushes no longer start group reviews. A review that is running stops before posting. The notes stay on the PRs. |
 
-PRs carry no label: a push rule cannot tell a member from any other PR, so every PR push starts `/pr-group-review --pr N`, which finds the PR's work item and stops when it has no labelled group. `/pr-review` makes the same check first and skips a member PR, so it is not reviewed twice (`PR_REVIEWER_GROUP_CHECK=false` turns that off). A PR that only mentions the issue stays linked while its description, a comment or a commit message still mentions it; the plugin's own comments are ignored. A GitHub **Development** link sends no webhook: a PR linked there after the label joins on its next push or the group's next run.
+PRs carry no label: a push rule cannot tell a member from any other PR, so every PR push starts `/pr-group-review` (in `--pr N` mode), which finds the PR's work item and stops when it has no labelled group. `/pr-review` makes the same check first and skips a member PR, so it is not reviewed twice (`PR_REVIEWER_GROUP_CHECK=false` turns that off). A PR that only mentions the issue stays linked while its description, a comment or a commit message still mentions it; the plugin's own comments are ignored. A GitHub **Development** link sends no webhook: a PR linked there after the label joins on its next push or the group's next run.
 
 ### One review at a time
 
@@ -154,9 +154,13 @@ A run that finds the lock taken exits straight away. The run holding it checks t
 ### Commands
 
 ```text
-# What the Xianix agent runs (see rules.json)
+# What the Xianix agent runs (see rules.json): the plugin reads the event and picks a mode below
+/pr-group-review --from-event
+
+# The modes (also usable directly)
 /pr-group-review --work-item lahirudfe/Test-C-Docs#1          # label added, or links changed
-/pr-group-review --pr 7                                         # PR opened or pushed (current repo)
+/pr-group-review --pr 7                                         # PR opened, pushed or description edited (current repo)
+/pr-group-review --pr 7 --repo https://dev.azure.com/o/p/_git/r # same, for a repo that is not checked out
 /pr-group-review --pr 7 --force                                 # @xianix review group
 
 # Local run: each repo checked out as a sibling folder, named by repo (no lock, no notes)
@@ -176,7 +180,8 @@ Environment variables (constant `with-envs` in the rule, all optional):
 | `PR_GROUP_LABEL` | `ai-dlc/pr/group-review` | Label/tag on the work item that turns group review on |
 | `PR_GROUP_MAX_MEMBERS` | `6` | Most PRs in one group (oldest first; the pushed PR is always kept) |
 | `PR_GROUP_MAX_DIFF_LINES` | `6000` | Above this, the cross-repo reviewer works from the contract index |
-| `PR_GROUP_SETTLE_SECONDS` | `0` (`180` in the push rules) | Wait until the newest push is this old |
+| `PR_GROUP_SETTLE_SECONDS` | `0` | Wait until the newest push is this old (overrides the event's quiet period) |
+| `PR_GROUP_PUSH_SETTLE_SECONDS` | `180` | `--from-event`: quiet period for PR events (opened, pushed, description edited) |
 | `PR_GROUP_SETTLE_MAX_SECONDS` | `300` | Longest total wait |
 | `PR_GROUP_LOCK_TTL_SECONDS` | `2100` | A lock without a heartbeat for this long is taken over |
 | `PR_GROUP_STATE_STORE` | `auto` | GitHub: `ref` (fail if refs can't be written), `comment`, or `auto` (ref, else comment) |

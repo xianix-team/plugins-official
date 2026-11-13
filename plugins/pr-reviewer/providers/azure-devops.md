@@ -382,9 +382,18 @@ case "${PR_REVIEWER_BLOCK_ON_CRITICAL:-false}" in
   true|True|TRUE|1|yes|Yes|YES) BLOCK_ON_CRITICAL=true ;;
   *)                              BLOCK_ON_CRITICAL=false ;;
 esac
+case "${PR_REVIEWER_APPROVE_ON_SUCCESS:-false}" in
+  true|True|TRUE|1|yes|Yes|YES) APPROVE_ON_SUCCESS=true ;;
+  *)                             APPROVE_ON_SUCCESS=false ;;
+esac
 case "${VERDICT}" in
-  "APPROVE")                     VOTE=10  ;;
-  "APPROVE WITH SUGGESTIONS")    VOTE=5   ;;
+  "APPROVE"|"APPROVE WITH SUGGESTIONS")
+    if [ "$APPROVE_ON_SUCCESS" = "true" ]; then
+      if [ "$VERDICT" = "APPROVE" ]; then VOTE=10; else VOTE=5; fi
+    else
+      VOTE=0
+    fi
+    ;;
   "REQUEST CHANGES")
     if [ "$BLOCK_ON_CRITICAL" = "true" ]; then VOTE=-10; else VOTE=-5; fi
     ;;
@@ -639,10 +648,12 @@ The verdict string in the report MUST be exactly one of the four values below �
 
 | Plugin verdict | Azure DevOps vote value | Description |
 |---|---|---|
-| `APPROVE` | `10` | Approved |
-| `APPROVE WITH SUGGESTIONS` | `5` | Approved with suggestions (non-blocking) |
+| `APPROVE` | `10` if `PR_REVIEWER_APPROVE_ON_SUCCESS=true`, else `0` | Approved (opt-in) / no vote |
+| `APPROVE WITH SUGGESTIONS` | `5` if `PR_REVIEWER_APPROVE_ON_SUCCESS=true`, else `0` | Approved with suggestions (opt-in) / no vote |
 | `REQUEST CHANGES` | `-10` | Rejected *(see `PR_REVIEWER_BLOCK_ON_CRITICAL` below)* |
 | `NEEDS DISCUSSION` | `-5` | Waiting for author |
+
+Approving is **opt-in**: `PR_REVIEWER_APPROVE_ON_SUCCESS` defaults to `false`, in which case an approving verdict casts `0` (no vote) so the review stays visible but the PR is never approved.
 
 If the report contains a non-conforming verdict (e.g. `APPROVED WITH SUGGESTIONS`, `LGTM`, `NEEDS WORK`), normalize it to the closest match before mapping:
 - `APPROVED*` / `LGTM` → `APPROVE` (or `APPROVE WITH SUGGESTIONS` if there are non-empty Suggestions)
@@ -668,9 +679,20 @@ case "${PR_REVIEWER_BLOCK_ON_CRITICAL:-false}" in
   *)                              BLOCK_ON_CRITICAL=false ;;
 esac
 
+case "${PR_REVIEWER_APPROVE_ON_SUCCESS:-false}" in
+  true|True|TRUE|1|yes|Yes|YES) APPROVE_ON_SUCCESS=true ;;
+  *)                             APPROVE_ON_SUCCESS=false ;;
+esac
+
 case "${VERDICT}" in
-  "APPROVE")                     VOTE=10  ;;
-  "APPROVE WITH SUGGESTIONS")    VOTE=5   ;;
+  "APPROVE"|"APPROVE WITH SUGGESTIONS")
+    if [ "$APPROVE_ON_SUCCESS" = "true" ]; then
+      if [ "$VERDICT" = "APPROVE" ]; then VOTE=10; else VOTE=5; fi
+    else
+      VOTE=0
+      echo "INFO: approval disabled (PR_REVIEWER_APPROVE_ON_SUCCESS not set to true) — casting 0 (no vote)"
+    fi
+    ;;
   "REQUEST CHANGES")
     if [ "$BLOCK_ON_CRITICAL" = "true" ]; then
       VOTE=-10

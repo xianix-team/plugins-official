@@ -253,6 +253,16 @@ Lets a human ask the agent for something ad hoc by mentioning `@xianix` in a PR 
 
 ---
 
+## Optional — auto-approve clean PRs
+
+By default the plugin **never approves** a PR; a clean review casts vote `0` (no vote). To cast `10` / `5` on `APPROVE` / `APPROVE WITH SUGGESTIONS`, add this to the block's (or rule set's) `with-envs`:
+
+```json
+{ "name": "PR-REVIEWER-APPROVE-ON-SUCCESS", "value": "true", "constant": true }
+```
+
+---
+
 ## Notes
 
 - **Filter order matters.** Within `match-any`, the first matching rule wins — order the more specific rules first.

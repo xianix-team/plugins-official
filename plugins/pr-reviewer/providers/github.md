@@ -121,13 +121,13 @@ That script: detects self-review, maps verdict + `PR_REVIEWER_BLOCK_ON_CRITICAL`
 
 ### Verdict → `gh pr review` flag (reference)
 
-| Plugin verdict | Default flag | With `PR_REVIEWER_BLOCK_ON_CRITICAL=true` |
-|---|---|---|
-| `APPROVE` / `APPROVE WITH SUGGESTIONS` | `--approve` | `--approve` |
-| `REQUEST CHANGES` | `--comment` (non-blocking) | `--request-changes` |
-| `NEEDS DISCUSSION` | `--comment` | `--comment` |
+| Plugin verdict | Default flag | With `PR_REVIEWER_BLOCK_ON_CRITICAL=true` | With `PR_REVIEWER_APPROVE_ON_SUCCESS=true` |
+|---|---|---|---|
+| `APPROVE` / `APPROVE WITH SUGGESTIONS` | `--comment` (approval disabled) | `--comment` | `--approve` |
+| `REQUEST CHANGES` | `--comment` (non-blocking) | `--request-changes` | `--comment` |
+| `NEEDS DISCUSSION` | `--comment` | `--comment` | `--comment` |
 
-Self-review (author == authenticated user) always forces `--comment`. The verdict label in the report body is identical in all modes.
+Approving is **opt-in**: `PR_REVIEWER_APPROVE_ON_SUCCESS` (default `false`) must be `true`/`1`/`yes` for an `APPROVE` verdict to post `--approve`. Self-review (author == authenticated user) always forces `--comment`. The verdict label in the report body is identical in all modes.
 
 ### Serialize findings to JSONL before posting
 

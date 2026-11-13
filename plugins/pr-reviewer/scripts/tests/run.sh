@@ -243,6 +243,50 @@ JSON
 assert_eq "Gate A blocks (same sha): forced to carried_over" "yes" "$(bucket_has "$OUT2" carried_over "$FID_REMOVED")"
 assert_eq "Gate A blocks (same sha): fixed bucket stays empty" "no" "$(bucket_has "$OUT2" fixed "$FID_REMOVED")"
 
+echo "=== gh-post-review.sh approval gate (PR_REVIEWER_APPROVE_ON_SUCCESS) ==="
+
+STUB_BIN="$WORK/stubbin"
+mkdir -p "$STUB_BIN"
+cat > "$STUB_BIN/gh" <<'STUB'
+#!/usr/bin/env bash
+# Records the flag passed to `gh pr review`; answers the few read calls the script makes.
+case "$1 $2" in
+  "pr view") echo "someauthor" ;;                       # PR author
+  "api user") echo "reviewerbot" ;;                     # authenticated user (!= author)
+  "pr review") echo "$*" >> "$GH_STUB_LOG" ;;
+esac
+exit 0
+STUB
+chmod +x "$STUB_BIN/gh"
+
+gh_flag_for() {  # gh_flag_for <VERDICT> <APPROVE_ON_SUCCESS value or ""> -> approve|comment|request-changes
+  local verdict="$1" approve_env="$2"
+  local log="$WORK/gh_stub.log"
+  : > "$log"
+  printf 'summary\n' > /tmp/pr_thread_body.md
+  : > /tmp/pr_inline_findings.jsonl
+  git -C "$REPO" remote remove origin 2>/dev/null
+  git -C "$REPO" remote add origin "https://github.com/acme/widgets.git"
+  (
+    cd "$REPO"
+    export PATH="$STUB_BIN:$PATH" GH_STUB_LOG="$log" PR_NUMBER=1 HEAD_SHA="$HEAD_SHA" VERDICT="$verdict" REVIEW_MODE=initial
+    unset PR_REVIEWER_BLOCK_ON_CRITICAL
+    if [ -n "$approve_env" ]; then export PR_REVIEWER_APPROVE_ON_SUCCESS="$approve_env"; else unset PR_REVIEWER_APPROVE_ON_SUCCESS; fi
+    bash "${SCRIPT_DIR}/gh-post-review.sh" >/dev/null 2>&1
+  )
+  if grep -q -- '--approve' "$log"; then echo approve
+  elif grep -q -- '--request-changes' "$log"; then echo request-changes
+  elif grep -q -- '--comment' "$log"; then echo comment
+  else echo none; fi
+}
+
+assert_eq "APPROVE, setting unset -> comment (no approval)"        "comment" "$(gh_flag_for "APPROVE" "")"
+assert_eq "APPROVE, setting=false -> comment (no approval)"        "comment" "$(gh_flag_for "APPROVE" "false")"
+assert_eq "APPROVE, setting=true -> approve"                       "approve" "$(gh_flag_for "APPROVE" "true")"
+assert_eq "APPROVE WITH SUGGESTIONS, setting=true -> approve"      "approve" "$(gh_flag_for "APPROVE WITH SUGGESTIONS" "true")"
+assert_eq "APPROVE WITH SUGGESTIONS, setting unset -> comment"     "comment" "$(gh_flag_for "APPROVE WITH SUGGESTIONS" "")"
+assert_eq "REQUEST CHANGES unaffected by setting=true -> comment"  "comment" "$(gh_flag_for "REQUEST CHANGES" "true")"
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]

@@ -120,11 +120,19 @@ case "${PR_REVIEWER_BLOCK_ON_CRITICAL:-false}" in
   *)                              BLOCK_ON_CRITICAL=false ;;
 esac
 
+case "${PR_REVIEWER_APPROVE_ON_SUCCESS:-false}" in
+  true|True|TRUE|1|yes|Yes|YES) APPROVE_ON_SUCCESS=true ;;
+  *)                             APPROVE_ON_SUCCESS=false ;;
+esac
+
 case "${VERDICT}" in
   "APPROVE"|"APPROVE WITH SUGGESTIONS")
     if [ "$SELF_REVIEW" = "true" ]; then
       REVIEW_FLAG="--comment"
       echo "INFO: self-review — posting APPROVE verdict as non-blocking comment review"
+    elif [ "$APPROVE_ON_SUCCESS" != "true" ]; then
+      REVIEW_FLAG="--comment"
+      echo "INFO: approval disabled (PR_REVIEWER_APPROVE_ON_SUCCESS not set to true) — posting APPROVE verdict as comment, no approval"
     else
       REVIEW_FLAG="--approve"
     fi

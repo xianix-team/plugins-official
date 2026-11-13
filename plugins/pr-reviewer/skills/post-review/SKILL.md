@@ -27,8 +27,8 @@ Do not ask for confirmation at any point. Execute all steps autonomously and pro
 
    | Plugin verdict | GitHub event | Azure DevOps vote |
    |---|---|---|
-   | `APPROVE` | `APPROVE` | `10` |
-   | `APPROVE WITH SUGGESTIONS` | `APPROVE` | `5` |
+   | `APPROVE` | `APPROVE` if `PR_REVIEWER_APPROVE_ON_SUCCESS=true`, else `COMMENT` (default) | `10` if `PR_REVIEWER_APPROVE_ON_SUCCESS=true`, else `0` |
+   | `APPROVE WITH SUGGESTIONS` | `APPROVE` if `PR_REVIEWER_APPROVE_ON_SUCCESS=true`, else `COMMENT` (default) | `5` if `PR_REVIEWER_APPROVE_ON_SUCCESS=true`, else `0` |
    | `REQUEST CHANGES` | `COMMENT` (default) / `REQUEST_CHANGES` if `PR_REVIEWER_BLOCK_ON_CRITICAL=true` | `-5` (default) / `-10` if `PR_REVIEWER_BLOCK_ON_CRITICAL=true` |
    | `NEEDS DISCUSSION` | `COMMENT` | `-5` |
 

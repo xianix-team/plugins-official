@@ -130,6 +130,7 @@ Not required to run the plugin — export these to change its default behavior. 
 | Variable | Default | Purpose |
 |---|---|---|
 | `PR_REVIEWER_BLOCK_ON_CRITICAL` | `false` (advisory) | When `true`, a `REQUEST CHANGES` verdict posts as a **blocking** review (GitHub `--request-changes`, Azure DevOps vote `-10`) instead of the default non-blocking one (GitHub `--comment`, Azure DevOps vote `-5`) |
+| `PR_REVIEWER_APPROVE_ON_SUCCESS` | `false` (never approve) | When `true`, an `APPROVE` / `APPROVE WITH SUGGESTIONS` verdict (no critical issues or warnings) approves the PR (GitHub `--approve`, Azure DevOps vote `10`/`5`). Otherwise it posts a plain comment review (GitHub `--comment`, Azure DevOps vote `0`). In `rules.json` set it via `with-envs`: `{ "name": "PR-REVIEWER-APPROVE-ON-SUCCESS", "value": "true", "constant": true }` |
 | `PR_REVIEWER_RECONCILE` | `true` | Set to `false` to force a stateless full review that ignores prior findings, disabling [re-review mode](#re-review-support) |
 | `PR_REVIEWER_MODEL` | unset | Pins **every** reviewer sub-agent to one model (short slug: `sonnet`/`opus`/`haiku`/`fable`), ignoring the tiers below |
 | `PR_REVIEWER_QUALITY_MODEL` | `haiku` | Model for the escalated path's quality-tier reviewers (`code-reviewer`, `test-reviewer`) |

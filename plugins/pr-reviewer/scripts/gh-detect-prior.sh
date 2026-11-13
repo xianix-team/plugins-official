@@ -21,7 +21,7 @@
 set -euo pipefail
 
 # shellcheck disable=SC1091
-[ -f /tmp/pr_state.env ] && source /tmp/pr_state.env
+[ -f ${PR_STATE_DIR:-/tmp}/pr_state.env ] && source ${PR_STATE_DIR:-/tmp}/pr_state.env
 
 PR_NUMBER="${PR_NUMBER:-${PR_ID:-}}"
 if [ -z "$PR_NUMBER" ]; then
@@ -69,21 +69,22 @@ if ! gh api graphql --paginate --slurp -f query='
         }
       }
     }
-  }' -F owner="$OWNER" -F repo="$REPO" -F pr="$PR_NUMBER" > /tmp/pr_review_threads.json; then
+  }' -F owner="$OWNER" -F repo="$REPO" -F pr="$PR_NUMBER" > ${PR_STATE_DIR:-/tmp}/pr_review_threads.json; then
   echo "ERROR: GraphQL reviewThreads query failed" >&2
   exit 1
 fi
 
-if ! python3 -c "import json,sys; json.load(open('/tmp/pr_review_threads.json'))" 2>/dev/null; then
-  SNIP=$(head -c 400 /tmp/pr_review_threads.json | tr '\n' ' ')
+if ! python3 -c "import json,sys; json.load(open('${PR_STATE_DIR:-/tmp}/pr_review_threads.json'))" 2>/dev/null; then
+  SNIP=$(head -c 400 ${PR_STATE_DIR:-/tmp}/pr_review_threads.json | tr '\n' ' ')
   echo "ERROR: gh graphql returned non-JSON" >&2
   [ -n "$SNIP" ] && echo "Body snippet: ${SNIP}" >&2
   exit 1
 fi
 
 python3 - <<'PY'
+import os
 import json, re, sys
-pages = json.load(open("/tmp/pr_review_threads.json"))
+pages = json.load(open(os.environ.get("PR_STATE_DIR", "/tmp") + "/pr_review_threads.json"))
 if isinstance(pages, dict):  # older gh without --slurp support returns one page
     pages = [pages]
 threads = []
@@ -100,8 +101,8 @@ for page in pages:
 
 pat = re.compile(r"<!--\s*pr-reviewer:v1\.2\s+kind=finding\s+fid=(\S+)\s+sha=(\S+)\s*-->")
 label_pat = re.compile(r"^\s*(?:\*\*)?([CWS]\d+)(?:\*\*)?(?=\s|[—:-]|$)")
-prior = open("/tmp/pr_prior_findings.jsonl", "w")
-open_threads = open("/tmp/pr_open_threads.jsonl", "w")
+prior = open(os.environ.get("PR_STATE_DIR", "/tmp") + "/pr_prior_findings.jsonl", "w")
+open_threads = open(os.environ.get("PR_STATE_DIR", "/tmp") + "/pr_open_threads.jsonl", "w")
 for t in threads:
     c = (t["comments"]["nodes"] or [None])[0]
     if not c:
@@ -145,9 +146,9 @@ PRIOR_SUMMARY_SHA=$(gh api "repos/${OWNER}/${REPO}/pulls/${PR_NUMBER}/reviews" -
 
 {
   printf 'PRIOR_SUMMARY_SHA=%q\n' "${PRIOR_SUMMARY_SHA}"
-} > /tmp/pr_prior.env
+} > ${PR_STATE_DIR:-/tmp}/pr_prior.env
 
-PRIOR_COUNT=$(wc -l < /tmp/pr_prior_findings.jsonl | tr -d ' ')
-OPEN_COUNT=$(wc -l < /tmp/pr_open_threads.jsonl | tr -d ' ')
+PRIOR_COUNT=$(wc -l < ${PR_STATE_DIR:-/tmp}/pr_prior_findings.jsonl | tr -d ' ')
+OPEN_COUNT=$(wc -l < ${PR_STATE_DIR:-/tmp}/pr_open_threads.jsonl | tr -d ' ')
 echo "Prior plugin findings: ${PRIOR_COUNT}  |  open inline threads: ${OPEN_COUNT}  |  PRIOR_SUMMARY_SHA=${PRIOR_SUMMARY_SHA:-none}"
-echo "Wrote /tmp/pr_prior_findings.jsonl /tmp/pr_open_threads.jsonl /tmp/pr_prior.env"
+echo "Wrote ${PR_STATE_DIR:-/tmp}/pr_prior_findings.jsonl ${PR_STATE_DIR:-/tmp}/pr_open_threads.jsonl ${PR_STATE_DIR:-/tmp}/pr_prior.env"

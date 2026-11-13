@@ -21,9 +21,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck disable=SC1091
-[ -f /tmp/pr_state.env ] && source /tmp/pr_state.env
+[ -f ${PR_STATE_DIR:-/tmp}/pr_state.env ] && source ${PR_STATE_DIR:-/tmp}/pr_state.env
 
-FINDINGS="${FINDINGS:-/tmp/pr_inline_findings.jsonl}"
+FINDINGS="${FINDINGS:-${PR_STATE_DIR:-/tmp}/pr_inline_findings.jsonl}"
 FID_SCRIPT="${SCRIPT_DIR}/compute-fid.sh"
 HEAD_SHA="${HEAD_SHA:-$(git rev-parse HEAD 2>/dev/null || true)}"
 

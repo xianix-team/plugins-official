@@ -114,6 +114,94 @@ Besides the comprehensive `/pr-review`, the plugin ships standalone commands for
 
 ---
 
+## Group Review (several related PRs)
+
+`/pr-group-review` reviews **several related pull requests together** — one feature split across repositories. Every member PR gets its normal `/pr-review` (same finders, posting and re-review reconciliation), plus:
+
+- a `cross-repo-reviewer` pass for defects **between** the PRs — contract drift, missing counterpart changes, merge/deploy ordering hazards, inconsistencies, duplicated logic. Each such finding is posted inline on the PR that should change, with a link to the counterpart;
+- the same **group section** appended to every member's summary: members, per-PR verdicts, cross-repo findings and an *advisory* merge order.
+
+Works on **GitHub** and **Azure DevOps** (one platform per group). Everything — finding the group, fetching the other repos, coordinating runs — happens inside the plugin; the Xianix agent only needs **one rule per platform** in its `rules.json`. That rule passes every group-related event to `/pr-group-review --from-event`, and the plugin reads the event (`XIANIX_INPUTS`) and decides what to do.
+
+### How a group is formed
+
+1. Link the PRs to one **work item**. GitHub: an issue — link each PR in the issue's **Development** section, write `Fixes #12` / `owner/repo#12` / the issue URL in the PR description, or list the PR links in the issue description or a comment. Azure DevOps: link each PR to the work item.
+2. Add the label (GitHub) or tag (Azure DevOps) **`ai-dlc/pr/group-review`** to the work item.
+
+All **open** PRs linked to it, from repositories of the same owner (GitHub) / organization (Azure DevOps), are the group — at most 6, oldest first. A group needs at least 2 open PRs.
+
+### What starts a review
+
+| Event | What happens |
+|---|---|
+| Label added to the work item | All member PRs are reviewed together. Each member PR gets a note, once: *This PR is reviewed together with the other PRs of work item … (N PRs). New commits here start a group review.* |
+| PR opened or pushed | After a 3-minute quiet period, the group is reviewed again — only PRs with new commits get a new review. A PR that is in no labelled group stops right after discovery (no wait, no review). |
+| Comment `@xianix review group` on a member PR | Every member is reviewed again, changed or not. |
+| A link added or removed: issue description or comment, PR description, Azure DevOps work item link | The group is read again at once. A new PR is reviewed; after a removal nothing is posted until a remaining PR changes. |
+| Label removed from the work item | Pushes no longer start group reviews. A review that is running stops before posting. The notes stay on the PRs. |
+
+PRs carry no label: a push rule cannot tell a member from any other PR, so every PR push starts `/pr-group-review` (in `--pr N` mode), which finds the PR's work item and stops when it has no labelled group. `/pr-review` makes the same check first and skips a member PR, so it is not reviewed twice (`PR_REVIEWER_GROUP_CHECK=false` turns that off). A PR that only mentions the issue stays linked while its description, a comment or a commit message still mentions it; the plugin's own comments are ignored. A GitHub **Development** link sends no webhook: a PR linked there after the label joins on its next push or the group's next run.
+
+### One review at a time
+
+There is no long-running process per group. The group's state — lock owner, heartbeat, the commit each PR was last reviewed at — is kept next to the work item:
+
+- **GitHub:** a hidden git ref, `refs/xianix/pr-group/issue-<N>`, in the issue's repository. Moving a ref is compare-and-set, so two runs can never both hold the lock. It is not a branch: it does not show in the UI and triggers nothing. If the token may not write refs there, the plugin falls back to a state comment on the issue (`PR_GROUP_STATE_STORE=comment` forces that).
+- **Azure DevOps:** a state comment on the work item (write, then read back — a rare double run is possible and harmless).
+
+A run that finds the lock taken exits straight away. The run holding it checks the group again after posting: if a member got new commits, or a PR was linked, while it ran, it **reviews again in the same container** (up to `PR_GROUP_MAX_PASSES`, while `PR_GROUP_TIME_LIMIT_SECONDS` allows). Only when time or passes run out does it comment `@xianix review group` on the changed PR to start a fresh run — once per set of commits. A lock with no heartbeat for 35 minutes (a crashed run) is taken over.
+
+### Commands
+
+```text
+# What the Xianix agent runs (see rules.json): the plugin reads the event and picks a mode below
+/pr-group-review --from-event
+
+# The modes (also usable directly)
+/pr-group-review --work-item lahirudfe/Test-C-Docs#1          # label added, or links changed
+/pr-group-review --pr 7                                         # PR opened, pushed or description edited (current repo)
+/pr-group-review --pr 7 --repo https://dev.azure.com/o/p/_git/r # same, for a repo that is not checked out
+/pr-group-review --pr 7 --force                                 # @xianix review group
+
+# Local run: each repo checked out as a sibling folder, named by repo (no lock, no notes)
+/pr-group-review https://github.com/acme/orders-api/pull/41 https://github.com/acme/web/pull/88
+/pr-group-review orders-api#41 web#88
+/pr-group-review orders-api@feature/checkout-v2 web@feature/checkout-v2
+```
+
+Each member's run state lives in `/tmp/prg/<slug>/` (via `PR_STATE_DIR`) instead of `/tmp/pr_*`, so members never share files.
+
+### Settings
+
+Environment variables (constant `with-envs` in the rule, all optional):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PR_GROUP_LABEL` | `ai-dlc/pr/group-review` | Label/tag on the work item that turns group review on |
+| `PR_GROUP_MAX_MEMBERS` | `6` | Most PRs in one group (oldest first; the pushed PR is always kept) |
+| `PR_GROUP_MAX_DIFF_LINES` | `6000` | Above this, the cross-repo reviewer works from the contract index |
+| `PR_GROUP_SETTLE_SECONDS` | `0` | Wait until the newest push is this old (overrides the event's quiet period) |
+| `PR_GROUP_PUSH_SETTLE_SECONDS` | `180` | `--from-event`: quiet period for PR events (opened, pushed, description edited) |
+| `PR_GROUP_SETTLE_MAX_SECONDS` | `300` | Longest total wait |
+| `PR_GROUP_LOCK_TTL_SECONDS` | `2100` | A lock without a heartbeat for this long is taken over |
+| `PR_GROUP_STATE_STORE` | `auto` | GitHub: `ref` (fail if refs can't be written), `comment`, or `auto` (ref, else comment) |
+| `PR_GROUP_TIME_LIMIT_SECONDS` | `1500` | Time one container may spend; another pass only if it fits |
+| `PR_GROUP_MAX_PASSES` | `2` | Reviews in one container before handing over to a new run |
+| `PR_GROUP_MIN_USD_PER_MEMBER` | `2` | Below this budget per reviewed PR (+1 for the cross-repo pass), review in lean mode (Haiku finders only) |
+| `PR_GROUP_CACHE_DIR` | `<volume>/xianix-group-cache` | Where other members' repos are cached between runs (`none` = fresh clones) |
+| `PR_GROUP_CACHE_DAYS` | `14` | Cached repos unused this long are removed |
+| `PR_GROUP_PLANNING_REPO` | — | GitHub: only issues in this `owner/repo` can be a work item |
+| `PR_GROUP_ALLOWED_OWNERS` | — | GitHub: extra owners (comma separated) whose repos may be in a group |
+| `PR_REVIEWER_GROUP_FORCE` | `false` | Re-review members with no new commits (the `--force` path) |
+
+Tokens: `GITHUB_TOKEN` must read every member repo and its issues, write PR/issue comments, and write refs (contents) in the issue's repo for the lock. `AZURE_DEVOPS_TOKEN`: Code (read), Work Items (read & write, for the state comment), Pull Request Threads (read & write).
+
+Keep `PR_GROUP_TIME_LIMIT_SECONDS` below the agent's container timeout (`ContainerExecutionTimeoutSeconds`, at least 1800 s recommended: a 3-PR group takes about 10 minutes).
+
+Tests: `bash scripts/tests/group/run.sh` (a fake GitHub API; no network).
+
+---
+
 ## Environment Variables
 
 The Xianix Agent reads these from its secrets store and injects them at runtime via the rule's `with-envs` block (see [Automated Triggering](#automated-triggering-xianix-agent) below). For local CLI use, export them in your shell.

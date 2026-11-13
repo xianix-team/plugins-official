@@ -101,5 +101,5 @@ write_azure_env() {
     echo "export AZURE_REPO=$(printf %q "${AZURE_REPO:-}")"
     echo "export API_BASE=$(printf %q "${API_BASE:-}")"
     echo "export PR_ID=$(printf %q "${PR_ID:-}")"
-  } > /tmp/pr_azure.env
+  } > ${PR_STATE_DIR:-/tmp}/pr_azure.env
 }

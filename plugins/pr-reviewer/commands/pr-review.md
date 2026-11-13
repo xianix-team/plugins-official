@@ -219,6 +219,10 @@ remember_pr_plugin_root "$PERM"
 bash "$PERM"
 # shellcheck disable=SC1091
 source /tmp/pr_permissions.env
+# Group check: is this PR a member of a labelled review group? (errors = not a member)
+if [ "${PR_REVIEWER_GROUP_CHECK:-true}" != "false" ] && [ -n "${PR_NUMBER:-}" ] && [ "${PLATFORM:-}" != generic ]; then
+  PRG_WS=/tmp/prg-check python3 "$CLAUDE_PLUGIN_ROOT/scripts/group_platform.py" discover --pr "$PR_NUMBER" 2>/dev/null     | grep -E '^(WORK_ITEM|TRIGGER_MEMBER)=' || true
+fi
 ```
 
 | Result | Action |
@@ -235,6 +239,8 @@ source /tmp/pr_permissions.env
 | **Generic** | (none — report file only) | — |
 
 Writes `/tmp/pr_permissions.env` (`PLATFORM`, `AUTH_OK`, `CAP_*`, `PERMISSIONS_WARNINGS`). Never echoes secret values.
+
+**Group check.** If the same call printed `TRIGGER_MEMBER=true`, this PR is part of a review group (its work item has the `ai-dlc/pr/group-review` label) and `/pr-group-review` reviews it together with the other PRs — a push to it starts that review on its own. Print `PR #<n> is reviewed with the group of <WORK_ITEM> by /pr-group-review — skipping the single-PR review` and **stop**: post no comment, run no review. Anything else (`TRIGGER_MEMBER=false`, no output, `PR_REVIEWER_GROUP_CHECK=false`) → continue.
 
 ## 2. Post a "Review in Progress" Comment (must be within the first 3 tool calls)
 

@@ -38,11 +38,11 @@ source "${SCRIPT_DIR}/lib-azure-remote.sh"
 # container/session risks e.g. gh-post-review.sh / ado-post-review.sh picking up
 # a stale /tmp/pr_external_reconcile.json from a *different* PR's run and posting
 # "addressed" replies against the wrong PR's threads.
-rm -f /tmp/pr_reconcile.json /tmp/pr_external_reconcile.json /tmp/pr_inline_findings.jsonl \
-      /tmp/pr_thread_body.md /tmp/pr_rereview_delta.md /tmp/pr_incremental_diff.patch \
-      /tmp/pr_inline_failures.log /tmp/pr_resolved.log /tmp/pr_reopened.log \
-      /tmp/pr_external_replies.log /tmp/pr_findings_validation.log /tmp/pr_verify.env \
-      /tmp/pr_noop_reply_payload.json /tmp/pr_noop_body.md
+rm -f ${PR_STATE_DIR:-/tmp}/pr_reconcile.json ${PR_STATE_DIR:-/tmp}/pr_external_reconcile.json ${PR_STATE_DIR:-/tmp}/pr_inline_findings.jsonl \
+      ${PR_STATE_DIR:-/tmp}/pr_thread_body.md ${PR_STATE_DIR:-/tmp}/pr_rereview_delta.md ${PR_STATE_DIR:-/tmp}/pr_incremental_diff.patch \
+      ${PR_STATE_DIR:-/tmp}/pr_inline_failures.log ${PR_STATE_DIR:-/tmp}/pr_resolved.log ${PR_STATE_DIR:-/tmp}/pr_reopened.log \
+      ${PR_STATE_DIR:-/tmp}/pr_external_replies.log ${PR_STATE_DIR:-/tmp}/pr_findings_validation.log ${PR_STATE_DIR:-/tmp}/pr_verify.env \
+      ${PR_STATE_DIR:-/tmp}/pr_noop_reply_payload.json ${PR_STATE_DIR:-/tmp}/pr_noop_body.md
 
 # --- 0. Resolve PLATFORM from origin (authoritative). Never default to github. ---
 REMOTE_URL=$(git remote get-url origin 2>/dev/null || echo "")
@@ -86,9 +86,9 @@ if [ -n "${PR_NUMBER:-}" ]; then
     echo "WARN: no synthetic PR ref found — resolving source branch via platform API" >&2
     case "$PLATFORM" in
       azure*)
-        if [ -f /tmp/pr_azure.env ]; then
+        if [ -f ${PR_STATE_DIR:-/tmp}/pr_azure.env ]; then
           # shellcheck disable=SC1091
-          source /tmp/pr_azure.env
+          source ${PR_STATE_DIR:-/tmp}/pr_azure.env
         fi
         if [ -z "${API_BASE:-}" ] || [ -z "${AZURE_REPO:-}" ]; then
           parse_azure_remote || exit 1
@@ -130,12 +130,12 @@ fi
 if [ -n "${PR_NUMBER:-}" ]; then
   case "$PLATFORM" in
     azure*)
-      if [ -f /tmp/pr_azure.env ]; then
+      if [ -f ${PR_STATE_DIR:-/tmp}/pr_azure.env ]; then
         # shellcheck disable=SC1091
-        source /tmp/pr_azure.env
+        source ${PR_STATE_DIR:-/tmp}/pr_azure.env
       fi
       if [ -z "${API_BASE:-}" ] || [ -z "${AZURE_REPO:-}" ]; then
-        echo "WARN: /tmp/pr_azure.env incomplete — re-parsing remote for Azure metadata" >&2
+        echo "WARN: ${PR_STATE_DIR:-/tmp}/pr_azure.env incomplete — re-parsing remote for Azure metadata" >&2
         parse_azure_remote || exit 1
       fi
       PR_ID="${PR_ID:-${PR_NUMBER:-}}"
@@ -219,12 +219,12 @@ fi
 # --- 5. Generate diffs and metadata ---
 git log --oneline "${BASE_SHA}..${HEAD_SHA}"
 git diff --stat "${BASE_SHA}"..."${HEAD_SHA}"
-git diff --name-only "${BASE_SHA}"..."${HEAD_SHA}" | tee /tmp/pr_changed_files.txt
-git diff "${BASE_SHA}"..."${HEAD_SHA}" > /tmp/pr_full_diff.patch
+git diff --name-only "${BASE_SHA}"..."${HEAD_SHA}" | tee ${PR_STATE_DIR:-/tmp}/pr_changed_files.txt
+git diff "${BASE_SHA}"..."${HEAD_SHA}" > ${PR_STATE_DIR:-/tmp}/pr_full_diff.patch
 git log -1 --format="%an <%ae>" "${HEAD_SHA}"
 git log --format="%s%n%b" "${BASE_SHA}..${HEAD_SHA}"
 
-CHANGED_COUNT=$(wc -l < /tmp/pr_changed_files.txt | tr -d ' ')
+CHANGED_COUNT=$(wc -l < ${PR_STATE_DIR:-/tmp}/pr_changed_files.txt | tr -d ' ')
 echo "Changed files: $CHANGED_COUNT"
 
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
@@ -246,8 +246,8 @@ awk '
   /^ /  { printf "%5d | %s\n", newln, substr($0, 2); newln++; next }
   /^-/  { printf "    - |-%s\n", substr($0, 2); next }
   { print "      | " $0 }
-' /tmp/pr_full_diff.patch > /tmp/pr_full_diff_numbered.patch
-echo "Annotated diff written: $(wc -l < /tmp/pr_full_diff_numbered.patch) lines"
+' ${PR_STATE_DIR:-/tmp}/pr_full_diff.patch > ${PR_STATE_DIR:-/tmp}/pr_full_diff_numbered.patch
+echo "Annotated diff written: $(wc -l < ${PR_STATE_DIR:-/tmp}/pr_full_diff_numbered.patch) lines"
 
 # --- 7. Persist state for later tool calls ---
 {
@@ -264,5 +264,5 @@ echo "Annotated diff written: $(wc -l < /tmp/pr_full_diff_numbered.patch) lines"
   printf 'PR_BODY=%q\n' "${PR_BODY:-}"
   printf 'PR_AUTHOR=%q\n' "${PR_AUTHOR:-}"
   printf 'PR_HEAD_BRANCH=%q\n' "${PR_HEAD_BRANCH:-}"
-} > /tmp/pr_state.env
-echo "State written to /tmp/pr_state.env"
+} > ${PR_STATE_DIR:-/tmp}/pr_state.env
+echo "State written to ${PR_STATE_DIR:-/tmp}/pr_state.env"

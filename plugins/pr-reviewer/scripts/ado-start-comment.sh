@@ -11,6 +11,8 @@
 # Inputs:
 #   PR_NUMBER / BRANCH_ARG  — optional
 #   AZURE_DEVOPS_TOKEN      — required (soft-fail if unset)
+#   PR_REVIEWER_START_NOTE  — optional extra paragraph (e.g. group-review context)
+#   PR_REVIEWER_SKIP_START_COMMENT=true — resolve the PR and write pr_azure.env, but post nothing
 #
 # Outputs:
 #   /tmp/pr_azure.env       — API_BASE, AZURE_REPO, PR_ID, …
@@ -65,6 +67,13 @@ fi
 write_azure_env
 echo "PR=#${PR_ID}"
 
+# Group reviews resolve the PR (above — later steps need pr_azure.env) before they
+# know whether this member will be reviewed at all, and post the comment afterwards.
+if [ "${PR_REVIEWER_SKIP_START_COMMENT:-false}" = "true" ]; then
+  echo "Start comment deferred (PR_REVIEWER_SKIP_START_COMMENT=true)"
+  exit 0
+fi
+
 # --- 3. Post the progress thread ---
 PLUGIN_VERSION=$(grep -hom1 '"version"[^,}]*' \
   "${SCRIPT_DIR}/../.claude-plugin/plugin.json" \
@@ -73,17 +82,20 @@ PLUGIN_VERSION=$(grep -hom1 '"version"[^,}]*' \
   | cut -d'"' -f4 || true)
 PLUGIN_VERSION=${PLUGIN_VERSION:-unknown}
 
-cat > /tmp/pr_progress_body.md <<BODY
+cat > ${PR_STATE_DIR:-/tmp}/pr_progress_body.md <<BODY
 🔍 PR Review in Progress
 
 Claude Code is analyzing this pull request. The review will be posted here shortly.
-
+${PR_REVIEWER_START_NOTE:+
+${PR_REVIEWER_START_NOTE}
+}
 PR Reviewer (${PLUGIN_VERSION})
 BODY
 
-python3 - <<'PY' > /tmp/pr_thread_payload.json
+python3 - <<'PY' > ${PR_STATE_DIR:-/tmp}/pr_thread_payload.json
+import os
 import json
-body = open('/tmp/pr_progress_body.md').read()
+body = open(os.environ.get('PR_STATE_DIR', '/tmp') + '/pr_progress_body.md').read()
 print(json.dumps({
     "comments": [{"content": body, "commentType": 1}],
     "status": "active",
@@ -96,7 +108,7 @@ PY
 RESP=$(curl -sS -w "\nHTTP_STATUS:%{http_code}" \
   -H "Content-Type: application/json" \
   -u ":${AZURE_DEVOPS_TOKEN}" \
-  -X POST --data @/tmp/pr_thread_payload.json \
+  -X POST --data @${PR_STATE_DIR:-/tmp}/pr_thread_payload.json \
   "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads?api-version=7.1" \
   || true)
 STATUS=$(echo "$RESP" | sed -n 's/^HTTP_STATUS://p')

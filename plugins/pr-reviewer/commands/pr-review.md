@@ -12,7 +12,7 @@ Run a comprehensive pull request review for $ARGUMENTS.
 
 Do **not** spawn a separate `orchestrator` / "PR review" sub-agent and ask *it* to run the reviewers. A sub-agent cannot spawn further sub-agents — in the Claude Agent SDK that fails with `No such tool available: Task. Task is not available inside subagents`, the parallel review silently degrades, and the report never gets posted. The fan-out in **Step 6** only works when it is emitted from the top-level agent, which is you.
 
-Execute every step below autonomously and in order. Do not ask for confirmation, clarification, or approval at any point. If a step fails, output a single error line describing what failed and stop — except where a step explicitly says "warn and continue".
+Execute every step below autonomously and in order. Do not ask for confirmation, clarification, or approval at any point. If a step fails, run `bash "$CLAUDE_PLUGIN_ROOT/scripts/report-failure.sh" "<one line describing what failed>"` (after `source /tmp/pr_plugin.env`) so the failure is posted as a PR comment, then stop — except where a step explicitly says "warn and continue".
 
 **Fix mode vs report mode:** if the invocation includes a `--fix` flag or the instruction explicitly says to fix issues, apply fixes and push (see *Applying Fixes*). Otherwise, compile and post the review report only.
 

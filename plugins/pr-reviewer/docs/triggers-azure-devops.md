@@ -38,7 +38,7 @@ Every execution block shares this top-level shape:
 | `model` / `max-budget-usd` | Model and cost cap for the run |
 | `execute-prompt` | The prompt sent to the agent. Implicit interpolations: `{{repository-name}}`, plus any `name` from `use-inputs` |
 
-The `AZURE-DEVOPS-TOKEN` secret is injected via `with-envs`; it authenticates the REST API calls used to post the review and cast the reviewer vote, and (in `--fix` mode) `git push`. See [`platform-setup.md`](./platform-setup.md#azure-devops) for the exact PAT scopes.
+**You must create a PAT for the PR reviewer and add it as the `AZURE-DEVOPS-TOKEN` secret — this is what gives the reviewer agent the right to approve PRs.** The `AZURE-DEVOPS-TOKEN` secret is injected via `with-envs`; it authenticates the REST API calls used to post the review and cast the reviewer vote, and (in `--fix` mode) `git push`. See [`platform-setup.md`](./platform-setup.md#azure-devops) for the exact PAT scopes.
 
 ---
 

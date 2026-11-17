@@ -125,11 +125,12 @@ The Xianix Agent reads these from its secrets store and injects them at runtime 
 
 ### Optional Tuning Variables
 
-Not required to run the plugin — export these to change its default behavior. All are read from the shell environment, not the agent rule's `with-envs` block.
+Not required to run the plugin — export these to change its default behavior. All are read from the container's environment, so with the Xianix Agent you can set them as `constant` entries in the rule's `with-envs` block.
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `PR_REVIEWER_BLOCK_ON_CRITICAL` | `false` (advisory) | When `true`, a `REQUEST CHANGES` verdict posts as a **blocking** review (GitHub `--request-changes`, Azure DevOps vote `-10`) instead of the default non-blocking one (GitHub `--comment`, Azure DevOps vote `-5`) |
+| `PR_REVIEWER_APPROVE_ON_SUCCESS` | `false` (never approves) | When `true`, an `APPROVE` / `APPROVE WITH SUGGESTIONS` verdict approves the PR (GitHub `--approve`, Azure DevOps vote `10` / `5`). By default it posts as a comment only (GitHub `--comment`, Azure DevOps vote `0`). With the Xianix Agent set it via `with-envs`: `{ "name": "PR_REVIEWER_APPROVE_ON_SUCCESS", "value": "true", "constant": true }` |
 | `PR_REVIEWER_RECONCILE` | `true` | Set to `false` to force a stateless full review that ignores prior findings, disabling [re-review mode](#re-review-support) |
 | `PR_REVIEWER_MODEL` | unset | Pins **every** reviewer sub-agent to one model (short slug: `sonnet`/`opus`/`haiku`/`fable`), ignoring the tiers below |
 | `PR_REVIEWER_QUALITY_MODEL` | `haiku` | Model for the escalated path's quality-tier reviewers (`code-reviewer`, `test-reviewer`) |

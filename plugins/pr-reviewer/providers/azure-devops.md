@@ -382,9 +382,15 @@ case "${PR_REVIEWER_BLOCK_ON_CRITICAL:-false}" in
   true|True|TRUE|1|yes|Yes|YES) BLOCK_ON_CRITICAL=true ;;
   *)                              BLOCK_ON_CRITICAL=false ;;
 esac
+case "${PR_REVIEWER_APPROVE_ON_SUCCESS:-false}" in
+  true|True|TRUE|1|yes|Yes|YES) APPROVE_ON_SUCCESS=true ;;
+  *)                              APPROVE_ON_SUCCESS=false ;;
+esac
 case "${VERDICT}" in
-  "APPROVE")                     VOTE=10  ;;
-  "APPROVE WITH SUGGESTIONS")    VOTE=5   ;;
+  "APPROVE")
+    if [ "$APPROVE_ON_SUCCESS" = "true" ]; then VOTE=10; else VOTE=0; fi ;;
+  "APPROVE WITH SUGGESTIONS")
+    if [ "$APPROVE_ON_SUCCESS" = "true" ]; then VOTE=5; else VOTE=0; fi ;;
   "REQUEST CHANGES")
     if [ "$BLOCK_ON_CRITICAL" = "true" ]; then VOTE=-10; else VOTE=-5; fi
     ;;
@@ -635,12 +641,12 @@ The subsections below explain each step. **Prefer `scripts/ado-post-review.sh`**
 
 ### 1. Map verdict to Azure DevOps vote
 
-The verdict string in the report MUST be exactly one of the four values below — written in uppercase, with no decoration. **Always cast a vote**, even on approve. Skipping the vote means the PR shows no reviewer status, which defeats the purpose of the review.
+The verdict string in the report MUST be exactly one of the four values below — written in uppercase, with no decoration. **Always cast a vote.** Approval is **opt-in**: `APPROVE` / `APPROVE WITH SUGGESTIONS` cast `10` / `5` only when `PR_REVIEWER_APPROVE_ON_SUCCESS=true` (`true|1|yes`, default `false`); otherwise they cast `0` (no vote), so the PR is never approved by default.
 
 | Plugin verdict | Azure DevOps vote value | Description |
 |---|---|---|
-| `APPROVE` | `10` | Approved |
-| `APPROVE WITH SUGGESTIONS` | `5` | Approved with suggestions (non-blocking) |
+| `APPROVE` | `10` if `PR_REVIEWER_APPROVE_ON_SUCCESS=true`, else `0` | Approved / No vote |
+| `APPROVE WITH SUGGESTIONS` | `5` if `PR_REVIEWER_APPROVE_ON_SUCCESS=true`, else `0` | Approved with suggestions (non-blocking) / No vote |
 | `REQUEST CHANGES` | `-10` | Rejected *(see `PR_REVIEWER_BLOCK_ON_CRITICAL` below)* |
 | `NEEDS DISCUSSION` | `-5` | Waiting for author |
 
@@ -668,9 +674,16 @@ case "${PR_REVIEWER_BLOCK_ON_CRITICAL:-false}" in
   *)                              BLOCK_ON_CRITICAL=false ;;
 esac
 
+case "${PR_REVIEWER_APPROVE_ON_SUCCESS:-false}" in
+  true|True|TRUE|1|yes|Yes|YES) APPROVE_ON_SUCCESS=true ;;
+  *)                              APPROVE_ON_SUCCESS=false ;;
+esac
+
 case "${VERDICT}" in
-  "APPROVE")                     VOTE=10  ;;
-  "APPROVE WITH SUGGESTIONS")    VOTE=5   ;;
+  "APPROVE")
+    if [ "$APPROVE_ON_SUCCESS" = "true" ]; then VOTE=10; else VOTE=0; fi ;;
+  "APPROVE WITH SUGGESTIONS")
+    if [ "$APPROVE_ON_SUCCESS" = "true" ]; then VOTE=5; else VOTE=0; fi ;;
   "REQUEST CHANGES")
     if [ "$BLOCK_ON_CRITICAL" = "true" ]; then
       VOTE=-10

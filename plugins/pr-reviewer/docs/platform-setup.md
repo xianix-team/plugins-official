@@ -129,6 +129,28 @@ The verdict label, Critical Issues section, and inline comments are identical in
 
 ---
 
+## Optional: Approving PRs when the review is clean
+
+By **default** the plugin **never approves** a PR. When the verdict is `APPROVE` or `APPROVE WITH SUGGESTIONS`, the review is still posted but no approval is cast:
+
+- **GitHub** → `gh pr review --comment`
+- **Azure DevOps** → vote `0` (no vote)
+
+Set `PR_REVIEWER_APPROVE_ON_SUCCESS=true` to approve when there are no critical issues and no warnings. With the Xianix Agent, set it in the rule's `with-envs`:
+
+```json
+{ "name": "PR_REVIEWER_APPROVE_ON_SUCCESS", "value": "true", "constant": true }
+```
+
+| Value | Effect on `APPROVE` / `APPROVE WITH SUGGESTIONS` verdict |
+|---|---|
+| unset / `false` / `0` / `no` *(default)* | GitHub: `--comment` · Azure DevOps: vote `0` (not approved) |
+| `true` / `1` / `yes` | GitHub: `--approve` · Azure DevOps: vote `10` / `5` |
+
+Self-review on GitHub still posts `--comment`. The variable has no effect on the generic provider.
+
+---
+
 ## Summary
 
 | Platform | Analysis | Review posting | Token (posting / API) | Fix mode push |
@@ -143,6 +165,7 @@ The verdict label, Critical Issues section, and inline comments are identical in
 |---|---|---|
 | `PLATFORM` | unset (detect from `origin`) | Optional hint from the runner. Xianix Executor sends **`azuredevops`** for Azure DevOps. The setup script normalizes aliases to canonical `github` / `azure` / `generic` and **always prefers `git remote get-url origin`** when they disagree. Never leave the raw `azuredevops` string for later equality checks. |
 | `PR_REVIEWER_BLOCK_ON_CRITICAL` | `false` | Advisory by default: CRITICAL findings post a non-blocking review (GitHub `--comment`, Azure DevOps vote `-5`). Set to `true` to post a blocking review (GitHub `--request-changes`, Azure DevOps vote `-10`). See above. |
+| `PR_REVIEWER_APPROVE_ON_SUCCESS` | `false` | Approval is disabled by default: `APPROVE` / `APPROVE WITH SUGGESTIONS` verdicts post as a comment (GitHub `--comment`, Azure DevOps vote `0`). Set to `true` to approve (GitHub `--approve`, Azure DevOps vote `10` / `5`). See above. |
 | `PR_REVIEWER_MODEL` | unset | **Override:** pins *every* reviewer sub-agent to one model (e.g. `haiku`), ignoring the tiers below. Env values like `claude-haiku-4-5` are mapped to Agent-tool slugs (`haiku`, `sonnet`, `opus`, `fable`) before invocation. |
 | `PR_REVIEWER_QUALITY_MODEL` | `haiku` | Model for the **quality-tier** reviewers (`code-reviewer`, `test-reviewer`) on the escalated specialist path — pattern/coverage tasks a small model handles well. Ignored if `PR_REVIEWER_MODEL` is set. Passed to `Agent` as `haiku` (not `claude-haiku-4-5`). |
 | `PR_REVIEWER_RISK_MODEL` | inherit (omit `model`) | Model for the **risk-tier** reviewers (`security-reviewer`, `performance-reviewer`) on the escalated specialist path — vulnerability/performance reasoning where frontier accuracy pays off. Ignored if `PR_REVIEWER_MODEL` is set. When unset, omit the `model` field so reviewers inherit the lead's model. |

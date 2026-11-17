@@ -102,9 +102,23 @@ case "${PR_REVIEWER_BLOCK_ON_CRITICAL:-false}" in
   true|True|TRUE|1|yes|Yes|YES) BLOCK_ON_CRITICAL=true ;;
   *)                              BLOCK_ON_CRITICAL=false ;;
 esac
+case "${PR_REVIEWER_APPROVE_ON_SUCCESS:-false}" in
+  true|True|TRUE|1|yes|Yes|YES) APPROVE_ON_SUCCESS=true ;;
+  *)                              APPROVE_ON_SUCCESS=false ;;
+esac
 case "${VERDICT}" in
-  "APPROVE")                     VOTE=10  ;;
-  "APPROVE WITH SUGGESTIONS")    VOTE=5   ;;
+  "APPROVE")
+    if [ "$APPROVE_ON_SUCCESS" = "true" ]; then VOTE=10; else
+      VOTE=0
+      echo "INFO: PR_REVIEWER_APPROVE_ON_SUCCESS not set to true — casting 0 (no vote) instead of 10 (approved)"
+    fi
+    ;;
+  "APPROVE WITH SUGGESTIONS")
+    if [ "$APPROVE_ON_SUCCESS" = "true" ]; then VOTE=5; else
+      VOTE=0
+      echo "INFO: PR_REVIEWER_APPROVE_ON_SUCCESS not set to true — casting 0 (no vote) instead of 5 (approved with suggestions)"
+    fi
+    ;;
   "REQUEST CHANGES")
     if [ "$BLOCK_ON_CRITICAL" = "true" ]; then VOTE=-10; else VOTE=-5; fi
     ;;

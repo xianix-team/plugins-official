@@ -192,4 +192,8 @@ PY
 done <<< "$ACTIVE"
 
 echo "Group review: ${POSTED} posted, ${SKIPPED} unchanged, ${FAILED} failed"
+# The result on the work item too: the group section (verdicts, cross-repo findings, merge order).
+if [ "$POSTED" -gt 0 ]; then
+  python3 "$SCRIPT_DIR/group_platform.py" work-item-comment done || true
+fi
 [ "$POSTED" -gt 0 ] || [ "$FAILED" -eq 0 ]

@@ -10,6 +10,7 @@ Called by the group-*.sh scripts, not directly:
   group_platform.py discover   --work-item REF | --pr N [--repo URL]   [--force]
   group_platform.py event      — turn the webhook event (XIANIX_INPUTS) into discover arguments
   group_platform.py announce
+  group_platform.py work-item-comment start | done   — progress / result comment on the work item
   group_platform.py lock acquire | heartbeat | release | next
 
 Where the group's state lives (lock owner, heartbeat, the commit each PR was reviewed at):
@@ -72,6 +73,7 @@ STATE_MARKER = "xianix:pr-group-state"
 FOLLOW_UP_MARKER = "xianix:group-follow-up"
 MEMBER_MARKER = "xianix:group-member"  # on the note that tells a PR it is in a group
 REVIEW_REQUEST = "@xianix review group"
+PROGRESS_MARKER = "xianix:group-progress"  # start / completed comments on the work item
 OWN_MARKER = "xianix:"  # every comment the plugin writes carries one; such comments are not links
 
 GITHUB, AZURE = "github", "azure"
@@ -687,6 +689,10 @@ def ado_write_state(wi, comment_id, body):
     return http("POST", f"{ado_wi_comments_url(wi)}?{ADO_COMMENTS_API}", AZURE, {"text": body})["id"]
 
 
+def ado_add_markdown_comment(wi, body):
+    http("POST", f"{ado_wi_comments_url(wi)}?format=markdown&{ADO_COMMENTS_API}", AZURE, {"text": body})
+
+
 def ado_delete_comment(wi, comment_id):
     http("DELETE", f"{ado_wi_comments_url(wi)}/{comment_id}?{ADO_COMMENTS_API}", AZURE)
 
@@ -729,6 +735,13 @@ def write_state_comment(d, cid, body):
 
 def delete_comment(d, cid):
     (gh_delete_comment if d["platform"] == GITHUB else ado_delete_comment)(d["work-item"], cid)
+
+
+def add_work_item_comment(d, body):
+    if d["platform"] == GITHUB:
+        gh_write_state(d["work-item"], None, body)
+    else:
+        ado_add_markdown_comment(d["work-item"], body)
 
 
 def work_item_labelled(d):
@@ -846,6 +859,89 @@ def event(_args):
         print(f"EVENT_ARG={a}")
 
 
+def pr_link(m):
+    ref = f"{m.get('repo') or m.get('slug', '')} #{m.get('pr_number') or m.get('pr-number', '')}"
+    url = m.get("pr_url") or m.get("pr-url")
+    return f"[{ref}]({url})" if url else ref
+
+
+def work_item_comment(args):
+    """Tell the work item a group review started (`start`) or finished (`done`). Best effort:
+    a failed comment never fails the review. Local runs have no work item and post nothing."""
+    which = args[0] if args else ""
+    if which not in ("start", "done"):
+        sys.exit("ERROR: work-item-comment start | done")
+    try:
+        d = read_json("discovery.json")
+    except (OSError, ValueError):
+        print("WORK_ITEM_COMMENT=skipped (no work item)")
+        return
+    if d.get("status") != "group" or not d.get("work-item"):
+        print("WORK_ITEM_COMMENT=skipped (no work item)")
+        return
+    env = run_env()
+    run_id = env.get("RUN_ID", "")
+    root = os.environ.get("PRG_ROOT", "/tmp/prg")
+    members = []
+    gs_path = os.path.join(root, "group_state.json")
+    if os.path.isfile(gs_path):
+        members = json.load(open(gs_path, encoding="utf-8")).get("members", [])
+    marker = f"<!-- {PROGRESS_MARKER} {which} {run_id} -->"
+
+    if which == "start":
+        if env.get("WORK_ITEM_STARTED") == "true":
+            print("WORK_ITEM_COMMENT=skipped (already posted for this run)")
+            return
+        lines = []
+        for m in members:
+            if m.get("status") != "ok":
+                lines.append(f"- {pr_link(m)} — not reviewed: {m.get('reason', '')}")
+            elif m.get("unchanged_since_last_review") and env.get("FORCE") != "true":
+                lines.append(f"- {pr_link(m)} — no new commits since its last review")
+            else:
+                lines.append(f"- {pr_link(m)} — reviewing")
+        body = ("🔍 **Group review in progress**\n\n"
+                f"The {len(members)} pull requests of this work item are being reviewed together:\n\n"
+                + "\n".join(lines)
+                + "\n\nEach PR gets its own review plus a cross-repo check of the changes between them. "
+                  "The result will be posted here when the review is done.\n\n" + marker)
+    else:
+        results = {}
+        rp = os.path.join(root, "post_results.tsv")
+        if os.path.isfile(rp):
+            for line in open(rp, encoding="utf-8"):
+                parts = line.rstrip("\n").split("\t")
+                if len(parts) >= 2:
+                    results[parts[0]] = parts[1]
+        posted = sum(1 for v in results.values() if v == "posted")
+        if not posted:
+            print("WORK_ITEM_COMMENT=skipped (nothing posted)")
+            return
+        unchanged = sum(1 for v in results.values() if v == "skipped")
+        failed = sum(1 for v in results.values() if v == "failed")
+        section_path = os.path.join(root, "group_section.md")
+        section = open(section_path, encoding="utf-8").read() if os.path.isfile(section_path) else ""
+        section = re.sub(r"\{\{THIS:[^}]+\}\}", "", section).strip()
+        counts = f"{posted} PR(s) got a new review"
+        if unchanged:
+            counts += f", {unchanged} had no new commits"
+        if failed:
+            counts += f", posting failed on {failed}"
+        body = (f"✅ **Group review completed** — {counts}. The details are on each PR.\n\n"
+                + section + "\n\n" + marker)
+
+    try:
+        add_work_item_comment(d, body)
+    except (ApiError, urllib.error.URLError) as e:
+        log(f"WARN: could not comment on the work item: {e}")
+        print("WORK_ITEM_COMMENT=failed")
+        return
+    if which == "start":
+        env["WORK_ITEM_STARTED"] = "true"
+        write_run_env(env)
+    print(f"WORK_ITEM_COMMENT={which}")
+
+
 def discover(args):
     d, flags = build_group(args)
     write_json("discovery.json", d)
@@ -909,9 +1005,11 @@ def render_state(d, state):
         return (f"<!-- {STATE_MARKER} v1 -->\n**Xianix group review** · {status} · {when}\n\n"
                 f"Reviewed PRs: {members}\n\n<details><summary>state (managed automatically, do not edit)</summary>\n\n"
                 f"```json\n{payload}\n```\n</details>\n")
-    return (f"<p><b>Xianix group review</b> · {status} · {when}</p><p>Reviewed PRs: {members}</p>"
-            f"<p>[{STATE_MARKER}]</p><pre>{payload.replace('&', '&amp;').replace('<', '&lt;')}</pre>"
-            f"<p>[/{STATE_MARKER}]</p>")
+    # Azure DevOps strips <details> and HTML comments, so the state stays visible: keep it to one small line.
+    compact = json.dumps(state, separators=(",", ":")).replace("&", "&amp;").replace("<", "&lt;")
+    return (f"<p><b>Xianix group review</b> · {status} · {when} · reviewed PRs: {members}</p>"
+            f"<p><small>Lock and review state, managed automatically — do not edit: "
+            f"[{STATE_MARKER}]{compact}[/{STATE_MARKER}]</small></p>")
 
 
 def parse_state(body):
@@ -1199,6 +1297,8 @@ def main():
             discover(args)
         elif cmd == "event":
             event(args)
+        elif cmd == "work-item-comment":
+            work_item_comment(args)
         elif cmd == "announce":
             announce(args)
         elif cmd == "lock":

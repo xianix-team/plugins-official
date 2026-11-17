@@ -140,6 +140,8 @@ All **open** PRs linked to it, from repositories of the same owner (GitHub) / or
 | A link added or removed: issue description or comment, PR description, Azure DevOps work item link | The group is read again at once. A new PR is reviewed; after a removal nothing is posted until a remaining PR changes. |
 | Label removed from the work item | Pushes no longer start group reviews. A review that is running stops before posting. The notes stay on the PRs. |
 
+**On the work item** (GitHub issue or Azure DevOps work item) the plugin posts two comments per review: *🔍 Group review in progress* when a review starts (listing the PRs and which have new commits), and *✅ Group review completed* when it has posted, with the group summary — per-PR verdicts, cross-repo findings and the advisory merge order. Runs with nothing new to review post neither. Both comments carry a hidden `xianix:` marker, so they never start another run.
+
 PRs carry no label: a push rule cannot tell a member from any other PR, so every PR push starts `/pr-group-review` (in `--pr N` mode), which finds the PR's work item and stops when it has no labelled group. `/pr-review` makes the same check first and skips a member PR, so it is not reviewed twice (`PR_REVIEWER_GROUP_CHECK=false` turns that off). A PR that only mentions the issue stays linked while its description, a comment or a commit message still mentions it; the plugin's own comments are ignored. A GitHub **Development** link sends no webhook: a PR linked there after the label joins on its next push or the group's next run.
 
 ### One review at a time

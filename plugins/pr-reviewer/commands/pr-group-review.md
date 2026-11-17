@@ -118,6 +118,7 @@ Per member this runs, in that member's checkout with `PR_STATE_DIR=/tmp/prg/<slu
 - Members marked `✗ excluded` are not reviewed (no access, closed/merged, no changes). Continue with the rest.
 - If the script exits non-zero, no member could be set up: output its error, release the lock and stop.
 - If `CHANGED_COUNT=0` and the run is not forced, nothing changed since the last review: go straight to **D5** (it records this and frees the lock).
+- Otherwise the script has also posted the *Group review in progress* comment on the work item (once per run). Do not post it yourself.
 - `BUDGET_MODE=lean` means the run's budget is thin for this many PRs: in G4 use the `haiku` tier for **every** member, with a single finder each.
 - `/tmp/prg/group_state.json` now lists every member (`slug`, `dir`, `state_dir`, `pr_number`, `review_mode`, `review_tier`, `diff_lines`, `unchanged_since_last_review`). Read it once.
 
@@ -217,7 +218,7 @@ source /tmp/prg_plugin.env
 bash "$CLAUDE_PLUGIN_ROOT/scripts/group-post.sh"
 ```
 
-Per member, in its checkout and state dir: `validate-findings.sh` → `assign-fids.sh` → `reconcile-prior-findings.sh` → `gh-post-review.sh` / `ado-post-review.sh` (generic: `pr-review-report.md` in the member's folder), with the shared group section appended to the body. A member with no new commits and no new findings is skipped (its previous review stands) unless forced.
+Per member, in its checkout and state dir: `validate-findings.sh` → `assign-fids.sh` → `reconcile-prior-findings.sh` → `gh-post-review.sh` / `ado-post-review.sh` (generic: `pr-review-report.md` in the member's folder), with the shared group section appended to the body. A member with no new commits and no new findings is skipped (its previous review stands) unless forced. When anything was posted, the script ends with the *Group review completed* comment on the work item (the group section). Do not post it yourself.
 
 ## D5. Next pass, or done
 

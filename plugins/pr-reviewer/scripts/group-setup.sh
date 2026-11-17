@@ -288,3 +288,10 @@ print(f"ACTIVE_COUNT={len(active)} CHANGED_COUNT={len(state['changed_active'])} 
 if not active:
     sys.exit(1)
 PY
+
+# Tell the work item that a review started — once per run, and only when a PR will be reviewed.
+# shellcheck disable=SC1091
+source "$PRG_ROOT/group_state.env"
+if [ "${CHANGED_COUNT:-0}" -gt 0 ] || [ "$PR_REVIEWER_GROUP_FORCE" = "true" ]; then
+  python3 "$SCRIPT_DIR/group_platform.py" work-item-comment start || true
+fi

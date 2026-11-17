@@ -464,6 +464,49 @@ OUT=$(PRG_WS="$WORK/ws20" XIANIX_INPUTS='{"platform":"github","action":"created"
   bash "$SCRIPT_DIR/group-discover.sh" --from-event 2>/dev/null)
 assert_eq "--from-event non-group comment -> skipped" "skipped" "$(value_of STATUS "$OUT")"
 
+echo "=== work item comments: review started / completed ==="
+
+WI_ROOT="$WORK/prg-wi"; mkdir -p "$WI_ROOT"
+wi_comments() { world "[c['body'] for c in w['comments'].get('acme/planning#1', []) if 'xianix:group-progress' in c['body']]"; }
+cat > "$WI_ROOT/group_state.json" <<JSON
+{"members": [
+  {"slug": "api", "status": "ok", "pr_number": "4", "pr_url": "https://github.com/acme/api/pull/4", "unchanged_since_last_review": false},
+  {"slug": "web", "status": "ok", "pr_number": "7", "pr_url": "https://github.com/acme/web/pull/7", "unchanged_since_last_review": true}]}
+JSON
+( cd "$SCRIPT_DIR" && PRG_WS="$WORK/ws30" python3 group_platform.py discover --work-item acme/planning#1 >/dev/null 2>&1 )
+BEFORE=$(world "len(w['comments'].get('acme/planning#1', []))")
+OUT=$(PRG_WS="$WORK/ws30" PRG_ROOT="$WI_ROOT" python3 "$SCRIPT_DIR/group_platform.py" work-item-comment start 2>&1)
+assert_eq "start comment posted on the issue" "WORK_ITEM_COMMENT=start" "$OUT"
+START=$(world "[c['body'] for c in w['comments']['acme/planning#1']][-1]")
+assert_eq "start comment says the review is in progress" "yes" "$(grep -q 'Group review in progress' <<< "$START" && echo yes || echo no)"
+assert_eq "start comment links each PR" "yes" \
+  "$(grep -qF '[api #4](https://github.com/acme/api/pull/4) — reviewing' <<< "$START" && grep -qF '[web #7](https://github.com/acme/web/pull/7) — no new commits since its last review' <<< "$START" && echo yes || echo no)"
+assert_eq "start comment carries the marker (no new run from it)" "yes" "$(grep -q '<!-- xianix:group-progress start ' <<< "$START" && echo yes || echo no)"
+OUT=$(PRG_WS="$WORK/ws30" PRG_ROOT="$WI_ROOT" python3 "$SCRIPT_DIR/group_platform.py" work-item-comment start 2>&1)
+assert_eq "start comment only once per run" "WORK_ITEM_COMMENT=skipped (already posted for this run)" "$OUT"
+
+OUT=$(PRG_WS="$WORK/ws30" PRG_ROOT="$WI_ROOT" python3 "$SCRIPT_DIR/group_platform.py" work-item-comment done 2>&1)
+assert_eq "no completed comment when nothing was posted" "WORK_ITEM_COMMENT=skipped (nothing posted)" "$OUT"
+printf 'api\tposted\tok\nweb\tskipped\tunchanged\n' > "$WI_ROOT/post_results.tsv"
+printf '## Group review · work item [Checkout v2](u) (2 PRs)\n\n| PR | Verdict |\n|---|---|\n| api{{THIS:api}} | APPROVE |\n\n<!-- xianix:group-section -->\n' > "$WI_ROOT/group_section.md"
+OUT=$(PRG_WS="$WORK/ws30" PRG_ROOT="$WI_ROOT" python3 "$SCRIPT_DIR/group_platform.py" work-item-comment done 2>&1)
+assert_eq "completed comment posted on the issue" "WORK_ITEM_COMMENT=done" "$OUT"
+DONE=$(world "[c['body'] for c in w['comments']['acme/planning#1']][-1]")
+assert_eq "completed comment counts the PRs" "yes" "$(grep -qF 'Group review completed** — 1 PR(s) got a new review, 1 had no new commits' <<< "$DONE" && echo yes || echo no)"
+assert_eq "completed comment carries the group section, without per-PR placeholders" "yes no" \
+  "$(grep -q '## Group review · work item' <<< "$DONE" && echo yes || echo no) $(grep -q '{{THIS' <<< "$DONE" && echo yes || echo no)"
+assert_eq "two progress comments in total" "$((BEFORE + 2))" "$(world "len(w['comments'].get('acme/planning#1', []))")"
+OUT=$(PRG_WS="$WORK/ws31" PRG_ROOT="$WI_ROOT" python3 "$SCRIPT_DIR/group_platform.py" work-item-comment start 2>&1)
+assert_eq "local run (no discovery) posts nothing" "WORK_ITEM_COMMENT=skipped (no work item)" "$OUT"
+
+echo "=== hook: git outside a repository ==="
+
+hook() { ( cd "$WORK" && printf '{"tool_input":{"command":"%s"}}' "$1" | bash "$SCRIPT_DIR/../hooks/validate-prerequisites.sh" | grep -o '"decision": "block"' || echo allowed ); }
+assert_eq "git -C <dir> is allowed outside a repo (group review, no checkout)" "allowed" "$(hook 'git -C /x/repo grep foo')"
+assert_eq "cd <dir> && git is allowed" "allowed" "$(hook 'cd /x/repo && git log -1')"
+assert_eq "git clone is allowed" "allowed" "$(hook 'git clone https://example.com/x.git /tmp/x')"
+assert_eq "plain git outside a repo is still blocked" '"decision": "block"' "$(hook 'git status')"
+
 echo
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]

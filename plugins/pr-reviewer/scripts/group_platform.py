@@ -683,10 +683,15 @@ def ado_state_comments(wi):
 
 
 def ado_write_state(wi, comment_id, body):
+    """Markdown, so the state itself stays hidden (render_state)."""
     if comment_id:
-        http("PATCH", f"{ado_wi_comments_url(wi)}/{comment_id}?{ADO_COMMENTS_API}", AZURE, {"text": body})
-        return comment_id
-    return http("POST", f"{ado_wi_comments_url(wi)}?{ADO_COMMENTS_API}", AZURE, {"text": body})["id"]
+        try:
+            http("PATCH", f"{ado_wi_comments_url(wi)}/{comment_id}?format=markdown&{ADO_COMMENTS_API}", AZURE, {"text": body})
+            return comment_id
+        except ApiError:
+            # A state comment from an older version is HTML; replace it with a markdown one.
+            ado_delete_comment(wi, comment_id)
+    return http("POST", f"{ado_wi_comments_url(wi)}?format=markdown&{ADO_COMMENTS_API}", AZURE, {"text": body})["id"]
 
 
 def ado_add_markdown_comment(wi, body):
@@ -1005,17 +1010,19 @@ def render_state(d, state):
         return (f"<!-- {STATE_MARKER} v1 -->\n**Xianix group review** · {status} · {when}\n\n"
                 f"Reviewed PRs: {members}\n\n<details><summary>state (managed automatically, do not edit)</summary>\n\n"
                 f"```json\n{payload}\n```\n</details>\n")
-    # Azure DevOps strips <details> and HTML comments, so the state stays visible: keep it to one small line.
-    compact = json.dumps(state, separators=(",", ":")).replace("&", "&amp;").replace("<", "&lt;")
-    return (f"<p><b>Xianix group review</b> · {status} · {when} · reviewed PRs: {members}</p>"
-            f"<p><small>Lock and review state, managed automatically — do not edit: "
-            f"[{STATE_MARKER}]{compact}[/{STATE_MARKER}]</small></p>")
+    # Azure DevOps: a markdown comment (ado_write_state), with the state in an HTML comment —
+    # hidden when rendered, but returned as-is by the API. "-->" must not end it early.
+    compact = json.dumps(state, separators=(",", ":")).replace("-->", "--\\u003e")
+    return (f"**Xianix group review** · {status} · {when} · reviewed PRs: {members}\n\n"
+            f"<!-- {STATE_MARKER} {compact} -->\n")
 
 
 def parse_state(body):
     import html as html_mod
     text = body or ""
-    m = re.search(r"```json\s*(\{.*?\})\s*```", text, re.S)
+    m = re.search(r"<!--\s*" + re.escape(STATE_MARKER) + r"\s*(\{.*\})\s*-->", text, re.S)
+    if not m:
+        m = re.search(r"```json\s*(\{.*?\})\s*```", text, re.S)
     if not m:
         m2 = re.search(r"\[" + re.escape(STATE_MARKER) + r"\](.*?)\[/" + re.escape(STATE_MARKER) + r"\]", text, re.S)
         if m2:

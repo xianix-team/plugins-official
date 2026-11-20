@@ -23,11 +23,17 @@
 # Outputs:
 #   $PRG_ROOT/<slug>/pr_inline_findings.jsonl  — rewritten for every active member
 #                                                (empty when it has no findings)
-#   Prints per-member counts; lists findings dropped for an unknown/excluded member.
+#   Then, per member, the single-PR chain /pr-review runs before its report:
+#   validate-findings → assign-fids → reconcile-prior-findings → assign-visible-ids, giving
+#   pr_reconcile.json (new / carried_over / fixed / reopened), pr_rereview_delta.md and
+#   pr_visible_ids.json in the member's state dir, and a .reconciled flag for group-post.sh.
+#   Prints per-member counts and the reconcile line; lists findings dropped for an
+#   unknown/excluded member.
 
 set -euo pipefail
 
 PRG_ROOT="${PRG_ROOT:-/tmp/prg}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 python3 - "$PRG_ROOT" <<'PY'
 import json, os, sys
@@ -82,3 +88,28 @@ for slug, items in routed.items():
 for d in dropped:
     print(f"  DROPPED {d}")
 PY
+
+# Reconcile now, as /pr-review does before writing its report: the lead needs to know which
+# findings are new, still open or fixed since the PR's last review to write a re-review.
+MEMBERS=$(python3 -c "
+import json, sys
+for m in json.load(open(sys.argv[1]))['members']:
+    if m['status'] == 'ok':
+        print('\x1f'.join([m['slug'], m['dir'], m['state_dir']]))
+" "$PRG_ROOT/group_state.json")
+while IFS=$'\x1f' read -r SLUG DIR STATE; do
+  [ -n "$SLUG" ] || continue
+  LINE=$(
+    cd "$DIR" || exit 1
+    export PR_STATE_DIR="$STATE"
+    bash "$SCRIPT_DIR/validate-findings.sh" >/dev/null 2>&1 || true
+    bash "$SCRIPT_DIR/assign-fids.sh" >/dev/null 2>&1 || true
+    bash "$SCRIPT_DIR/reconcile-prior-findings.sh" 2>"$STATE/reconcile.err" | grep '^Reconcile (' \
+      || echo "reconcile failed — see $STATE/reconcile.err"
+    PRIOR="$STATE/pr_prior_findings.jsonl" FINDINGS="$STATE/pr_inline_findings.jsonl" \
+      RECONCILE="$STATE/pr_reconcile.json" VISIBLE_IDS="$STATE/pr_visible_ids.json" \
+      python3 "$SCRIPT_DIR/assign-visible-ids.py" >/dev/null 2>&1 || true
+  )
+  : > "$STATE/.reconciled"
+  echo "  $SLUG: $LINE"
+done <<< "$MEMBERS"

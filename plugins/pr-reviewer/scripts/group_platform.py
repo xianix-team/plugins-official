@@ -10,6 +10,7 @@ Called by the group-*.sh scripts, not directly:
   group_platform.py discover   --work-item REF | --pr N [--repo URL]   [--force]
   group_platform.py event      — turn the webhook event (XIANIX_INPUTS) into discover arguments
   group_platform.py announce
+  group_platform.py single-reviews   — Azure DevOps: are single-PR reviews of the members still running?
   group_platform.py work-item-comment start | done   — progress / result comment on the work item
   group_platform.py lock acquire | heartbeat | release | next
 
@@ -34,6 +35,7 @@ Settings (env, all optional):
   PR_GROUP_TIME_LIMIT_SECONDS 1500 time this container may spend; another pass only if it fits
   PR_GROUP_MAX_PASSES       2    reviews in one container before handing over to a new run
   PR_GROUP_PUSH_SETTLE_SECONDS 180 quiet period for PR events (opened, pushed, edited)
+  PR_GROUP_SINGLE_REVIEW_STALE_SECONDS 1800 an unfinished single-PR review older than this is ignored
   XIANIX_INPUTS             the agent's rule inputs (JSON), read by `event`
   GITHUB_TOKEN / AZURE_DEVOPS_TOKEN
   GITHUB_API_URL (https://api.github.com), GITHUB_GRAPHQL_URL ({api}/graphql) — for tests
@@ -63,6 +65,7 @@ STATE_STORE = os.environ.get("PR_GROUP_STATE_STORE", "auto").strip().lower()
 TIME_LIMIT = int(os.environ.get("PR_GROUP_TIME_LIMIT_SECONDS", "1500") or 1500)
 MAX_PASSES = max(1, int(os.environ.get("PR_GROUP_MAX_PASSES", "2") or 2))
 PUSH_SETTLE = int(os.environ.get("PR_GROUP_PUSH_SETTLE_SECONDS", "180") or 180)
+SINGLE_STALE = int(os.environ.get("PR_GROUP_SINGLE_REVIEW_STALE_SECONDS", "1800") or 1800)
 GH_API = os.environ.get("GITHUB_API_URL", "https://api.github.com").rstrip("/")
 GH_GRAPHQL = os.environ.get("GITHUB_GRAPHQL_URL", GH_API + "/graphql")
 MAX_WORK_ITEMS_PER_PR = 5
@@ -820,6 +823,10 @@ def event_args(inputs):
     def review_request(number, repo):
         if REVIEW_REQUEST not in body.lower():
             return None, 0, "the comment is not a group review request"
+        # The plugin's own reviews end with "Re-run with `@xianix review group` …". Posting one
+        # (an Azure DevOps PR thread is a comment) must not start another forced group run.
+        if "xianix:group-section" in body or re.search(r"pr-reviewer:v\d", body):
+            return None, 0, "the comment is the plugin's own review, not a request"
         args = ["--pr", number] + (["--repo", repo] if repo else [])
         # a follow-up comment from a run that ran out of time continues normally; a person's request re-reviews all
         return (args if FOLLOW_UP_MARKER in body else args + ["--force"]), 0, ""
@@ -919,7 +926,9 @@ def work_item_comment(args):
                 if len(parts) >= 2:
                     results[parts[0]] = parts[1]
         posted = sum(1 for v in results.values() if v == "posted")
-        if not posted:
+        gs = json.load(open(gs_path, encoding="utf-8")) if os.path.isfile(gs_path) else {}
+        cross_only = bool(gs.get("cross_only"))
+        if not posted and not cross_only:
             print("WORK_ITEM_COMMENT=skipped (nothing posted)")
             return
         unchanged = sum(1 for v in results.values() if v == "skipped")
@@ -927,12 +936,14 @@ def work_item_comment(args):
         section_path = os.path.join(root, "group_section.md")
         section = open(section_path, encoding="utf-8").read() if os.path.isfile(section_path) else ""
         section = re.sub(r"\{\{THIS:[^}]+\}\}", "", section).strip()
-        counts = f"{posted} PR(s) got a new review"
+        counts = f"{posted} PR(s) got a new review" if not cross_only else (
+            f"cross-repo check of {len(gs.get('active', []))} PRs; each PR keeps its own single-PR review")
         if unchanged:
             counts += f", {unchanged} had no new commits"
         if failed:
             counts += f", posting failed on {failed}"
-        body = (f"✅ **Group review completed** — {counts}. The details are on each PR.\n\n"
+        details = "The details are on each PR." if not cross_only else "Cross-repo findings and the merge order are below."
+        body = (f"✅ **Group review completed** — {counts}. {details}\n\n"
                 + section + "\n\n" + marker)
 
     try:
@@ -945,6 +956,58 @@ def work_item_comment(args):
         env["WORK_ITEM_STARTED"] = "true"
         write_run_env(env)
     print(f"WORK_ITEM_COMMENT={which}")
+
+
+def single_review_running(threads, at):
+    """True when a single-PR review (/pr-review) of this Azure DevOps PR is still running: its
+    "Review in Progress" thread is newer than the latest review summary and not stale. The
+    group's own start comment carries a xianix: marker and does not count."""
+    def when(t):
+        times = [parse_time(t.get("publishedDate")), parse_time(t.get("lastUpdatedDate"))]
+        times = [x for x in times if x]
+        return max(times) if times else None
+
+    started, finished = [], []
+    for t in threads:
+        body = ((t.get("comments") or [{}])[0] or {}).get("content") or ""
+        props = t.get("properties") or {}
+        kind = props.get("pr-reviewer.kind")
+        kind = kind.get("$value") if isinstance(kind, dict) else kind
+        if kind == "summary" or re.search(r"<!--\s*pr-reviewer:v[\d.]+\s+kind=summary", body):
+            w = when(t)
+            if w:
+                finished.append(w)
+        elif "PR Review in Progress" in body and OWN_MARKER not in body:
+            w = parse_time(t.get("publishedDate"))
+            if w:
+                started.append(w)
+    if not started:
+        return False
+    latest = max(started)
+    if finished and max(finished) >= latest:
+        return False
+    return (at - latest).total_seconds() < SINGLE_STALE
+
+
+def ado_pr_threads(member):
+    return http("GET", f"{ado_pr_path(member)}/threads?{ADO_API}", AZURE).get("value", [])
+
+
+def single_reviews(_args):
+    """Azure DevOps runs every active PR through /pr-review on create and push. When the group
+    label arrives while those reviews still run, the group waits for them instead of reviewing
+    the same PRs again (group-discover.sh)."""
+    d = read_json("discovery.json")
+    running = []
+    if d.get("platform") == AZURE and d.get("status") == "group":
+        for m in d.get("members", []):
+            try:
+                if single_review_running(ado_pr_threads(m), now()):
+                    running.append(f"{m['repo']}#{m['pr-number']}")
+            except ApiError as e:
+                log(f"WARN: could not read the threads of {m['repo']} #{m['pr-number']}: {e}")
+    print(f"SINGLE_REVIEWS_RUNNING={len(running)}")
+    print(f"SINGLE_REVIEWS={' '.join(running)}")
 
 
 def discover(args):
@@ -1010,17 +1073,19 @@ def render_state(d, state):
         return (f"<!-- {STATE_MARKER} v1 -->\n**Xianix group review** · {status} · {when}\n\n"
                 f"Reviewed PRs: {members}\n\n<details><summary>state (managed automatically, do not edit)</summary>\n\n"
                 f"```json\n{payload}\n```\n</details>\n")
-    # Azure DevOps: a markdown comment (ado_write_state), with the state in an HTML comment —
-    # hidden when rendered, but returned as-is by the API. "-->" must not end it early.
-    compact = json.dumps(state, separators=(",", ":")).replace("-->", "--\\u003e")
+    # Azure DevOps: a markdown comment (ado_write_state). Azure DevOps strips HTML comments
+    # (<!-- -->) from markdown, so the state goes into an inline code span, which it keeps as-is.
+    compact = json.dumps(state, separators=(",", ":")).replace("`", "\\u0060")
     return (f"**Xianix group review** · {status} · {when} · reviewed PRs: {members}\n\n"
-            f"<!-- {STATE_MARKER} {compact} -->\n")
+            f"`{STATE_MARKER} {compact}`\n")
 
 
 def parse_state(body):
     import html as html_mod
-    text = body or ""
+    text = html_mod.unescape(body or "")
     m = re.search(r"<!--\s*" + re.escape(STATE_MARKER) + r"\s*(\{.*\})\s*-->", text, re.S)
+    if not m:
+        m = re.search(r"`\s*" + re.escape(STATE_MARKER) + r"\s*(\{[^`]*\})\s*`", text, re.S)
     if not m:
         m = re.search(r"```json\s*(\{.*?\})\s*```", text, re.S)
     if not m:
@@ -1056,6 +1121,10 @@ def fresh_state():
     return json.loads(json.dumps(STATE_TEMPLATE))
 
 
+class StateUnreadable(Exception):
+    """The state comment was written but does not read back with its state."""
+
+
 class CommentStore:
     """State in a comment on the work item. Comments cannot be compare-and-set, so a write
     is read back after a short wait; a rare double run is possible (and harmless)."""
@@ -1078,6 +1147,12 @@ class CommentStore:
         cid = write_state_comment(self.d, token[0] if token else None, render_state(self.d, state))
         time.sleep(LOCK_VERIFY)
         comments = state_comments(self.d)
+        if not any(c["id"] == cid for c in comments):
+            # The platform changed the comment so it no longer carries the state: remove it
+            # (a new one only) and stop, instead of posting one comment per retry.
+            if token is None:
+                delete_comment(self.d, cid)
+            raise StateUnreadable("the state comment written on the work item cannot be read back")
         if token is None and comments and comments[0]["id"] != cid:
             delete_comment(self.d, cid)  # another run created the state comment first
             return False
@@ -1189,9 +1264,17 @@ def lock(args):
                     return f"LOCK=busy HOLDER={holder}"
                 state["run"] = {"id": me, "status": "running", "started": iso(now()), "heartbeat": iso(now())}
                 if store.cas(token, state):
+                    # group-setup.sh: which member heads this group has already cross-checked
+                    write_json("group_reviewed.json", state.get("reviewed") or {})
                     return f"LOCK=acquired STORE={store.name}"
+            if store.name == "comment":
+                return ("LOCK=error REASON=the state comment on the work item does not read back as written "
+                        "(the platform changed it); nothing was reviewed")
             return "LOCK=busy HOLDER=?"
-        print(with_store(d, acquire))
+        try:
+            print(with_store(d, acquire))
+        except StateUnreadable as e:
+            print(f"LOCK=error REASON={e}")
         return
 
     if action == "heartbeat":
@@ -1304,6 +1387,8 @@ def main():
             discover(args)
         elif cmd == "event":
             event(args)
+        elif cmd == "single-reviews":
+            single_reviews(args)
         elif cmd == "work-item-comment":
             work_item_comment(args)
         elif cmd == "announce":

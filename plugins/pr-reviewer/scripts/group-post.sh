@@ -19,6 +19,9 @@
 #                                              "Suggested merge order (advisory)" sections
 #   $PRG_ROOT/<slug>/pr_external_reconcile.json — optional, as for /pr-review
 #   PR_REVIEWER_GROUP_FORCE                  — true = post on unchanged members too
+#   CROSS_ONLY in $PRG_ROOT/group_state.env  — true = every member was already reviewed on its
+#                                              own (single-PR review at its current head): post
+#                                              no member review, only the group result on the work item
 #
 # Outputs:
 #   Posts per member (GitHub / Azure DevOps) or writes <worktree>/pr-review-report.md (generic).
@@ -32,6 +35,8 @@ PRG_ROOT="${PRG_ROOT:-/tmp/prg}"
 : "${PR_REVIEWER_GROUP_FORCE:=false}"
 
 [ -f "$PRG_ROOT/group_state.json" ] || { echo "ERROR: $PRG_ROOT/group_state.json missing — run group-setup.sh first" >&2; exit 1; }
+
+CROSS_ONLY=$(sed -n 's/^CROSS_ONLY=//p' "$PRG_ROOT/group_state.env" 2>/dev/null)
 
 ACTIVE=$(python3 -c "
 import json, sys
@@ -98,10 +103,14 @@ for m in state["members"]:
         rows.append(f"| {ref(m)}{{{{THIS:{m['slug']}}}}} | — | — | — | — | not reviewed: {m['reason']} |")
         continue
     verdict_path = os.path.join(m["state_dir"], "verdict")
-    verdict = open(verdict_path, encoding="utf-8").read().strip() if os.path.isfile(verdict_path) else "NEEDS DISCUSSION"
+    own_review = m["unchanged_since_last_review"] and not m.get("group_checked", True)
+    default_verdict = "see its review" if m["unchanged_since_last_review"] else "NEEDS DISCUSSION"
+    verdict = open(verdict_path, encoding="utf-8").read().strip() if os.path.isfile(verdict_path) else default_verdict
     crit, warn, cross = counts(m["state_dir"])
     status = f"reviewed @ `{m['head_sha'][:7]}`"
-    if m["unchanged_since_last_review"]:
+    if own_review:
+        status = f"reviewed on its own (single-PR review) @ `{m['head_sha'][:7]}`"
+    elif m["unchanged_since_last_review"]:
         status = f"no new commits since last review @ `{m['head_sha'][:7]}`"
     rows.append(f"| {ref(m)}{{{{THIS:{m['slug']}}}}} | {verdict} | {crit} | {warn} | {cross} | {status} |")
 
@@ -127,6 +136,13 @@ SKIPPED=0
 while IFS=$'\x1f' read -r SLUG DIR STATE PLATFORM UNCHANGED; do
   [ -n "$SLUG" ] || continue
 
+  if [ "$CROSS_ONLY" = "true" ]; then
+    echo "$SLUG: reviewed on its own (single-PR review) — no member review posted; the cross-repo result goes to the work item"
+    printf '%s\tskipped\tsingle-review\n' "$SLUG" >> "$PRG_ROOT/post_results.tsv"
+    SKIPPED=$((SKIPPED + 1))
+    continue
+  fi
+
   if [ "$UNCHANGED" = "true" ] && [ "$PR_REVIEWER_GROUP_FORCE" != "true" ] && [ ! -s "$STATE/pr_inline_findings.jsonl" ]; then
     echo "$SLUG: unchanged since last review and no new findings — previous review stands, nothing posted"
     printf '%s\tskipped\tunchanged\n' "$SLUG" >> "$PRG_ROOT/post_results.tsv"
@@ -134,17 +150,35 @@ while IFS=$'\x1f' read -r SLUG DIR STATE PLATFORM UNCHANGED; do
     continue
   fi
 
+  # Normally done by group-route-findings.sh; do it here if that step was skipped.
+  if [ ! -f "$STATE/.reconciled" ]; then
+    ( cd "$DIR" && PR_STATE_DIR="$STATE" bash "$SCRIPT_DIR/reconcile-prior-findings.sh" >/dev/null 2>"$STATE/reconcile.err" ) \
+      || echo "WARN: $SLUG — reconcile failed; see $STATE/reconcile.err" >&2
+    : > "$STATE/.reconciled"
+  fi
+
   # Keep the lead's own body as the base so a re-run never stacks group sections.
   [ -f "$STATE/pr_thread_body.base.md" ] || cp "$STATE/pr_thread_body.md" "$STATE/pr_thread_body.base.md" 2>/dev/null || {
     echo "WARN: $SLUG — no pr_thread_body.md written by the lead; posting the group section only" >&2
     : > "$STATE/pr_thread_body.base.md"
   }
-  python3 - "$PRG_ROOT/group_section.md" "$STATE/pr_thread_body.base.md" "$STATE/pr_thread_body.md" "$SLUG" <<'PY'
-import re, sys
-section_path, base_path, out_path, slug = sys.argv[1:5]
+  python3 - "$PRG_ROOT/group_section.md" "$STATE/pr_thread_body.base.md" "$STATE/pr_thread_body.md" "$SLUG" "$STATE" <<'PY'
+import os, re, sys
+section_path, base_path, out_path, slug, state = sys.argv[1:6]
 section = open(section_path, encoding="utf-8").read()
 section = re.sub(r"\{\{THIS:([^}]+)\}\}", lambda m: " **(this PR)**" if m.group(1) == slug else "", section)
 base = open(base_path, encoding="utf-8").read().rstrip()
+# Re-review: like /pr-review, the summary opens with what changed since the last review.
+mode = ""
+env = os.path.join(state, "pr_state.env")
+if os.path.isfile(env):
+    for line in open(env, encoding="utf-8"):
+        m = re.match(r"^(?:export\s+)?REVIEW_MODE=['\"]?([a-z]+)", line.strip())
+        if m:
+            mode = m.group(1)
+delta_path = os.path.join(state, "pr_rereview_delta.md")
+if mode == "rereview" and os.path.isfile(delta_path) and "### Re-review delta" not in base:
+    base = (open(delta_path, encoding="utf-8").read().strip() + "\n\n" + base).strip()
 open(out_path, "w", encoding="utf-8").write((base + "\n\n---\n\n" if base else "") + section)
 PY
 
@@ -152,8 +186,6 @@ PY
   RESULT=$(
     cd "$DIR" || exit 1
     export PR_STATE_DIR="$STATE"
-    bash "$SCRIPT_DIR/reconcile-prior-findings.sh" >/dev/null 2>"$STATE/reconcile.err" \
-      || echo "WARN: $SLUG — reconcile failed; see $STATE/reconcile.err" >&2
     # shellcheck disable=SC1091
     source "$STATE/pr_state.env"
     case "$PLATFORM" in
@@ -193,7 +225,7 @@ done <<< "$ACTIVE"
 
 echo "Group review: ${POSTED} posted, ${SKIPPED} unchanged, ${FAILED} failed"
 # The result on the work item too: the group section (verdicts, cross-repo findings, merge order).
-if [ "$POSTED" -gt 0 ]; then
+if [ "$POSTED" -gt 0 ] || [ "$CROSS_ONLY" = "true" ]; then
   python3 "$SCRIPT_DIR/group_platform.py" work-item-comment done || true
 fi
 [ "$POSTED" -gt 0 ] || [ "$FAILED" -eq 0 ]

@@ -73,7 +73,9 @@ source /tmp/prg_plugin.env
 bash "$CLAUDE_PLUGIN_ROOT/scripts/group-discover.sh" <arguments from $ARGUMENTS>
 ```
 
-The script reads the work item, its label and the linked PRs, waits for the quiet period when `PR_GROUP_SETTLE_SECONDS` is set (it sleeps; this is expected), and posts the group note on members that do not have it yet. Read its `STATUS=` line (and, with `--pr`, its `TRIGGER_MEMBER=` line):
+The script reads the work item, its label and the linked PRs, waits for the quiet period when `PR_GROUP_SETTLE_SECONDS` is set (it sleeps; this is expected), and posts the group note on members that do not have it yet.
+
+**Azure DevOps:** every active PR also gets a single-PR review (`/pr-review`) when it is created or pushed. If those reviews are still running, the script waits for them to finish (it sleeps; up to `PR_GROUP_SINGLE_WAIT_MAX_SECONDS`, default 15 minutes), posts **no** group notes in this run and prints `SINGLE_WAITED=<seconds>`. Their results then count as the members' reviews (G1 shows them as unchanged), and this run only adds the cross-repo check. Read its `STATUS=` line (and, with `--pr`, its `TRIGGER_MEMBER=` line):
 
 | STATUS | What to do |
 |---|---|
@@ -94,6 +96,7 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/group-lock.sh" acquire
 
 - `LOCK=acquired …` → continue.
 - `LOCK=busy HOLDER=<id>` → another run is reviewing this group; when it finishes it checks for new commits and reviews them too. Print `Group review: already running (<id>) — this push will be included` and stop. Do **not** release (you do not own the lock).
+- `LOCK=error REASON=<text>` → the group's state could not be saved on the work item (e.g. the platform changed the state comment). Print `Group review: stopped — <REASON>` and stop. Do **not** release.
 
 ## D3. Check out the members
 
@@ -117,7 +120,9 @@ Per member this runs, in that member's checkout with `PR_STATE_DIR=/tmp/prg/<slu
 
 - Members marked `✗ excluded` are not reviewed (no access, closed/merged, no changes). Continue with the rest.
 - If the script exits non-zero, no member could be set up: output its error, release the lock and stop.
-- If `CHANGED_COUNT=0` and the run is not forced, nothing changed since the last review: go straight to **D5** (it records this and frees the lock).
+- If `CHANGED_COUNT=0` and the run is not forced:
+  - `CROSS_ONLY=true` → **cross-repo only**: every member was already reviewed on its own (a single-PR review at its current head) but the group has not checked these heads together. Run G2, G3, G4 (heartbeat, then **only** the cross-repo reviewer — no per-member reviews), G5, G6 (write only `group_notes.md` — no member report or verdict) and G7. Nothing is posted on the PRs; the result goes to the work item.
+  - otherwise nothing changed since the last review: go straight to **D5** (it records this and frees the lock).
 - Otherwise the script has also posted the *Group review in progress* comment on the work item (once per run). Do not post it yourself.
 - `BUDGET_MODE=lean` means the run's budget is thin for this many PRs: in G4 use the `haiku` tier for **every** member, with a single finder each.
 - `/tmp/prg/group_state.json` now lists every member (`slug`, `dir`, `state_dir`, `pr_number`, `review_mode`, `review_tier`, `diff_lines`, `unchanged_since_last_review`). Read it once.
@@ -159,7 +164,7 @@ Read `"$CLAUDE_PLUGIN_ROOT/commands/pr-review.md"` steps 6A/6B once and reuse th
 
 With more than 4 members, or in lean mode, give each `haiku`-tier member a **single** finder that covers both focus lists instead of two.
 
-**b) Cross-repo review** — only when at least 2 members are active and at least one of them changed: one call with `subagent_type: "cross-repo-reviewer"` (prefix `pr-reviewer:` if your SDK requires it), no `model` field. Prompt:
+**b) Cross-repo review** — only when at least 2 members are active and at least one of them changed, or `CROSS_ONLY=true`: one call with `subagent_type: "cross-repo-reviewer"` (prefix `pr-reviewer:` if your SDK requires it), no `model` field. Prompt:
 
 ```
 Group: /tmp/prg/group_state.json   Contract index: /tmp/prg/contracts.md
@@ -195,11 +200,14 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/group-route-findings.sh"
 
 Any `DROPPED` line means you used a wrong member slug — fix `/tmp/prg/findings.jsonl` and re-run.
 
+The script then reconciles every member against that PR's earlier review, as `/pr-review` does before its report (validate → fids → reconcile → stable labels), and prints one `Reconcile (<mode>): fixed=… carried_over=… reopened=… new=…` line per member. Per member it leaves `/tmp/prg/<slug>/pr_reconcile.json`, `/tmp/prg/<slug>/pr_visible_ids.json` and, for a re-review, `/tmp/prg/<slug>/pr_rereview_delta.md`. In a re-review, `pr_inline_findings.jsonl` now holds only the **new** findings — only those get new inline comments.
+
 ## G6. Write each member's report, verdict, and the group notes
 
-For each active member that will be posted (changed, forced, or with findings routed to it):
+Skip this list when `CROSS_ONLY=true` (write only `group_notes.md`, below). Otherwise, for each active member that will be posted (changed, forced, or with findings routed to it):
 1. Write `/tmp/prg/<slug>/pr_thread_body.md` — that member's report following `styles/report-template.md`, covering its own findings **and** the cross-repo findings anchored on it. Do not add the group table; the post script appends it.
-2. Write `/tmp/prg/<slug>/verdict` — one of `APPROVE`, `REQUEST CHANGES`, `NEEDS DISCUSSION`, from that member's open findings (own + cross-repo anchored on it), using the same rules as `/pr-review`.
+   - **Re-review** (`review_mode=rereview`): write it the way `/pr-review` does in re-review mode. Use `pr_reconcile.json` and `pr_visible_ids.json`: keep every prior finding's label (never renumber), report **new** findings in full, and list **fixed**, **still open** (carried over) and **reopened** findings by label. Do not add the re-review delta yourself — the post script puts `pr_rereview_delta.md` at the top.
+2. Write `/tmp/prg/<slug>/verdict` — one of `APPROVE`, `REQUEST CHANGES`, `NEEDS DISCUSSION`, from that member's open findings (own + cross-repo anchored on it — in a re-review: new + still open + reopened), using the same rules as `/pr-review`.
 3. Optional, as in `/pr-review` step 7: `/tmp/prg/<slug>/pr_external_reconcile.json` for addressed external threads on that PR.
 
 Write `/tmp/prg/group_notes.md` once, following `styles/group-report-template.md`: the cross-repo findings list (all members) and the **advisory** suggested merge order from the reviewer's `MERGE_ORDER` line. Merge order is advice only — it never changes a verdict.
@@ -218,7 +226,7 @@ source /tmp/prg_plugin.env
 bash "$CLAUDE_PLUGIN_ROOT/scripts/group-post.sh"
 ```
 
-Per member, in its checkout and state dir: `validate-findings.sh` → `assign-fids.sh` → `reconcile-prior-findings.sh` → `gh-post-review.sh` / `ado-post-review.sh` (generic: `pr-review-report.md` in the member's folder), with the shared group section appended to the body. A member with no new commits and no new findings is skipped (its previous review stands) unless forced. When anything was posted, the script ends with the *Group review completed* comment on the work item (the group section). Do not post it yourself.
+Per member, in its checkout and state dir: `validate-findings.sh` → `assign-fids.sh` → `reconcile-prior-findings.sh` → `gh-post-review.sh` / `ado-post-review.sh` (generic: `pr-review-report.md` in the member's folder), with the shared group section appended to the body. A member with no new commits and no new findings is skipped (its previous review stands) unless forced. When anything was posted, the script ends with the *Group review completed* comment on the work item (the group section). With `CROSS_ONLY=true` it posts no member review — each PR keeps its single-PR review — and only that work item comment, with the cross-repo findings and the merge order. Do not post it yourself.
 
 ## D5. Next pass, or done
 

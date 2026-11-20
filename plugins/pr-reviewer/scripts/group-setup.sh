@@ -139,6 +139,7 @@ while IFS=$'\x1f' read -r SLUG DIR PRN BRANCH; do
   [ -n "$SLUG" ] || continue
   STATE="$PRG_ROOT/$SLUG"
   mkdir -p "$STATE"
+  rm -f "$STATE/.reconciled" "$STATE/pr_thread_body.base.md"
   LOG="$STATE/setup.log"
   STATUS=ok
   REASON=""
@@ -173,6 +174,13 @@ while IFS=$'\x1f' read -r SLUG DIR PRN BRANCH; do
       source "$STATE/pr_state.env"
       # shellcheck disable=SC1091
       [ -f "$STATE/pr_prior.env" ] && source "$STATE/pr_prior.env"
+      # Older Azure DevOps reviews recorded the PR's merge commit (refs/pull/N/merge) instead of
+      # its head; that merge commit's second parent is the head. Treat it as the same commit.
+      if [ -n "${PRIOR_SUMMARY_SHA:-}" ] && [ -n "${HEAD_SHA:-}" ] && [ "$PRIOR_SUMMARY_SHA" != "$HEAD_SHA" ] \
+         && [ "$(git rev-parse -q --verify "${PRIOR_SUMMARY_SHA}^2" 2>/dev/null)" = "$HEAD_SHA" ]; then
+        PRIOR_SUMMARY_SHA="$HEAD_SHA"
+        echo "PRIOR_SUMMARY_SHA=$HEAD_SHA" >> "$STATE/pr_prior.env"
+      fi
       if [ "$PR_REVIEWER_GROUP_FORCE" != "true" ] && [ "${REVIEW_MODE:-initial}" = "rereview" ] \
          && [ -n "${HEAD_SHA:-}" ] && [ "${PRIOR_SUMMARY_SHA:-}" = "${HEAD_SHA}" ]; then
         echo "=== start comment ($SLUG): skipped — no new commits since the last review ==="
@@ -226,6 +234,19 @@ def read_env(path):
             env[key] = value
     return env
 
+# The member heads this group already cross-checked (group-lock.sh acquire). A member whose
+# head was reviewed by a single-PR review (/pr-review) but never cross-checked by the group
+# still needs the cross-repo check, even though it has no new commits.
+ws = os.environ.get("PRG_WS", "/tmp/prg-ws")
+def read_json_file(path, default):
+    try:
+        return json.load(open(path, encoding="utf-8"))
+    except (OSError, ValueError):
+        return default
+group_reviewed = read_json_file(os.path.join(ws, "group_reviewed.json"), {})
+member_key = {m.get("slug"): f"{m.get('repo')}#{m.get('pr-number')}"
+              for m in read_json_file(os.path.join(ws, "discovery.json"), {}).get("members", [])}
+
 members, active, total_lines = [], [], 0
 for m in group["members"]:
     slug = m["slug"]
@@ -247,6 +268,7 @@ for m in group["members"]:
         "head_sha": head, "base": env.get("BASE", ""), "review_mode": env.get("REVIEW_MODE", "initial") or "initial",
         "review_tier": env.get("REVIEW_TIER", "haiku") or "haiku", "changed_count": env.get("CHANGED_COUNT", ""),
         "diff_lines": diff_lines, "unchanged_since_last_review": bool(unchanged),
+        "group_checked": bool(head) and group_reviewed.get(member_key.get(slug, "")) == head,
     }
     members.append(entry)
     if st == "ok":
@@ -256,6 +278,13 @@ for m in group["members"]:
 state = {k: v for k, v in group.items() if k != "members"}
 state.update({"members": members, "active": active, "total_diff_lines": total_lines,
               "changed_active": [m["slug"] for m in members if m["status"] == "ok" and not m["unchanged_since_last_review"]]})
+# Cross-repo only: no member needs its own review (single-PR reviews cover the current heads),
+# but the group has not checked these heads together yet. Only the cross-repo check runs, and
+# the result goes to the work item; no member review is posted.
+state["cross_pending"] = [m["slug"] for m in members
+                          if m["status"] == "ok" and m["unchanged_since_last_review"] and not m["group_checked"]]
+state["cross_only"] = (not force and not state["changed_active"] and len(active) >= 2
+                       and bool(state["cross_pending"]))
 # The run has one fixed budget. When it is thin for the number of PRs to review (plus the
 # cross-repo pass), review in "lean" mode: the cheaper finder tier for every member.
 to_review = len(active) if force else len(state["changed_active"])
@@ -273,6 +302,8 @@ with open(os.path.join(root, "group_state.env"), "w", encoding="utf-8") as f:
     f.write(f"ACTIVE_SLUGS={shlex.quote(' '.join(active))}\n")
     f.write(f"ACTIVE_COUNT={len(active)}\n")
     f.write(f"CHANGED_COUNT={len(state['changed_active'])}\n")
+    f.write(f"CROSS_PENDING_COUNT={len(state['cross_pending'])}\n")
+    f.write(f"CROSS_ONLY={'true' if state['cross_only'] else 'false'}\n")
     f.write(f"TOTAL_DIFF_LINES={total_lines}\n")
     f.write(f"BUDGET_MODE={budget_mode}\n")
 
@@ -285,6 +316,7 @@ for e in members:
     else:
         print(f"  ✗ {e['slug']:<20} excluded — {e['reason']} (see {e['state_dir']}/setup.log)")
 print(f"ACTIVE_COUNT={len(active)} CHANGED_COUNT={len(state['changed_active'])} TOTAL_DIFF_LINES={total_lines} BUDGET_MODE={budget_mode}")
+print(f"CROSS_PENDING_COUNT={len(state['cross_pending'])} CROSS_ONLY={'true' if state['cross_only'] else 'false'}")
 if not active:
     sys.exit(1)
 PY

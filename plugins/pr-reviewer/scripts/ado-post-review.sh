@@ -25,6 +25,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib-azure-remote.sh"
 
+# The PR's own head commit, as pr-setup.sh recorded it. Azure DevOps reviews check out the
+# synthetic merge (refs/pull/N/merge), so `git rev-parse HEAD` is a merge commit that changes
+# whenever the target branch moves; re-reviews (and group reviews) compare against the head.
+pr_head_sha() {
+  local sha=""
+  [ -f "${PR_STATE_DIR:-/tmp}/pr_state.env" ] && \
+    sha=$(sed -n "s/^\(export \)\{0,1\}HEAD_SHA=['\"]\{0,1\}\([0-9a-fA-F]\{7,\}\).*/\2/p" "${PR_STATE_DIR:-/tmp}/pr_state.env" | tail -1)
+  [ -n "$sha" ] && git cat-file -e "${sha}^{commit}" 2>/dev/null && { echo "$sha"; return; }
+  git rev-parse HEAD
+}
+
 : "${VERDICT:=NEEDS DISCUSSION}"
 : "${REVIEW_MODE:=initial}"
 
@@ -166,7 +177,7 @@ fi
 # (pr-reviewer.kind / .sha) often 400 the whole create — which is why "in progress"
 # (SupportsMarkdown only) succeeds while the summary comment never appears.
 # Always embed a body marker too, so re-review detection still works if properties are stripped.
-HEAD_SHA=$(git rev-parse HEAD)
+HEAD_SHA=$(pr_head_sha)
 export HEAD_SHA
 # Embed body marker first (survives property stripping / retry modes)
 python3 - <<'PY'
@@ -253,7 +264,7 @@ fi
 # --- 5b. Re-review: reconcile fixed findings ---
 if [ "${REVIEW_MODE}" = "rereview" ] && [ -f ${PR_STATE_DIR:-/tmp}/pr_reconcile.json ]; then
   : > ${PR_STATE_DIR:-/tmp}/pr_resolved.log
-  HEAD_SHA=$(git rev-parse HEAD)
+  HEAD_SHA=$(pr_head_sha)
   python3 -c "import json; [print(json.dumps(x)) for x in json.load(open('${PR_STATE_DIR:-/tmp}/pr_reconcile.json')).get('fixed',[])]" \
   | while IFS= read -r f; do
     [ -z "$f" ] && continue
@@ -286,7 +297,7 @@ REOPENED_OK=0
 REOPENED_FAIL=0
 if [ "${REVIEW_MODE}" = "rereview" ] && [ -f ${PR_STATE_DIR:-/tmp}/pr_reconcile.json ]; then
   : > ${PR_STATE_DIR:-/tmp}/pr_reopened.log
-  HEAD_SHA=$(git rev-parse HEAD)
+  HEAD_SHA=$(pr_head_sha)
   python3 -c "import json; [print(json.dumps(x)) for x in json.load(open('${PR_STATE_DIR:-/tmp}/pr_reconcile.json')).get('reopened',[])]" \
   | while IFS= read -r f; do
     [ -z "$f" ] && continue
@@ -321,7 +332,7 @@ EXTERNAL_REPLY_OK=0
 EXTERNAL_REPLY_FAIL=0
 : > ${PR_STATE_DIR:-/tmp}/pr_external_replies.log
 if [ -f ${PR_STATE_DIR:-/tmp}/pr_external_reconcile.json ]; then
-  HEAD_SHA=$(git rev-parse HEAD)
+  HEAD_SHA=$(pr_head_sha)
   python3 -c "import json; [print(json.dumps(x)) for x in json.load(open('${PR_STATE_DIR:-/tmp}/pr_external_reconcile.json')).get('addressed',[])]" \
   | while IFS= read -r f; do
     [ -z "$f" ] && continue
@@ -357,7 +368,7 @@ while IFS= read -r line; do
   [ -z "$line" ] && continue
   INLINE_TOTAL=$((INLINE_TOTAL + 1))
   echo "$line" > ${PR_STATE_DIR:-/tmp}/pr_inline_finding.json
-  if ! HEAD_SHA=$(git rev-parse HEAD) python3 - <<'PY' > ${PR_STATE_DIR:-/tmp}/pr_thread_payload.json 2>>${PR_STATE_DIR:-/tmp}/pr_inline_failures.log
+  if ! HEAD_SHA=$(pr_head_sha) python3 - <<'PY' > ${PR_STATE_DIR:-/tmp}/pr_thread_payload.json 2>>${PR_STATE_DIR:-/tmp}/pr_inline_failures.log
 import os
 import json, os
 f = json.load(open(os.environ.get('PR_STATE_DIR', '/tmp') + '/pr_inline_finding.json'))
@@ -408,7 +419,7 @@ PY
     fi
   else
     # Retry without custom properties (keep file anchor + markdown)
-    if ! HEAD_SHA=$(git rev-parse HEAD) python3 - <<'PY' > ${PR_STATE_DIR:-/tmp}/pr_thread_payload.json 2>>${PR_STATE_DIR:-/tmp}/pr_inline_failures.log
+    if ! HEAD_SHA=$(pr_head_sha) python3 - <<'PY' > ${PR_STATE_DIR:-/tmp}/pr_thread_payload.json 2>>${PR_STATE_DIR:-/tmp}/pr_inline_failures.log
 import os
 import json, os
 f = json.load(open(os.environ.get('PR_STATE_DIR', '/tmp') + '/pr_inline_finding.json'))
@@ -469,7 +480,11 @@ fi
 export INLINE_OK INLINE_FAIL INLINE_TOTAL MARKER_VERIFY_FAILED
 EXTERNAL_REPLY_OK="${EXTERNAL_REPLY_OK:-0}"
 REOPENED_OK="${REOPENED_OK:-0}"
-CONFIRM="Review posted on PR #${PR_ID}: ${VERDICT} — ${INLINE_OK}/${INLINE_TOTAL} inline — ${EXTERNAL_REPLY_OK} external replies — ${API_BASE}/_git/${AZURE_REPO}/pullrequest/${PR_ID}"
+if [ "$REVIEW_MODE" = "rereview" ]; then
+  CONFIRM="Re-review posted on PR #${PR_ID}: ${VERDICT} — ${INLINE_OK}/${INLINE_TOTAL} new — ${RESOLVED_OK:-0} resolved — ${EXTERNAL_REPLY_OK} external replies — ${API_BASE}/_git/${AZURE_REPO}/pullrequest/${PR_ID}"
+else
+  CONFIRM="Review posted on PR #${PR_ID}: ${VERDICT} — ${INLINE_OK}/${INLINE_TOTAL} inline — ${EXTERNAL_REPLY_OK} external replies — ${API_BASE}/_git/${AZURE_REPO}/pullrequest/${PR_ID}"
+fi
 [ "$REOPENED_OK" -gt 0 ] && CONFIRM="${CONFIRM} — ${REOPENED_OK} reopened (regression)"
 echo "$CONFIRM"
 if [ "$MARKER_VERIFY_FAILED" -gt 0 ]; then

@@ -375,6 +375,9 @@ JSON
 ROUTE_OUT=$(PRG_ROOT="$PRG" bash "${SCRIPT_DIR}/group-route-findings.sh" 2>&1)
 assert_eq "routing reports the unknown member" "yes" "$(grep -q "DROPPED.*'nope'" <<< "$ROUTE_OUT" && echo yes || echo no)"
 assert_eq "api got its cross-repo finding" "1" "$(grep -c . "$PRG/api/pr_inline_findings.jsonl" 2>/dev/null)"
+assert_eq "routing reconciles every member (as /pr-review does before its report)" "2" "$(grep -c 'Reconcile (initial)' <<< "$ROUTE_OUT")"
+assert_eq "api finding got a fid" "yes" "$(python3 -c "import json,sys; print('yes' if json.loads(open(sys.argv[1]).readline()).get('fid') else 'no')" "$PRG/api/pr_inline_findings.jsonl")"
+assert_eq "reconcile flag left for group-post" "yes yes" "$([ -f "$PRG/api/.reconciled" ] && echo yes || echo no) $([ -f "$PRG/web/.reconciled" ] && echo yes || echo no)"
 
 for m in api web; do printf '## Review of %s\n\nbody\n' "$m" > "$PRG/$m/pr_thread_body.md"; done
 echo "REQUEST CHANGES" > "$PRG/api/verdict"
@@ -385,6 +388,17 @@ assert_eq "group-post exits 0" "0" "$?"
 API_REPORT="$PRG_WS/repos/api/pr-review-report.md"
 assert_eq "group table counts api's critical" "yes" "$(grep -q '| REQUEST CHANGES | 1 | 0 | 1 |' "$API_REPORT" 2>/dev/null && echo yes || echo no)"
 assert_eq "group notes on every member" "yes" "$(grep -q 'Suggested merge order' "$PRG_WS/repos/web/pr-review-report.md" 2>/dev/null && echo yes || echo no)"
+assert_eq "initial review: no re-review delta" "no" "$(grep -q 'Re-review delta' "$API_REPORT" 2>/dev/null && echo yes || echo no)"
+# Re-review: the summary opens with the delta, as in /pr-review.
+echo "REVIEW_MODE=rereview" >> "$PRG/api/pr_state.env"
+printf '### Re-review delta
+Reviewed 1 new commit(s).
+- ✅ Fixed: 1
+' > "$PRG/api/pr_rereview_delta.md"
+( PRG_ROOT="$PRG" bash "${SCRIPT_DIR}/group-post.sh" >/dev/null 2>&1 )
+assert_eq "re-review: summary opens with the delta" "### Re-review delta" "$(head -1 "$API_REPORT")"
+assert_eq "re-review: the lead's report and group section follow" "yes yes"   "$(grep -q '^## Review of api' "$API_REPORT" && echo yes || echo no) $(grep -q 'Suggested merge order' "$API_REPORT" && echo yes || echo no)"
+assert_eq "re-review: delta added once" "1" "$(grep -c '### Re-review delta' "$API_REPORT")"
 
 echo "=== label removed from the work item ==="
 
@@ -433,6 +447,8 @@ cases = [
     {"platform": "azuredevops", "event-type": "git.pullrequest.updated", "pr-number": 12, "pr-repo-url": "https://dev.azure.com/o/p/_git/r"},
     {"platform": "azuredevops", "event-type": "ms.vss-code.git-pullrequest-comment-event", "comment-pr-number": 12,
      "comment-pr-repo-url": "https://dev.azure.com/o/p/_git/r", "comment-body": "@xianix review group"},
+    {"platform": "azuredevops", "event-type": "ms.vss-code.git-pullrequest-comment-event", "comment-pr-number": 12,
+     "comment-body": "_Re-run with `@xianix review group` on any of these PRs._ <!-- xianix:group-section -->"},
     {"platform": "azuredevops", "event-type": "git.pullrequest.merged"},
     {},
 ]
@@ -449,8 +465,9 @@ assert_eq "GitHub other PR comment -> skipped" "the comment is not a group revie
 assert_eq "ADO work item update -> --work-item" "--work-item https://dev.azure.com/o/_apis/wit/workItems/5/updates/2 | 0" "$(sed -n 6p <<< "$EVENTS")"
 assert_eq "ADO push -> --pr with the repo, quiet period" "--pr 12 --repo https://dev.azure.com/o/p/_git/r | 180" "$(sed -n 7p <<< "$EVENTS")"
 assert_eq "ADO review request -> --force" "--pr 12 --repo https://dev.azure.com/o/p/_git/r --force | 0" "$(sed -n 8p <<< "$EVENTS")"
-assert_eq "ADO other event -> skipped" "event 'git.pullrequest.merged' is not a group event" "$(sed -n 9p <<< "$EVENTS")"
-assert_eq "no event -> skipped" "no pull request or work item in the event" "$(sed -n 10p <<< "$EVENTS")"
+assert_eq "ADO: the plugin's own review mentions the request -> skipped (no loop)" "the comment is the plugin's own review, not a request" "$(sed -n 9p <<< "$EVENTS")"
+assert_eq "ADO other event -> skipped" "event 'git.pullrequest.merged' is not a group event" "$(sed -n 10p <<< "$EVENTS")"
+assert_eq "no event -> skipped" "no pull request or work item in the event" "$(sed -n 11p <<< "$EVENTS")"
 
 # End to end through group-discover.sh, from a folder that is not a checkout of the PR's repo.
 OUT=$(cd "$WORK" && PRG_WS="$WORK/ws20" XIANIX_INPUTS='{"platform":"github","action":"synchronize","pr-number":7,"repository-url":"https://github.com/acme/web.git"}' \
@@ -498,6 +515,85 @@ assert_eq "completed comment carries the group section, without per-PR placehold
 assert_eq "two progress comments in total" "$((BEFORE + 2))" "$(world "len(w['comments'].get('acme/planning#1', []))")"
 OUT=$(PRG_WS="$WORK/ws31" PRG_ROOT="$WI_ROOT" python3 "$SCRIPT_DIR/group_platform.py" work-item-comment start 2>&1)
 assert_eq "local run (no discovery) posts nothing" "WORK_ITEM_COMMENT=skipped (no work item)" "$OUT"
+
+echo "=== Azure DevOps: single-PR reviews still running ==="
+
+SINGLE=$(cd "$SCRIPT_DIR" && python3 - <<'PY'
+import datetime as dt
+import group_platform as g
+at = dt.datetime(2026, 11, 20, 10, 0, tzinfo=dt.timezone.utc)
+t = lambda m: (at - dt.timedelta(minutes=m)).strftime("%Y-%m-%dT%H:%M:%SZ")
+start = lambda m, extra="": {"publishedDate": t(m), "comments": [{"content": "🔍 PR Review in Progress\n\nClaude Code is analyzing" + extra}]}
+summary = lambda m: {"publishedDate": t(m), "properties": {"pr-reviewer.kind": {"$type": "System.String", "$value": "summary"}},
+                     "comments": [{"content": "## PR Review Report"}]}
+summary_marker = lambda m: {"publishedDate": t(m), "comments": [{"content": "report <!-- pr-reviewer:v1.2 kind=summary sha=abc -->"}]}
+cases = [
+    [start(5)],                                   # started, no summary yet
+    [start(9), summary(2)],                       # finished
+    [summary(20), start(4)],                      # an earlier review finished, a new one is running
+    [start(5, " <!-- xianix:group-start -->")],   # the group's own start comment
+    [start(40)],                                  # never finished: stale
+    [start(6), summary_marker(1)],                # summary found by its body marker
+    [],
+]
+print(" ".join(str(g.single_review_running(c, at)) for c in cases))
+PY
+)
+assert_eq "running: started / finished / restarted / group's own / stale / marker / none" \
+  "True False True False False False False" "$SINGLE"
+OUT=$(PRG_WS="$WORK/ws8" python3 "$SCRIPT_DIR/group_platform.py" single-reviews 2>/dev/null)
+assert_eq "GitHub group: nothing to wait for" "SINGLE_REVIEWS_RUNNING=0" "$(line_of SINGLE_REVIEWS_RUNNING "$OUT")"
+
+echo "=== Azure DevOps: state comment survives markdown sanitising ==="
+
+ADOSTATE=$(cd "$SCRIPT_DIR" && python3 - <<'PY2'
+import re
+import group_platform as g
+d = {"platform": g.AZURE}
+state = {**g.fresh_state(), "run": {"id": "run-7", "status": "running", "started": "2026-11-20T06:14:33Z"},
+         "reviewed": {"Test A#6": "abc"}, "note": "a `tick` and --> arrow"}
+body = g.render_state(d, state)
+# Azure DevOps strips HTML comments from markdown comments; the state must not live in one.
+stripped = re.sub(r"<!--.*?-->", "", body, flags=re.S)
+print("no-html-comment" if "<!--" not in body else "html-comment",
+      g.STATE_MARKER in stripped, g.parse_state(stripped) == {**g.fresh_state(), **state})
+PY2
+)
+assert_eq "ADO state: code span, marker kept, round trip after stripping HTML comments" "no-html-comment True True" "$ADOSTATE"
+
+echo "=== cross-repo only: members reviewed on their own ==="
+
+# Every member already has a single-PR review at its head, but the group never checked them
+# together: only the cross-repo result is posted, on the work item; no member review.
+XPRG="$WORK/prg-cross"; rm -rf "$XPRG"; cp -r "$PRG" "$XPRG"
+python3 - "$XPRG" <<'PY'
+import json, os, sys
+root = sys.argv[1]
+gs = json.load(open(os.path.join(root, "group_state.json")))
+for m in gs["members"]:
+    m["state_dir"] = os.path.join(root, m["slug"])
+    m["unchanged_since_last_review"] = True
+    m["group_checked"] = False
+    for f in ("verdict", "pr_thread_body.md", "pr_thread_body.base.md"):
+        if os.path.exists(os.path.join(m["state_dir"], f)):
+            os.remove(os.path.join(m["state_dir"], f))
+gs.update({"changed_active": [], "cross_pending": [m["slug"] for m in gs["members"]], "cross_only": True})
+json.dump(gs, open(os.path.join(root, "group_state.json"), "w"), indent=2)
+env = open(os.path.join(root, "group_state.env")).read()
+env = env.replace("CHANGED_COUNT=2", "CHANGED_COUNT=0").replace("CROSS_PENDING_COUNT=0", "CROSS_PENDING_COUNT=2").replace("CROSS_ONLY=false", "CROSS_ONLY=true")
+open(os.path.join(root, "group_state.env"), "w").write(env)
+PY
+rm -f "$PRG_WS/repos/api/pr-review-report.md" "$PRG_WS/repos/web/pr-review-report.md" "$XPRG/post_results.tsv"
+BEFORE=$(world "len(w['comments'].get('acme/planning#1', []))")
+XOUT=$(PRG_WS="$WORK/ws8" PRG_ROOT="$XPRG" bash "${SCRIPT_DIR}/group-post.sh" 2>&1)
+assert_eq "cross-only: no member review posted" "2 no no" \
+  "$(grep -c 'reviewed on its own (single-PR review) — no member review posted' <<< "$XOUT") $([ -f "$PRG_WS/repos/api/pr-review-report.md" ] && echo yes || echo no) $([ -f "$PRG_WS/repos/web/pr-review-report.md" ] && echo yes || echo no)"
+assert_eq "cross-only: group table shows the single-PR reviews" "yes" \
+  "$(grep -q '| see its review | .* | reviewed on its own (single-PR review) @' "$XPRG/group_section.md" && echo yes || echo no)"
+assert_eq "cross-only: one final comment on the work item" "$((BEFORE + 1))" "$(world "len(w['comments'].get('acme/planning#1', []))")"
+XDONE=$(world "[c['body'] for c in w['comments']['acme/planning#1']][-1]")
+assert_eq "cross-only: final comment carries the cross-repo result" "yes yes" \
+  "$(grep -qF 'Group review completed** — cross-repo check of 2 PRs; each PR keeps its own single-PR review' <<< "$XDONE" && echo yes || echo no) $(grep -q 'Suggested merge order' <<< "$XDONE" && echo yes || echo no)"
 
 echo "=== hook: git outside a repository ==="
 

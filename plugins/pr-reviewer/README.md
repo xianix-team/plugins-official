@@ -144,6 +144,8 @@ All **open** PRs linked to it, from repositories of the same owner (GitHub) / or
 
 PRs carry no label: a push rule cannot tell a member from any other PR, so every PR push starts `/pr-group-review` (in `--pr N` mode), which finds the PR's work item and stops when it has no labelled group. `/pr-review` makes the same check first and skips a member PR, so it is not reviewed twice (`PR_REVIEWER_GROUP_CHECK=false` turns that off). A PR that only mentions the issue stays linked while its description, a comment or a commit message still mentions it; the plugin's own comments are ignored. A GitHub **Development** link sends no webhook: a PR linked there after the label joins on its next push or the group's next run.
 
+**Azure DevOps: single-PR reviews already running.** Azure DevOps reviews every active PR on its own (`/pr-review`) when it is created or pushed. When the group tag is added while those reviews still run, the group run does not review the same PRs again: it waits for them to finish (up to 15 minutes), posting nothing in the meantime (no group notes, no *in progress* comments). Their results count as the members' reviews, so the run only does the **cross-repo check** and posts one final *Group review completed* comment on the work item with the cross-repo findings and the merge order. The same cross-repo-only run happens whenever every member already has a review at its current commit that the group has not checked together yet.
+
 ### One review at a time
 
 There is no long-running process per group. The group's state — lock owner, heartbeat, the commit each PR was last reviewed at — is kept next to the work item:
@@ -184,6 +186,9 @@ Environment variables (constant `with-envs` in the rule, all optional):
 | `PR_GROUP_MAX_DIFF_LINES` | `6000` | Above this, the cross-repo reviewer works from the contract index |
 | `PR_GROUP_SETTLE_SECONDS` | `0` | Wait until the newest push is this old (overrides the event's quiet period) |
 | `PR_GROUP_PUSH_SETTLE_SECONDS` | `180` | `--from-event`: quiet period for PR events (opened, pushed, description edited) |
+| `PR_GROUP_SINGLE_WAIT_MAX_SECONDS` | `900` | Azure DevOps: longest wait for running single-PR reviews of the members |
+| `PR_GROUP_SINGLE_POLL_SECONDS` | `30` | Azure DevOps: how often to look again while waiting |
+| `PR_GROUP_SINGLE_REVIEW_STALE_SECONDS` | `1800` | A single-PR review that started this long ago without a summary is treated as dead |
 | `PR_GROUP_SETTLE_MAX_SECONDS` | `300` | Longest total wait |
 | `PR_GROUP_LOCK_TTL_SECONDS` | `2100` | A lock without a heartbeat for this long is taken over |
 | `PR_GROUP_STATE_STORE` | `auto` | GitHub: `ref` (fail if refs can't be written), `comment`, or `auto` (ref, else comment) |

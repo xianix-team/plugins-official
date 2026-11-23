@@ -83,6 +83,16 @@ check_github() {
   # Auth + scopes from /user response headers
   HEADERS=$(mktemp)
   BODY=$(mktemp)
+
+  OWNER=$(echo "$REMOTE_CLEAN" | sed 's|https://github.com/||;s|git@github.com:||;s|ssh://git@github.com/||' | cut -d'/' -f1)
+  REPO=$(echo "$REMOTE_CLEAN"  | sed 's|https://github.com/||;s|git@github.com:||;s|ssh://git@github.com/||' | cut -d'/' -f2 | sed 's|\.git$||')
+
+  if [ -z "$OWNER" ] || [ -z "$REPO" ]; then
+    fail "could not parse owner/repo from origin"
+    rm -f "$HEADERS" "$BODY"
+    return
+  fi
+
   HTTP=$($CURL -sS -o "$BODY" -D "$HEADERS" -w "%{http_code}" \
     -H "Authorization: token ${GH_TOKEN:-}" \
     -H "Accept: application/vnd.github+json" \
@@ -99,19 +109,45 @@ check_github() {
     fi
   fi
 
+  # GitHub App installation tokens (ghs_…) have no user, so GET /user answers 403
+  # "Resource not accessible by integration" even though the token is valid. Authenticate
+  # those by reading the repository instead; comments/reviews then post as <app>[bot].
+  # Only a 403 qualifies — a 401 means the token itself is bad and must still fail.
+  APP_TOKEN=false
+  if [ "$HTTP" = "403" ] && [ -n "${GH_TOKEN:-}" ]; then
+    REPO_HTTP=$($CURL -sS -o /dev/null -w "%{http_code}" \
+      -H "Authorization: token ${GH_TOKEN}" \
+      -H "Accept: application/vnd.github+json" \
+      -H "X-GitHub-Api-Version: 2022-11-28" \
+      "https://api.github.com/repos/${OWNER}/${REPO}" 2>/dev/null || echo "000")
+    if [ "$REPO_HTTP" = "200" ]; then
+      APP_TOKEN=true
+      HTTP=200
+      : > "$HEADERS"   # installation tokens carry no X-OAuth-Scopes
+    fi
+  fi
+
   if [ "$HTTP" != "200" ]; then
     fail "GitHub auth failed (HTTP ${HTTP}). Set GH_TOKEN/GITHUB_TOKEN or run: gh auth login"
     rm -f "$HEADERS" "$BODY" "$BODY.err"
     return
   fi
   CAP_AUTH=true
-  AUTH_USER=$(python3 -c "import json; print(json.load(open('$BODY')).get('login',''))" 2>/dev/null || true)
-  ok "authenticated as ${AUTH_USER:-unknown}"
+  if [ "$APP_TOKEN" = "true" ]; then
+    AUTH_USER="github-app-installation"
+    ok "authenticated as a GitHub App installation (no user identity; posts as <app>[bot])"
+  else
+    AUTH_USER=$(python3 -c "import json; print(json.load(open('$BODY')).get('login',''))" 2>/dev/null || true)
+    ok "authenticated as ${AUTH_USER:-unknown}"
+  fi
 
   SCOPES_SEEN=$(grep -i '^x-oauth-scopes:' "$HEADERS" 2>/dev/null | cut -d: -f2- | tr -d ' \r' || true)
   ACCEPTED=$(grep -i '^x-accepted-oauth-scopes:' "$HEADERS" 2>/dev/null | cut -d: -f2- | tr -d ' \r' || true)
   TOKEN_TYPE="classic"
-  if [ -z "$SCOPES_SEEN" ]; then
+  if [ "$APP_TOKEN" = "true" ]; then
+    TOKEN_TYPE="github-app"
+    SCOPES_SEEN="(GitHub App installation token — permissions come from the App; probing capabilities)"
+  elif [ -z "$SCOPES_SEEN" ]; then
     # Fine-grained PATs often omit X-OAuth-Scopes — rely on capability probes.
     TOKEN_TYPE="fine-grained-or-app"
     SCOPES_SEEN="(not listed — fine-grained/app token; probing capabilities)"
@@ -124,15 +160,6 @@ check_github() {
     [ "$TOKEN_TYPE" != "classic" ] && return 1
     echo ",${SCOPES_SEEN}," | grep -qi ",${want},"
   }
-
-  OWNER=$(echo "$REMOTE_CLEAN" | sed 's|https://github.com/||;s|git@github.com:||;s|ssh://git@github.com/||' | cut -d'/' -f1)
-  REPO=$(echo "$REMOTE_CLEAN"  | sed 's|https://github.com/||;s|git@github.com:||;s|ssh://git@github.com/||' | cut -d'/' -f2 | sed 's|\.git$||')
-
-  if [ -z "$OWNER" ] || [ -z "$REPO" ]; then
-    fail "could not parse owner/repo from origin"
-    rm -f "$HEADERS" "$BODY"
-    return
-  fi
 
   # Repo read
   if gh api "repos/${OWNER}/${REPO}" --jq '.full_name' >/dev/null 2>&1; then

@@ -21,6 +21,16 @@ For CI or scripts, set **`GH_TOKEN`** or **`GITHUB_TOKEN`** instead of interacti
 
 At the start of every review the plugin runs `scripts/check-permissions.sh`, which authenticates via `gh` / `GH_TOKEN`, confirms repo (and PR) read access, and verifies classic PAT scopes include `repo` or `public_repo`. Fine-grained tokens are capability-probed instead of scope-listed.
 
+### GitHub App installation tokens
+
+To have reviews, comments and approvals appear as a bot (`<app-name>[bot]`) instead of the person who owns a PAT, run the plugin with a **GitHub App installation token** (`ghs_…`) in `GH_TOKEN` / `GITHUB_TOKEN`. The Xianix Agent mints one per run when the tenant's `GITHUB-TOKEN` secret holds the App credentials as `<app-id>,<private-key>` instead of a PAT.
+
+> **GitHub only.** This applies to repositories on `github.com` only. Azure DevOps reviews keep using `AZURE-DEVOPS-TOKEN` (a PAT), so their comments and votes still appear as the PAT owner; use a dedicated Azure DevOps service account's PAT for a non-person name there. The App-token check in `check-permissions.sh` runs only on the GitHub path.
+
+Installation tokens have no user, so GitHub answers `GET /user` with **403**. `check-permissions.sh` treats that case as an App token when the repository itself is readable, reports `authenticated as a GitHub App installation`, and probes capabilities as it does for fine-grained tokens. A **401** (invalid or expired token) still fails the check.
+
+Give the App these repository permissions: **Contents** read & write (write only needed for `--fix`), **Pull requests** read & write, **Issues** read & write, **Metadata** read. Because the App never authors the PR, the self-review guard does not apply and it can approve or request changes.
+
 The plugin does **not** use the GitHub MCP server. See `providers/github.md` for `gh` usage.
 
 ### Credentials for `git push` (fix mode)

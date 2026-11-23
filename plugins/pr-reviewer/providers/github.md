@@ -123,11 +123,11 @@ That script: detects self-review, maps verdict + `PR_REVIEWER_BLOCK_ON_CRITICAL`
 
 | Plugin verdict | Default flag | With `PR_REVIEWER_BLOCK_ON_CRITICAL=true` |
 |---|---|---|
-| `APPROVE` / `APPROVE WITH SUGGESTIONS` | `--approve` | `--approve` |
+| `APPROVE` / `APPROVE WITH SUGGESTIONS` | `--comment` (approval disabled by default) | `--comment` |
 | `REQUEST CHANGES` | `--comment` (non-blocking) | `--request-changes` |
 | `NEEDS DISCUSSION` | `--comment` | `--comment` |
 
-Self-review (author == authenticated user) always forces `--comment`. The verdict label in the report body is identical in all modes.
+Approval is **opt-in**: `APPROVE` / `APPROVE WITH SUGGESTIONS` map to `--approve` only when `PR_REVIEWER_APPROVE_ON_SUCCESS=true` (`true|1|yes`, default `false`); otherwise they post `--comment`. Self-review (author == authenticated user) always forces `--comment`. The verdict label in the report body is identical in all modes.
 
 ### Serialize findings to JSONL before posting
 

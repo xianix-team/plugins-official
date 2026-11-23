@@ -53,7 +53,7 @@ Do not call `gh` on Azure remotes. Scripts must compare against `PLATFORM=azure`
 
 ### Authentication
 
-The plugin authenticates with a Personal Access Token read from the `AZURE_DEVOPS_TOKEN` environment variable.
+The plugin authenticates with a Personal Access Token read from the `AZURE_DEVOPS_TOKEN` environment variable. This token is what gives the PR reviewer agent the right to approve PRs — see [Generating a PAT and adding the `AZURE-DEVOPS-TOKEN` secret](#generating-a-pat-and-adding-the-azure-devops-token-secret-required).
 
 Every run happens in a **temporary Docker container**, so there is nothing to persist in a shell profile — the token must be injected into the container environment at startup. In the containerized runner (e.g. the Xianix Executor), configure the secret on the runner/pipeline; it may arrive under the dashed key `AZURE-DEVOPS-TOKEN`, which the Executor re-exports as the underscored alias.
 
@@ -82,18 +82,23 @@ AZURE_DEVOPS_TOKEN=<your-pat> claude ...
 
 At the start of every review the plugin runs `scripts/check-permissions.sh`, which re-exports a dashed `AZURE-DEVOPS-TOKEN` if needed, probes `connectionData`, repo/PR read, and thread read, and **warns** when the reviewer/vote endpoint looks unauthorized (summary + inline comments can still succeed without Code Write).
 
-**Vote vs Code Write:** casting a reviewer vote needs Code (Write) *and* an identity Azure will accept on `PUT …/reviewers/{id}`. Note: `GET …/reviewers/{id}` returns **400** when the user is simply not on the PR reviewer list yet — that is normal and does **not** mean the identity is invalid. `check-permissions.sh` confirms vote capability with a temporary `vote:0` PUT (then deletes the probe row). Service/agent PATs that fail that PUT with 401/403 get `VOTE_BLOCK_REASON=authz` or `invalid_reviewer_identity`; use a PAT from a full AAD/org user who can be added as a PR reviewer.
+**Vote vs Code Write:** casting a reviewer vote needs Code (Write) *and* an identity Azure will accept on `PUT …/reviewers/{id}`. Note: `GET …/reviewers/{id}` returns **400** when the user is simply not on the PR reviewer list yet — that is normal and does **not** mean the identity is invalid. `check-permissions.sh` confirms vote capability with a temporary `vote:0` PUT (then deletes the probe row). Service/agent PATs that fail that PUT with 401/403 get `VOTE_BLOCK_REASON=authz` or `invalid_reviewer_identity`; use a PAT from a full AAD/org user who can be added as a PR reviewer. Without a valid `AZURE-DEVOPS-TOKEN` secret, the reviewer agent has no identity and cannot approve the PR.
 
 ### Credentials for `git push` (fix mode)
 
 The plugin reuses `AZURE_DEVOPS_TOKEN` for `git push` — no separate `GITHUB_TOKEN` is needed for Azure DevOps remotes. The push command carries the token via an inline `GIT_CONFIG_*` prefix (see `docs/git-auth.md`).
 
-### Generating a PAT
+### Generating a PAT and adding the `AZURE-DEVOPS-TOKEN` secret (required)
 
-1. Go to `https://dev.azure.com/<your-org>/_usersSettings/tokens`
-2. Click **New Token**
-3. Set the scopes listed above
-4. Copy the token and export it as `AZURE_DEVOPS_TOKEN`
+> **Required for approval rights.** When setting up the PR reviewer you must create a PAT for it and add it as a secret named **`AZURE-DEVOPS-TOKEN`**. Only then will the reviewer agent have the right to approve (cast a vote on) PRs in Azure DevOps. Without this secret, the reviewer agent cannot approve the PR.
+
+1. Sign in to Azure DevOps **as the account the PR reviewer will act as** (the PAT's owner is the identity that appears as the reviewer and casts the vote).
+2. Go to `https://dev.azure.com/<your-org>/_usersSettings/tokens`
+3. Click **New Token**
+4. Set the scopes listed above (`Code` Read & Write, `Pull Request Threads` Read & Write, `User Profile` Read)
+5. Copy the token (it is shown only once)
+6. Add it to the agent's secret store with the exact name **`AZURE-DEVOPS-TOKEN`** (dashes, not underscores). The trigger rule maps it in via `with-envs` as `secrets.AZURE-DEVOPS-TOKEN`; the runner re-exports it as `AZURE_DEVOPS_TOKEN` for the plugin.
+7. Make sure that account can be added as a reviewer on pull requests in the target repo (e.g. it has the *Contribute to pull requests* permission).
 
 ---
 

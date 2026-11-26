@@ -3,4 +3,3 @@
 .ado-cache/
 .playwright-cli/
 .env
-TEST_RESULTS/

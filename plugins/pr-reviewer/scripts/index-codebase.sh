@@ -18,12 +18,12 @@
 set -euo pipefail
 
 # shellcheck disable=SC1091
-[ -f /tmp/pr_state.env ] && source /tmp/pr_state.env
+[ -f ${PR_STATE_DIR:-/tmp}/pr_state.env ] && source ${PR_STATE_DIR:-/tmp}/pr_state.env
 
 CHANGED_COUNT="${CHANGED_COUNT:-0}"
-if [ ! -f /tmp/pr_changed_files.txt ] && [ "$CHANGED_COUNT" = "0" ]; then
-  if [ -f /tmp/pr_changed_files.txt ]; then
-    CHANGED_COUNT=$(wc -l < /tmp/pr_changed_files.txt | tr -d ' ')
+if [ ! -f ${PR_STATE_DIR:-/tmp}/pr_changed_files.txt ] && [ "$CHANGED_COUNT" = "0" ]; then
+  if [ -f ${PR_STATE_DIR:-/tmp}/pr_changed_files.txt ]; then
+    CHANGED_COUNT=$(wc -l < ${PR_STATE_DIR:-/tmp}/pr_changed_files.txt | tr -d ' ')
   fi
 fi
 
@@ -49,10 +49,10 @@ find . -maxdepth 3 \
 
 echo ""
 echo "=== Language fingerprint (changed files) ==="
-if [ -f /tmp/pr_changed_files.txt ]; then
-  sed 's/.*\.//' /tmp/pr_changed_files.txt | sort | uniq -c | sort -rn | head -10
+if [ -f ${PR_STATE_DIR:-/tmp}/pr_changed_files.txt ]; then
+  sed 's/.*\.//' ${PR_STATE_DIR:-/tmp}/pr_changed_files.txt | sort | uniq -c | sort -rn | head -10
 else
-  echo "(no /tmp/pr_changed_files.txt)"
+  echo "(no ${PR_STATE_DIR:-/tmp}/pr_changed_files.txt)"
 fi
 
 echo ""

@@ -25,6 +25,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib-azure-remote.sh"
 
+# The PR's own head commit, as pr-setup.sh recorded it. Azure DevOps reviews check out the
+# synthetic merge (refs/pull/N/merge), so `git rev-parse HEAD` is a merge commit that changes
+# whenever the target branch moves; re-reviews (and group reviews) compare against the head.
+pr_head_sha() {
+  local sha=""
+  [ -f "${PR_STATE_DIR:-/tmp}/pr_state.env" ] && \
+    sha=$(sed -n "s/^\(export \)\{0,1\}HEAD_SHA=['\"]\{0,1\}\([0-9a-fA-F]\{7,\}\).*/\2/p" "${PR_STATE_DIR:-/tmp}/pr_state.env" | tail -1)
+  [ -n "$sha" ] && git cat-file -e "${sha}^{commit}" 2>/dev/null && { echo "$sha"; return; }
+  git rev-parse HEAD
+}
+
 : "${VERDICT:=NEEDS DISCUSSION}"
 : "${REVIEW_MODE:=initial}"
 
@@ -35,11 +46,11 @@ if [ -z "${AZURE_DEVOPS_TOKEN:-}" ]; then
 fi
 
 # --- 1. Load API targets (from starting-comment step) or re-parse remote ---
-if [ -f /tmp/pr_azure.env ]; then
+if [ -f ${PR_STATE_DIR:-/tmp}/pr_azure.env ]; then
   # shellcheck disable=SC1091
-  source /tmp/pr_azure.env
+  source ${PR_STATE_DIR:-/tmp}/pr_azure.env
 else
-  echo "WARN: /tmp/pr_azure.env missing — re-parsing remote" >&2
+  echo "WARN: ${PR_STATE_DIR:-/tmp}/pr_azure.env missing — re-parsing remote" >&2
   parse_azure_remote || exit 1
 fi
 PR_ID="${PR_ID:-${PR_NUMBER:-}}"
@@ -50,21 +61,22 @@ fi
 echo "Posting to ${API_BASE}/_git/${AZURE_REPO}/pullrequest/${PR_ID}"
 
 # --- 2. Normalize input files ---
-if [ ! -f /tmp/pr_thread_body.md ] && [ -f /tmp/pr_review_summary.md ]; then
-  cp /tmp/pr_review_summary.md /tmp/pr_thread_body.md
+if [ ! -f ${PR_STATE_DIR:-/tmp}/pr_thread_body.md ] && [ -f ${PR_STATE_DIR:-/tmp}/pr_review_summary.md ]; then
+  cp ${PR_STATE_DIR:-/tmp}/pr_review_summary.md ${PR_STATE_DIR:-/tmp}/pr_thread_body.md
 fi
-if [ ! -f /tmp/pr_inline_findings.jsonl ] && [ -f /tmp/pr_findings.jsonl ]; then
-  cp /tmp/pr_findings.jsonl /tmp/pr_inline_findings.jsonl
+if [ ! -f ${PR_STATE_DIR:-/tmp}/pr_inline_findings.jsonl ] && [ -f ${PR_STATE_DIR:-/tmp}/pr_findings.jsonl ]; then
+  cp ${PR_STATE_DIR:-/tmp}/pr_findings.jsonl ${PR_STATE_DIR:-/tmp}/pr_inline_findings.jsonl
 fi
-[ -f /tmp/pr_thread_body.md ] || { echo "ERROR: /tmp/pr_thread_body.md missing" >&2; exit 1; }
-touch /tmp/pr_inline_findings.jsonl
+[ -f ${PR_STATE_DIR:-/tmp}/pr_thread_body.md ] || { echo "ERROR: ${PR_STATE_DIR:-/tmp}/pr_thread_body.md missing" >&2; exit 1; }
+touch ${PR_STATE_DIR:-/tmp}/pr_inline_findings.jsonl
 # Normalize pretty-printed / array / concatenated JSON into one-object-per-line JSONL
 python3 - <<'PY'
+import os
 import json
 from pathlib import Path
-src = Path('/tmp/pr_inline_findings.jsonl')
+src = Path(os.environ.get('PR_STATE_DIR', '/tmp') + '/pr_inline_findings.jsonl')
 text = src.read_text().strip()
-out = Path('/tmp/pr_inline_findings.normalized.jsonl')
+out = Path(os.environ.get('PR_STATE_DIR', '/tmp') + '/pr_inline_findings.normalized.jsonl')
 findings = []
 if text:
     try:
@@ -89,7 +101,7 @@ with out.open('w') as f:
         f.write(json.dumps(item) + '\n')
 print(f"Normalized {len(findings)} finding(s) for inline posting")
 PY
-mv /tmp/pr_inline_findings.normalized.jsonl /tmp/pr_inline_findings.jsonl
+mv ${PR_STATE_DIR:-/tmp}/pr_inline_findings.normalized.jsonl ${PR_STATE_DIR:-/tmp}/pr_inline_findings.jsonl
 
 # --- 3. Map verdict → vote ---
 case "${VERDICT}" in
@@ -179,13 +191,14 @@ fi
 # (pr-reviewer.kind / .sha) often 400 the whole create — which is why "in progress"
 # (SupportsMarkdown only) succeeds while the summary comment never appears.
 # Always embed a body marker too, so re-review detection still works if properties are stripped.
-HEAD_SHA=$(git rev-parse HEAD)
+HEAD_SHA=$(pr_head_sha)
 export HEAD_SHA
 # Embed body marker first (survives property stripping / retry modes)
 python3 - <<'PY'
+import os
 import os, pathlib
 sha = os.environ["HEAD_SHA"]
-path = pathlib.Path("/tmp/pr_thread_body.md")
+path = pathlib.Path(os.environ.get("PR_STATE_DIR", "/tmp") + "/pr_thread_body.md")
 body = path.read_text()
 marker = f"\n\n<!-- pr-reviewer:v1.2 kind=summary sha={sha} -->\n"
 if "pr-reviewer:v1.2 kind=summary" not in body:
@@ -195,10 +208,11 @@ PY
 MARKER_VERIFY_FAILED=0
 
 # Seed first payload (full PropertiesCollection form), then retry in bash if needed
-python3 - <<'PY' > /tmp/pr_thread_payload.json
+python3 - <<'PY' > ${PR_STATE_DIR:-/tmp}/pr_thread_payload.json
+import os
 import json, os, pathlib
 sha = os.environ["HEAD_SHA"]
-body = pathlib.Path("/tmp/pr_thread_body.md").read_text()
+body = pathlib.Path(os.environ.get("PR_STATE_DIR", "/tmp") + "/pr_thread_body.md").read_text()
 print(json.dumps({
     "comments": [{"content": body, "commentType": 1}],
     "status": "active",
@@ -214,7 +228,7 @@ post_summary() {
   local label="$1"
   SUM_RESP=$(curl -sS -w "\nHTTP_STATUS:%{http_code}" \
     -H "Content-Type: application/json" -u ":${AZURE_DEVOPS_TOKEN}" -X POST \
-    --data @/tmp/pr_thread_payload.json \
+    --data @${PR_STATE_DIR:-/tmp}/pr_thread_payload.json \
     "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads?api-version=7.1" \
     || true)
   SUM_STATUS=$(echo "$SUM_RESP" | sed -n 's/^HTTP_STATUS://p')
@@ -235,9 +249,10 @@ post_summary() {
 }
 
 if ! post_summary full; then
-  python3 - <<'PY' > /tmp/pr_thread_payload.json
+  python3 - <<'PY' > ${PR_STATE_DIR:-/tmp}/pr_thread_payload.json
+import os
 import json, pathlib
-body = pathlib.Path("/tmp/pr_thread_body.md").read_text()
+body = pathlib.Path(os.environ.get("PR_STATE_DIR", "/tmp") + "/pr_thread_body.md").read_text()
 print(json.dumps({
     "comments": [{"content": body, "commentType": 1}],
     "status": "active",
@@ -247,9 +262,10 @@ print(json.dumps({
 }))
 PY
   if ! post_summary markdown; then
-    python3 - <<'PY' > /tmp/pr_thread_payload.json
+    python3 - <<'PY' > ${PR_STATE_DIR:-/tmp}/pr_thread_payload.json
+import os
 import json, pathlib
-body = pathlib.Path("/tmp/pr_thread_body.md").read_text()
+body = pathlib.Path(os.environ.get("PR_STATE_DIR", "/tmp") + "/pr_thread_body.md").read_text()
 print(json.dumps({
     "comments": [{"content": body, "commentType": 1}],
     "status": "active",
@@ -260,31 +276,32 @@ PY
 fi
 
 # --- 5b. Re-review: reconcile fixed findings ---
-if [ "${REVIEW_MODE}" = "rereview" ] && [ -f /tmp/pr_reconcile.json ]; then
-  : > /tmp/pr_resolved.log
-  HEAD_SHA=$(git rev-parse HEAD)
-  python3 -c "import json; [print(json.dumps(x)) for x in json.load(open('/tmp/pr_reconcile.json')).get('fixed',[])]" \
+if [ "${REVIEW_MODE}" = "rereview" ] && [ -f ${PR_STATE_DIR:-/tmp}/pr_reconcile.json ]; then
+  : > ${PR_STATE_DIR:-/tmp}/pr_resolved.log
+  HEAD_SHA=$(pr_head_sha)
+  python3 -c "import json; [print(json.dumps(x)) for x in json.load(open('${PR_STATE_DIR:-/tmp}/pr_reconcile.json')).get('fixed',[])]" \
   | while IFS= read -r f; do
     [ -z "$f" ] && continue
     THREAD_ID=$(echo "$f" | python3 -c "import sys,json; print(json.load(sys.stdin)['thread_ref'])")
-    cat > /tmp/pr_resolve_body.md <<BODY
+    cat > ${PR_STATE_DIR:-/tmp}/pr_resolve_body.md <<BODY
 ✅ Resolved as of \`${HEAD_SHA}\`. This finding no longer reproduces against the current head.
 BODY
-    python3 - <<'PY' > /tmp/pr_resolve_payload.json
+    python3 - <<'PY' > ${PR_STATE_DIR:-/tmp}/pr_resolve_payload.json
+import os
 import json
-print(json.dumps({"content": open('/tmp/pr_resolve_body.md').read(), "commentType": 1}))
+print(json.dumps({"content": open(os.environ.get('PR_STATE_DIR', '/tmp') + '/pr_resolve_body.md').read(), "commentType": 1}))
 PY
     curl -sS -o /dev/null -H "Content-Type: application/json" -u ":${AZURE_DEVOPS_TOKEN}" -X POST \
-      --data @/tmp/pr_resolve_payload.json \
+      --data @${PR_STATE_DIR:-/tmp}/pr_resolve_payload.json \
       "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads/${THREAD_ID}/comments?api-version=7.1" || true
     RESP=$(curl -sS -w "\nHTTP_STATUS:%{http_code}" -H "Content-Type: application/json" \
       -u ":${AZURE_DEVOPS_TOKEN}" -X PATCH -d '{"status":"fixed"}' \
       "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads/${THREAD_ID}?api-version=7.1" || true)
     STATUS=$(echo "$RESP" | sed -n 's/^HTTP_STATUS://p')
-    if echo "${STATUS:-}" | grep -qE '^2'; then echo ok >> /tmp/pr_resolved.log; else echo "fail $THREAD_ID HTTP ${STATUS:-?}" >> /tmp/pr_resolved.log; fi
+    if echo "${STATUS:-}" | grep -qE '^2'; then echo ok >> ${PR_STATE_DIR:-/tmp}/pr_resolved.log; else echo "fail $THREAD_ID HTTP ${STATUS:-?}" >> ${PR_STATE_DIR:-/tmp}/pr_resolved.log; fi
   done
-  RESOLVED_OK=$(grep -c '^ok' /tmp/pr_resolved.log 2>/dev/null || true); RESOLVED_OK=${RESOLVED_OK:-0}
-  RESOLVED_FAIL=$(grep -c '^fail' /tmp/pr_resolved.log 2>/dev/null || true); RESOLVED_FAIL=${RESOLVED_FAIL:-0}
+  RESOLVED_OK=$(grep -c '^ok' ${PR_STATE_DIR:-/tmp}/pr_resolved.log 2>/dev/null || true); RESOLVED_OK=${RESOLVED_OK:-0}
+  RESOLVED_FAIL=$(grep -c '^fail' ${PR_STATE_DIR:-/tmp}/pr_resolved.log 2>/dev/null || true); RESOLVED_FAIL=${RESOLVED_FAIL:-0}
   export RESOLVED_OK RESOLVED_FAIL
   echo "Reconciled: ${RESOLVED_OK} prior finding(s) resolved (${RESOLVED_FAIL} failed)"
 fi
@@ -292,31 +309,32 @@ fi
 # --- 5b2. Re-review: reactivate reopened findings (regression signal) ---
 REOPENED_OK=0
 REOPENED_FAIL=0
-if [ "${REVIEW_MODE}" = "rereview" ] && [ -f /tmp/pr_reconcile.json ]; then
-  : > /tmp/pr_reopened.log
-  HEAD_SHA=$(git rev-parse HEAD)
-  python3 -c "import json; [print(json.dumps(x)) for x in json.load(open('/tmp/pr_reconcile.json')).get('reopened',[])]" \
+if [ "${REVIEW_MODE}" = "rereview" ] && [ -f ${PR_STATE_DIR:-/tmp}/pr_reconcile.json ]; then
+  : > ${PR_STATE_DIR:-/tmp}/pr_reopened.log
+  HEAD_SHA=$(pr_head_sha)
+  python3 -c "import json; [print(json.dumps(x)) for x in json.load(open('${PR_STATE_DIR:-/tmp}/pr_reconcile.json')).get('reopened',[])]" \
   | while IFS= read -r f; do
     [ -z "$f" ] && continue
     THREAD_ID=$(echo "$f" | python3 -c "import sys,json; print(json.load(sys.stdin)['thread_ref'])")
-    cat > /tmp/pr_reopen_body.md <<BODY
+    cat > ${PR_STATE_DIR:-/tmp}/pr_reopen_body.md <<BODY
 ⚠️ This finding still reproduces as of \`${HEAD_SHA}\` despite being marked resolved. Reactivating.
 BODY
-    python3 - <<'PY' > /tmp/pr_reopen_payload.json
+    python3 - <<'PY' > ${PR_STATE_DIR:-/tmp}/pr_reopen_payload.json
+import os
 import json
-print(json.dumps({"content": open('/tmp/pr_reopen_body.md').read(), "commentType": 1}))
+print(json.dumps({"content": open(os.environ.get('PR_STATE_DIR', '/tmp') + '/pr_reopen_body.md').read(), "commentType": 1}))
 PY
     curl -sS -o /dev/null -H "Content-Type: application/json" -u ":${AZURE_DEVOPS_TOKEN}" -X POST \
-      --data @/tmp/pr_reopen_payload.json \
+      --data @${PR_STATE_DIR:-/tmp}/pr_reopen_payload.json \
       "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads/${THREAD_ID}/comments?api-version=7.1" || true
     RESP=$(curl -sS -w "\nHTTP_STATUS:%{http_code}" -H "Content-Type: application/json" \
       -u ":${AZURE_DEVOPS_TOKEN}" -X PATCH -d '{"status":"active"}' \
       "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads/${THREAD_ID}?api-version=7.1" || true)
     STATUS=$(echo "$RESP" | sed -n 's/^HTTP_STATUS://p')
-    if echo "${STATUS:-}" | grep -qE '^2'; then echo ok >> /tmp/pr_reopened.log; else echo "fail $THREAD_ID HTTP ${STATUS:-?}" >> /tmp/pr_reopened.log; fi
+    if echo "${STATUS:-}" | grep -qE '^2'; then echo ok >> ${PR_STATE_DIR:-/tmp}/pr_reopened.log; else echo "fail $THREAD_ID HTTP ${STATUS:-?}" >> ${PR_STATE_DIR:-/tmp}/pr_reopened.log; fi
   done
-  REOPENED_OK=$(grep -c '^ok' /tmp/pr_reopened.log 2>/dev/null || true); REOPENED_OK=${REOPENED_OK:-0}
-  REOPENED_FAIL=$(grep -c '^fail' /tmp/pr_reopened.log 2>/dev/null || true); REOPENED_FAIL=${REOPENED_FAIL:-0}
+  REOPENED_OK=$(grep -c '^ok' ${PR_STATE_DIR:-/tmp}/pr_reopened.log 2>/dev/null || true); REOPENED_OK=${REOPENED_OK:-0}
+  REOPENED_FAIL=$(grep -c '^fail' ${PR_STATE_DIR:-/tmp}/pr_reopened.log 2>/dev/null || true); REOPENED_FAIL=${REOPENED_FAIL:-0}
   export REOPENED_OK REOPENED_FAIL
   # A reopened finding is a regression signal and expected to be rare — surface
   # it whenever non-zero rather than folding it silently into ordinary counts.
@@ -326,29 +344,30 @@ fi
 # --- 5c. Reply on addressed external threads — never resolve ---
 EXTERNAL_REPLY_OK=0
 EXTERNAL_REPLY_FAIL=0
-: > /tmp/pr_external_replies.log
-if [ -f /tmp/pr_external_reconcile.json ]; then
-  HEAD_SHA=$(git rev-parse HEAD)
-  python3 -c "import json; [print(json.dumps(x)) for x in json.load(open('/tmp/pr_external_reconcile.json')).get('addressed',[])]" \
+: > ${PR_STATE_DIR:-/tmp}/pr_external_replies.log
+if [ -f ${PR_STATE_DIR:-/tmp}/pr_external_reconcile.json ]; then
+  HEAD_SHA=$(pr_head_sha)
+  python3 -c "import json; [print(json.dumps(x)) for x in json.load(open('${PR_STATE_DIR:-/tmp}/pr_external_reconcile.json')).get('addressed',[])]" \
   | while IFS= read -r f; do
     [ -z "$f" ] && continue
     THREAD_ID=$(echo "$f" | python3 -c "import sys,json; print(json.load(sys.stdin).get('thread_ref') or '')")
-    [ -n "$THREAD_ID" ] || { echo "fail missing thread_ref" >> /tmp/pr_external_replies.log; continue; }
-    cat > /tmp/pr_external_reply_body.md <<BODY
+    [ -n "$THREAD_ID" ] || { echo "fail missing thread_ref" >> ${PR_STATE_DIR:-/tmp}/pr_external_replies.log; continue; }
+    cat > ${PR_STATE_DIR:-/tmp}/pr_external_reply_body.md <<BODY
 Looks addressed as of \`${HEAD_SHA}\` — leaving this thread open for the original author to resolve.
 BODY
-    python3 - <<'PY' > /tmp/pr_external_reply_payload.json
+    python3 - <<'PY' > ${PR_STATE_DIR:-/tmp}/pr_external_reply_payload.json
+import os
 import json
-print(json.dumps({"content": open('/tmp/pr_external_reply_body.md').read(), "commentType": 1}))
+print(json.dumps({"content": open(os.environ.get('PR_STATE_DIR', '/tmp') + '/pr_external_reply_body.md').read(), "commentType": 1}))
 PY
     RESP=$(curl -sS -w "\nHTTP_STATUS:%{http_code}" -H "Content-Type: application/json" \
-      -u ":${AZURE_DEVOPS_TOKEN}" -X POST --data @/tmp/pr_external_reply_payload.json \
+      -u ":${AZURE_DEVOPS_TOKEN}" -X POST --data @${PR_STATE_DIR:-/tmp}/pr_external_reply_payload.json \
       "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads/${THREAD_ID}/comments?api-version=7.1" || true)
     STATUS=$(echo "$RESP" | sed -n 's/^HTTP_STATUS://p')
-    if echo "${STATUS:-}" | grep -qE '^2'; then echo ok >> /tmp/pr_external_replies.log; else echo "fail $THREAD_ID HTTP ${STATUS:-?}" >> /tmp/pr_external_replies.log; fi
+    if echo "${STATUS:-}" | grep -qE '^2'; then echo ok >> ${PR_STATE_DIR:-/tmp}/pr_external_replies.log; else echo "fail $THREAD_ID HTTP ${STATUS:-?}" >> ${PR_STATE_DIR:-/tmp}/pr_external_replies.log; fi
   done
-  EXTERNAL_REPLY_OK=$(grep -c '^ok' /tmp/pr_external_replies.log 2>/dev/null || true); EXTERNAL_REPLY_OK=${EXTERNAL_REPLY_OK:-0}
-  EXTERNAL_REPLY_FAIL=$(grep -c '^fail' /tmp/pr_external_replies.log 2>/dev/null || true); EXTERNAL_REPLY_FAIL=${EXTERNAL_REPLY_FAIL:-0}
+  EXTERNAL_REPLY_OK=$(grep -c '^ok' ${PR_STATE_DIR:-/tmp}/pr_external_replies.log 2>/dev/null || true); EXTERNAL_REPLY_OK=${EXTERNAL_REPLY_OK:-0}
+  EXTERNAL_REPLY_FAIL=$(grep -c '^fail' ${PR_STATE_DIR:-/tmp}/pr_external_replies.log 2>/dev/null || true); EXTERNAL_REPLY_FAIL=${EXTERNAL_REPLY_FAIL:-0}
   export EXTERNAL_REPLY_OK EXTERNAL_REPLY_FAIL
   echo "External replies: ${EXTERNAL_REPLY_OK} addressed thread(s) acknowledged (${EXTERNAL_REPLY_FAIL} failed) — threads left open"
 fi
@@ -357,15 +376,16 @@ fi
 INLINE_TOTAL=0
 INLINE_OK=0
 INLINE_FAIL=0
-: > /tmp/pr_inline_failures.log
+: > ${PR_STATE_DIR:-/tmp}/pr_inline_failures.log
 
 while IFS= read -r line; do
   [ -z "$line" ] && continue
   INLINE_TOTAL=$((INLINE_TOTAL + 1))
-  echo "$line" > /tmp/pr_inline_finding.json
-  if ! HEAD_SHA=$(git rev-parse HEAD) python3 - <<'PY' > /tmp/pr_thread_payload.json 2>>/tmp/pr_inline_failures.log
+  echo "$line" > ${PR_STATE_DIR:-/tmp}/pr_inline_finding.json
+  if ! HEAD_SHA=$(pr_head_sha) python3 - <<'PY' > ${PR_STATE_DIR:-/tmp}/pr_thread_payload.json 2>>${PR_STATE_DIR:-/tmp}/pr_inline_failures.log
+import os
 import json, os
-f = json.load(open('/tmp/pr_inline_finding.json'))
+f = json.load(open(os.environ.get('PR_STATE_DIR', '/tmp') + '/pr_inline_finding.json'))
 file_path = f.get("file") or f.get("path") or ""
 line_no = int(f.get("line") or f.get("line_number") or 0)
 body = f.get("body") or f.get("comment") or ""
@@ -393,12 +413,12 @@ print(json.dumps({
 PY
   then
     INLINE_FAIL=$((INLINE_FAIL + 1))
-    { echo "---"; echo "finding: $line"; echo "payload build failed"; } >> /tmp/pr_inline_failures.log
+    { echo "---"; echo "finding: $line"; echo "payload build failed"; } >> ${PR_STATE_DIR:-/tmp}/pr_inline_failures.log
     continue
   fi
   RESP=$(curl -sS -w "\nHTTP_STATUS:%{http_code}" \
     -H "Content-Type: application/json" -u ":${AZURE_DEVOPS_TOKEN}" -X POST \
-    --data @/tmp/pr_thread_payload.json \
+    --data @${PR_STATE_DIR:-/tmp}/pr_thread_payload.json \
     "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads?api-version=7.1" \
     || true)
   STATUS=$(echo "$RESP" | sed -n 's/^HTTP_STATUS://p')
@@ -413,9 +433,10 @@ PY
     fi
   else
     # Retry without custom properties (keep file anchor + markdown)
-    if ! HEAD_SHA=$(git rev-parse HEAD) python3 - <<'PY' > /tmp/pr_thread_payload.json 2>>/tmp/pr_inline_failures.log
+    if ! HEAD_SHA=$(pr_head_sha) python3 - <<'PY' > ${PR_STATE_DIR:-/tmp}/pr_thread_payload.json 2>>${PR_STATE_DIR:-/tmp}/pr_inline_failures.log
+import os
 import json, os
-f = json.load(open('/tmp/pr_inline_finding.json'))
+f = json.load(open(os.environ.get('PR_STATE_DIR', '/tmp') + '/pr_inline_finding.json'))
 file_path = f.get("file") or f.get("path") or ""
 line_no = int(f.get("line") or f.get("line_number") or 0)
 body = f.get("body") or f.get("comment") or ""
@@ -438,12 +459,12 @@ print(json.dumps({
 PY
     then
       INLINE_FAIL=$((INLINE_FAIL + 1))
-      { echo "---"; echo "finding: $line"; echo "HTTP ${STATUS:-?}:"; echo "$RESP" | sed '$d'; echo "retry payload build failed"; } >> /tmp/pr_inline_failures.log
+      { echo "---"; echo "finding: $line"; echo "HTTP ${STATUS:-?}:"; echo "$RESP" | sed '$d'; echo "retry payload build failed"; } >> ${PR_STATE_DIR:-/tmp}/pr_inline_failures.log
       continue
     fi
     RESP2=$(curl -sS -w "\nHTTP_STATUS:%{http_code}" \
       -H "Content-Type: application/json" -u ":${AZURE_DEVOPS_TOKEN}" -X POST \
-      --data @/tmp/pr_thread_payload.json \
+      --data @${PR_STATE_DIR:-/tmp}/pr_thread_payload.json \
       "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_ID}/threads?api-version=7.1" \
       || true)
     STATUS2=$(echo "$RESP2" | sed -n 's/^HTTP_STATUS://p')
@@ -457,15 +478,15 @@ PY
       fi
     else
       INLINE_FAIL=$((INLINE_FAIL + 1))
-      { echo "---"; echo "finding: $line"; echo "HTTP ${STATUS:-?} then retry ${STATUS2:-?}:"; echo "$RESP2" | sed '$d'; } >> /tmp/pr_inline_failures.log
+      { echo "---"; echo "finding: $line"; echo "HTTP ${STATUS:-?} then retry ${STATUS2:-?}:"; echo "$RESP2" | sed '$d'; } >> ${PR_STATE_DIR:-/tmp}/pr_inline_failures.log
     fi
   fi
-done < /tmp/pr_inline_findings.jsonl
+done < ${PR_STATE_DIR:-/tmp}/pr_inline_findings.jsonl
 
 echo "Inline comments: ${INLINE_OK}/${INLINE_TOTAL} posted (${INLINE_FAIL} failed)"
 if [ "$INLINE_FAIL" -gt 0 ]; then
-  echo "WARN: see /tmp/pr_inline_failures.log" >&2
-  head -40 /tmp/pr_inline_failures.log >&2
+  echo "WARN: see ${PR_STATE_DIR:-/tmp}/pr_inline_failures.log" >&2
+  head -40 ${PR_STATE_DIR:-/tmp}/pr_inline_failures.log >&2
 fi
 if [ "$MARKER_VERIFY_FAILED" -gt 0 ]; then
   echo "ERROR: ${MARKER_VERIFY_FAILED} posted comment(s) failed marker verification — see warnings above" >&2
@@ -473,7 +494,11 @@ fi
 export INLINE_OK INLINE_FAIL INLINE_TOTAL MARKER_VERIFY_FAILED
 EXTERNAL_REPLY_OK="${EXTERNAL_REPLY_OK:-0}"
 REOPENED_OK="${REOPENED_OK:-0}"
-CONFIRM="Review posted on PR #${PR_ID}: ${VERDICT} — ${INLINE_OK}/${INLINE_TOTAL} inline — ${EXTERNAL_REPLY_OK} external replies — ${API_BASE}/_git/${AZURE_REPO}/pullrequest/${PR_ID}"
+if [ "$REVIEW_MODE" = "rereview" ]; then
+  CONFIRM="Re-review posted on PR #${PR_ID}: ${VERDICT} — ${INLINE_OK}/${INLINE_TOTAL} new — ${RESOLVED_OK:-0} resolved — ${EXTERNAL_REPLY_OK} external replies — ${API_BASE}/_git/${AZURE_REPO}/pullrequest/${PR_ID}"
+else
+  CONFIRM="Review posted on PR #${PR_ID}: ${VERDICT} — ${INLINE_OK}/${INLINE_TOTAL} inline — ${EXTERNAL_REPLY_OK} external replies — ${API_BASE}/_git/${AZURE_REPO}/pullrequest/${PR_ID}"
+fi
 [ "$REOPENED_OK" -gt 0 ] && CONFIRM="${CONFIRM} — ${REOPENED_OK} reopened (regression)"
 echo "$CONFIRM"
 if [ "$MARKER_VERIFY_FAILED" -gt 0 ]; then

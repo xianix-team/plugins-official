@@ -53,7 +53,7 @@ if [ -z "$REMOTE_URL" ]; then
     echo "export PLATFORM=generic"
     echo "export AUTH_OK=false"
     echo "export HARD_FAIL=1"
-  } > /tmp/pr_permissions.env
+  } > ${PR_STATE_DIR:-/tmp}/pr_permissions.env
   exit 1
 fi
 REMOTE_CLEAN=$(echo "$REMOTE_URL" | sed -E 's|https?://[^@]+@|https://|')
@@ -257,7 +257,7 @@ print('AUTH_DESCRIPTOR_TYPE=' + shlex.quote(desc_type))
   rm -f "$BODY"
 
   # 2. Code (Read) — repository GET
-  HTTP=$($CURL -sS -o /tmp/pr_perm_repo.json -w "%{http_code}" -u ":${AZURE_DEVOPS_TOKEN}" \
+  HTTP=$($CURL -sS -o ${PR_STATE_DIR:-/tmp}/pr_perm_repo.json -w "%{http_code}" -u ":${AZURE_DEVOPS_TOKEN}" \
     "${API_BASE}/_apis/git/repositories/${AZURE_REPO}?api-version=7.1" || echo "000")
   if [ "$HTTP" = "200" ]; then
     CAP_REPO_READ=true
@@ -268,7 +268,7 @@ print('AUTH_DESCRIPTOR_TYPE=' + shlex.quote(desc_type))
 
   # 3. PR list / specific PR — Code (Read) + PR access
   if [ -n "${PR_NUMBER:-}" ]; then
-    HTTP=$($CURL -sS -o /tmp/pr_perm_pr.json -w "%{http_code}" -u ":${AZURE_DEVOPS_TOKEN}" \
+    HTTP=$($CURL -sS -o ${PR_STATE_DIR:-/tmp}/pr_perm_pr.json -w "%{http_code}" -u ":${AZURE_DEVOPS_TOKEN}" \
       "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullrequests/${PR_NUMBER}?api-version=7.1" || echo "000")
     if [ "$HTTP" = "200" ]; then
       CAP_PR_READ=true
@@ -277,7 +277,7 @@ print('AUTH_DESCRIPTOR_TYPE=' + shlex.quote(desc_type))
       fail "cannot read PR #${PR_NUMBER} (HTTP ${HTTP})"
     fi
   else
-    HTTP=$($CURL -sS -o /tmp/pr_perm_pr.json -w "%{http_code}" -u ":${AZURE_DEVOPS_TOKEN}" \
+    HTTP=$($CURL -sS -o ${PR_STATE_DIR:-/tmp}/pr_perm_pr.json -w "%{http_code}" -u ":${AZURE_DEVOPS_TOKEN}" \
       "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullrequests?searchCriteria.status=active&\$top=1&api-version=7.1" || echo "000")
     if [ "$HTTP" = "200" ]; then
       CAP_PR_READ=true
@@ -289,11 +289,11 @@ print('AUTH_DESCRIPTOR_TYPE=' + shlex.quote(desc_type))
 
   # 4. Pull Request Threads (Read) — required for detect-prior / reconcile
   PR_PROBE="${PR_NUMBER:-}"
-  if [ -z "$PR_PROBE" ] && [ -f /tmp/pr_perm_pr.json ]; then
-    PR_PROBE=$(python3 -c "import json; v=json.load(open('/tmp/pr_perm_pr.json')).get('value') or []; print(v[0]['pullRequestId'] if v else '')" 2>/dev/null || true)
+  if [ -z "$PR_PROBE" ] && [ -f ${PR_STATE_DIR:-/tmp}/pr_perm_pr.json ]; then
+    PR_PROBE=$(python3 -c "import json; v=json.load(open('${PR_STATE_DIR:-/tmp}/pr_perm_pr.json')).get('value') or []; print(v[0]['pullRequestId'] if v else '')" 2>/dev/null || true)
   fi
   if [ -n "$PR_PROBE" ]; then
-    HTTP=$($CURL -sS -o /tmp/pr_perm_threads.json -w "%{http_code}" -u ":${AZURE_DEVOPS_TOKEN}" \
+    HTTP=$($CURL -sS -o ${PR_STATE_DIR:-/tmp}/pr_perm_threads.json -w "%{http_code}" -u ":${AZURE_DEVOPS_TOKEN}" \
       "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_PROBE}/threads?\$top=1&api-version=7.1" || echo "000")
     if [ "$HTTP" = "200" ]; then
       CAP_COMMENT_WRITE=true  # Read confirmed; Write required to post — probed softly below
@@ -316,12 +316,12 @@ print('AUTH_DESCRIPTOR_TYPE=' + shlex.quote(desc_type))
   #   PUT 401/403 → authz / identity cannot vote (service PATs often land here).
   VOTE_BLOCK_REASON=""
   if [ -n "${REVIEWER_ID:-}" ] && [ -n "$PR_PROBE" ]; then
-    HTTP=$($CURL -sS -o /tmp/pr_perm_reviewer.json -w "%{http_code}" -u ":${AZURE_DEVOPS_TOKEN}" \
+    HTTP=$($CURL -sS -o ${PR_STATE_DIR:-/tmp}/pr_perm_reviewer.json -w "%{http_code}" -u ":${AZURE_DEVOPS_TOKEN}" \
       "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_PROBE}/reviewers/${REVIEWER_ID}?api-version=7.1" || echo "000")
     REV_MSG=$(python3 -c "
 import json
 try:
-  d=json.load(open('/tmp/pr_perm_reviewer.json'))
+  d=json.load(open('${PR_STATE_DIR:-/tmp}/pr_perm_reviewer.json'))
   print((d.get('message') or '')[:200])
 except Exception:
   print('')
@@ -334,7 +334,7 @@ except Exception:
       400|404)
         # Not on the reviewer list yet (normal). Confirm with a no-vote PUT, then remove.
         echo "Reviewer GET HTTP ${HTTP} (not on PR list yet) — probing with vote:0 PUT…"
-        PUT_HTTP=$($CURL -sS -o /tmp/pr_perm_vote_probe.json -w "%{http_code}" \
+        PUT_HTTP=$($CURL -sS -o ${PR_STATE_DIR:-/tmp}/pr_perm_vote_probe.json -w "%{http_code}" \
           -u ":${AZURE_DEVOPS_TOKEN}" -X PUT -H "Content-Type: application/json" \
           -d "{\"vote\":0,\"id\":\"${REVIEWER_ID}\"}" \
           "${API_BASE}/_apis/git/repositories/${AZURE_REPO}/pullRequests/${PR_PROBE}/reviewers/${REVIEWER_ID}?api-version=7.1" \
@@ -357,7 +357,7 @@ except Exception:
           PUT_MSG=$(python3 -c "
 import json
 try:
-  print((json.load(open('/tmp/pr_perm_vote_probe.json')).get('message') or '')[:200])
+  print((json.load(open('${PR_STATE_DIR:-/tmp}/pr_perm_vote_probe.json')).get('message') or '')[:200])
 except Exception:
   print('')
 " 2>/dev/null || true)
@@ -443,12 +443,12 @@ WARN_JOINED=$(printf '%s | ' "${WARNINGS[@]+"${WARNINGS[@]}"}" | sed 's/ | $//')
   echo "export SCOPES_SEEN=$(printf %q "${SCOPES_SEEN:-}")"
   echo "export PERMISSIONS_WARNINGS=$(printf %q "${WARN_JOINED:-}")"
   echo "export HARD_FAIL=$(printf %q "$HARD_FAIL")"
-} > /tmp/pr_permissions.env
+} > ${PR_STATE_DIR:-/tmp}/pr_permissions.env
 
 echo "---- permissions summary ----"
 echo "PLATFORM=${PLATFORM}  AUTH=${CAP_AUTH}  REPO_READ=${CAP_REPO_READ}  PR_READ=${CAP_PR_READ}  COMMENT=${CAP_COMMENT_WRITE}  VOTE=${CAP_VOTE}  PUSH=${CAP_PUSH}"
 [ -n "${WARN_JOINED:-}" ] && echo "Warnings: ${WARN_JOINED}"
-echo "Wrote /tmp/pr_permissions.env"
+echo "Wrote ${PR_STATE_DIR:-/tmp}/pr_permissions.env"
 
 if [ "$HARD_FAIL" -ne 0 ]; then
   echo "PERMISSIONS CHECK FAILED — fix auth/scopes before continuing (see docs/platform-setup.md)" >&2

@@ -16,10 +16,10 @@
 set -euo pipefail
 
 # shellcheck disable=SC1091
-[ -f /tmp/pr_state.env ] && source /tmp/pr_state.env
+[ -f ${PR_STATE_DIR:-/tmp}/pr_state.env ] && source ${PR_STATE_DIR:-/tmp}/pr_state.env
 
-if [ ! -f /tmp/pr_changed_files.txt ] || [ ! -f /tmp/pr_full_diff.patch ]; then
-  echo "ERROR: need /tmp/pr_changed_files.txt and /tmp/pr_full_diff.patch (run pr-setup.sh first)" >&2
+if [ ! -f ${PR_STATE_DIR:-/tmp}/pr_changed_files.txt ] || [ ! -f ${PR_STATE_DIR:-/tmp}/pr_full_diff.patch ]; then
+  echo "ERROR: need ${PR_STATE_DIR:-/tmp}/pr_changed_files.txt and ${PR_STATE_DIR:-/tmp}/pr_full_diff.patch (run pr-setup.sh first)" >&2
   exit 1
 fi
 
@@ -28,11 +28,11 @@ RISK_CONTENT_RE='(password|secret|api[_-]?key|private[_-]?key|authorize|authenti
 
 REVIEW_TIER="haiku"
 # 1. High-risk by file path — docs/images can never be a high-risk surface
-if grep -ivE '\.(md|markdown|rst|txt|png|jpg|jpeg|gif|svg)$' /tmp/pr_changed_files.txt \
+if grep -ivE '\.(md|markdown|rst|txt|png|jpg|jpeg|gif|svg)$' ${PR_STATE_DIR:-/tmp}/pr_changed_files.txt \
    | grep -qiE "$RISK_PATH_RE"; then
   REVIEW_TIER="specialists"
 # 2. High-risk by changed content. '^\+[^+]' matches added lines ONLY
-elif grep -E '^\+[^+]' /tmp/pr_full_diff.patch | grep -qiE "$RISK_CONTENT_RE"; then
+elif grep -E '^\+[^+]' ${PR_STATE_DIR:-/tmp}/pr_full_diff.patch | grep -qiE "$RISK_CONTENT_RE"; then
   REVIEW_TIER="specialists"
 fi
 
@@ -44,5 +44,5 @@ fi
 echo "REVIEW_TIER=$REVIEW_TIER"
 {
   echo "export REVIEW_TIER=$(printf %q "$REVIEW_TIER")"
-} >> /tmp/pr_state.env
+} >> ${PR_STATE_DIR:-/tmp}/pr_state.env
 export REVIEW_TIER

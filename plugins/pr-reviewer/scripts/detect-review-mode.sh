@@ -30,7 +30,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck disable=SC1091
-[ -f /tmp/pr_state.env ] && source /tmp/pr_state.env
+[ -f ${PR_STATE_DIR:-/tmp}/pr_state.env ] && source ${PR_STATE_DIR:-/tmp}/pr_state.env
 
 : "${PR_REVIEWER_RECONCILE:=true}"
 PLATFORM="${PLATFORM:-}"
@@ -75,9 +75,9 @@ resolve_script() {
 }
 
 if [ "$PR_REVIEWER_RECONCILE" = "false" ] || [ "$PLATFORM" = "generic" ]; then
-  : > /tmp/pr_prior_findings.jsonl
-  : > /tmp/pr_open_threads.jsonl
-  : > /tmp/pr_prior.env
+  : > ${PR_STATE_DIR:-/tmp}/pr_prior_findings.jsonl
+  : > ${PR_STATE_DIR:-/tmp}/pr_open_threads.jsonl
+  : > ${PR_STATE_DIR:-/tmp}/pr_prior.env
   if [ "$PLATFORM" = "generic" ]; then
     echo "Generic platform — skipping prior-review detection (no API)"
   else
@@ -102,18 +102,18 @@ else
       bash "$DETECT"
       ;;
     *)
-      : > /tmp/pr_prior_findings.jsonl
-      : > /tmp/pr_open_threads.jsonl
-      : > /tmp/pr_prior.env
+      : > ${PR_STATE_DIR:-/tmp}/pr_prior_findings.jsonl
+      : > ${PR_STATE_DIR:-/tmp}/pr_open_threads.jsonl
+      : > ${PR_STATE_DIR:-/tmp}/pr_prior.env
       ;;
   esac
 fi
 
 # shellcheck disable=SC1091
-[ -f /tmp/pr_prior.env ] && source /tmp/pr_prior.env
-[ -f /tmp/pr_open_threads.jsonl ] || : > /tmp/pr_open_threads.jsonl
+[ -f ${PR_STATE_DIR:-/tmp}/pr_prior.env ] && source ${PR_STATE_DIR:-/tmp}/pr_prior.env
+[ -f ${PR_STATE_DIR:-/tmp}/pr_open_threads.jsonl ] || : > ${PR_STATE_DIR:-/tmp}/pr_open_threads.jsonl
 
-if [ "$PR_REVIEWER_RECONCILE" = "false" ] || [ ! -s /tmp/pr_prior_findings.jsonl ]; then
+if [ "$PR_REVIEWER_RECONCILE" = "false" ] || [ ! -s ${PR_STATE_DIR:-/tmp}/pr_prior_findings.jsonl ]; then
   REVIEW_MODE="initial"
   RANGE_BASE="${BASE_SHA:-}"
 else
@@ -125,18 +125,18 @@ else
   fi
 fi
 
-OPEN_THREAD_COUNT=$(wc -l < /tmp/pr_open_threads.jsonl | tr -d ' ')
+OPEN_THREAD_COUNT=$(wc -l < ${PR_STATE_DIR:-/tmp}/pr_open_threads.jsonl | tr -d ' ')
 HEAD_SHA="${HEAD_SHA:-$(git rev-parse HEAD)}"
 echo "Review mode: $REVIEW_MODE  |  incremental range: ${RANGE_BASE}..${HEAD_SHA}  |  open threads: ${OPEN_THREAD_COUNT}"
 
 if [ "$REVIEW_MODE" = "rereview" ] && [ -n "${BASE_SHA:-}" ] && [ "$RANGE_BASE" != "$BASE_SHA" ]; then
   git log --oneline "${RANGE_BASE}..${HEAD_SHA}" || true
-  git diff "${RANGE_BASE}...${HEAD_SHA}" > /tmp/pr_incremental_diff.patch
-  echo "Incremental diff: $(wc -l < /tmp/pr_incremental_diff.patch) lines since last review"
+  git diff "${RANGE_BASE}...${HEAD_SHA}" > ${PR_STATE_DIR:-/tmp}/pr_incremental_diff.patch
+  echo "Incremental diff: $(wc -l < ${PR_STATE_DIR:-/tmp}/pr_incremental_diff.patch) lines since last review"
 fi
 
 {
   echo "export REVIEW_MODE=$(printf %q "$REVIEW_MODE")"
   echo "export RANGE_BASE=$(printf %q "$RANGE_BASE")"
-} >> /tmp/pr_state.env
+} >> ${PR_STATE_DIR:-/tmp}/pr_state.env
 export REVIEW_MODE RANGE_BASE

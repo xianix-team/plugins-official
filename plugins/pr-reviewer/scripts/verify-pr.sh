@@ -55,9 +55,9 @@ case "$PLATFORM" in
     echo "OK: PR #${PR_NUMBER} open: ${PR_TITLE}"
     ;;
   azure)
-    if [ -f /tmp/pr_azure.env ]; then
+    if [ -f ${PR_STATE_DIR:-/tmp}/pr_azure.env ]; then
       # shellcheck disable=SC1091
-      source /tmp/pr_azure.env
+      source ${PR_STATE_DIR:-/tmp}/pr_azure.env
     fi
     if [ -z "${API_BASE:-}" ] || [ -z "${AZURE_REPO:-}" ]; then
       parse_azure_remote || fail_closed "could not parse Azure remote"
@@ -97,6 +97,6 @@ esac
   echo "export PR_TITLE=$(printf %q "${PR_TITLE:-}")"
   echo "export PR_HEAD_BRANCH=$(printf %q "${PR_HEAD_BRANCH:-}")"
   echo "export PR_URL=$(printf %q "${PR_URL:-}")"
-} > /tmp/pr_verify.env
-echo "Wrote /tmp/pr_verify.env"
+} > ${PR_STATE_DIR:-/tmp}/pr_verify.env
+echo "Wrote ${PR_STATE_DIR:-/tmp}/pr_verify.env"
 exit 0

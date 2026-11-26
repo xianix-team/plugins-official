@@ -6,6 +6,7 @@
 #
 # Inputs:
 #   PR_NUMBER             — required (or resolvable via gh for current branch)
+#   PR_REVIEWER_START_NOTE — optional extra paragraph (e.g. group-review context)
 #   gh CLI authenticated
 
 set -euo pipefail
@@ -16,7 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # previous run (this script normally runs before pr-setup.sh writes that file).
 CALLER_PR="${PR_NUMBER:-${PR_ID:-}}"
 # shellcheck disable=SC1091
-[ -f /tmp/pr_state.env ] && source /tmp/pr_state.env
+[ -f ${PR_STATE_DIR:-/tmp}/pr_state.env ] && source ${PR_STATE_DIR:-/tmp}/pr_state.env
 
 if ! command -v gh >/dev/null 2>&1; then
   echo "WARN: gh CLI not found — skipping review-in-progress comment" >&2
@@ -43,7 +44,9 @@ if gh pr comment "$PR_NUMBER" --body "$(cat <<EOF
 🔍 PR Review in Progress
 
 Claude Code is analyzing this pull request. The review will be posted here shortly.
-
+${PR_REVIEWER_START_NOTE:+
+${PR_REVIEWER_START_NOTE}
+}
 PR Reviewer (${PLUGIN_VERSION})
 EOF
 )"; then

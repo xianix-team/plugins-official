@@ -87,9 +87,15 @@ if ! command -v git > /dev/null 2>&1; then
     exit 0
 fi
 
-# Check: must be inside a git repository
+# Check: must be inside a git repository — unless the command says where the repository is.
+# Group reviews (and Azure DevOps work item runs, which have no checkout) work on repos in
+# other folders: `git -C <dir> …`, `cd <dir> && git …`, `git clone …`. The current folder
+# does not matter for those, and blocking them stops the review.
 if ! git rev-parse --is-inside-work-tree > /dev/null 2>&1; then
-    echo '{"decision": "block", "reason": "Not inside a git repository. PR review requires a git project."}'
+    if ! echo "$COMMAND" | grep -qE "(^|[[:space:]])(git[[:space:]]+(-C|--git-dir|--work-tree|clone|init|--version|version|config[[:space:]]+--global)|cd[[:space:]])"; then
+        echo '{"decision": "block", "reason": "Not inside a git repository. PR review requires a git project."}'
+        exit 0
+    fi
     exit 0
 fi
 
